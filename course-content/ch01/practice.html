@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chapter 1 · Practice</title>
+<link rel="stylesheet" href="../content.css">
+</head>
+<body>
+<main>
+<nav class="crumbs"><a href="../index.html">Course</a> / <a href="index.html">Chapter 1</a> / Practice</nav>
+<p class="kicker">Chapter 1 · Practice</p>
+<h1>Practice: quiz, predict, lab, try it locally</h1>
+
+<h2 id="quiz">Checkpoint quiz (8 drawn from 16)</h2>
+<p class="muted">Pass at 80%. Best attempt counts. Topics: components, reconciliation, kubectl flags, tags vs digests.</p>
+
+<div class="check" data-type="mcq"><p class="q">Which component is the only one that reads and writes etcd?</p>
+  <ol class="options"><li>kube-scheduler</li><li class="correct">kube-apiserver</li><li>kubelet</li><li>kube-controller-manager</li></ol>
+  <div class="explain">Everything else goes through the API server.</div></div>
+<div class="check" data-type="mcq"><p class="q">Which component starts containers on a node?</p>
+  <ol class="options"><li>kube-proxy</li><li>kube-scheduler</li><li class="correct">The kubelet, through the container runtime (containerd)</li><li>The API server</li></ol>
+  <div class="explain">The kubelet asks containerd to pull images and run containers.</div></div>
+<div class="check" data-type="mcq"><p class="q">A pod is stuck in <code>Pending</code> with no node assigned. Which component hasn't placed it yet?</p>
+  <ol class="options"><li class="correct">kube-scheduler</li><li>kube-proxy</li><li>etcd</li><li>cloud-controller-manager</li></ol>
+  <div class="explain">Pending with no node means the scheduler couldn't find a node that fits (or isn't running).</div></div>
+<div class="check" data-type="mcq"><p class="q">On AKS, which of these do you <b>not</b> operate yourself?</p>
+  <ol class="options"><li>Your Deployments</li><li class="correct">etcd and the API server</li><li>Your node pools' size</li><li>Your namespaces</li></ol>
+  <div class="explain">Azure runs the whole control plane.</div></div>
+<div class="check" data-type="mcq"><p class="q">In a Deployment's YAML, which section do you write?</p>
+  <ol class="options"><li class="correct"><code>spec</code></li><li><code>status</code></li><li>Both equally</li><li>Neither; kubectl generates it</li></ol>
+  <div class="explain"><code>spec</code> is desired state; <code>status</code> is written by controllers.</div></div>
+<div class="check" data-type="mcq"><p class="q">A Deployment has <code>replicas: 3</code>. A node with one of its pods dies. What happens?</p>
+  <ol class="options"><li>The Deployment shrinks to 2</li><li class="correct">A replacement pod is created on another node</li><li>All 3 pods restart</li><li>Nothing until someone re-applies the YAML</li></ol>
+  <div class="explain">The ReplicaSet controller sees 2 pods where 3 are wanted.</div></div>
+<div class="check" data-type="mcq"><p class="q">Which describes the reconciliation loop?</p>
+  <ol class="options"><li>Run the YAML once, top to bottom</li><li class="correct">Observe the current state, compare it with the spec, act to close the gap, repeat</li><li>Restart every pod every few minutes</li><li>Copy etcd to every node</li></ol>
+  <div class="explain">Every controller works this way.</div></div>
+<div class="check" data-type="mcq"><p class="q">You edit a running pod's image with <code>kubectl edit pod</code>. The pod belongs to a Deployment. What's the problem?</p>
+  <ol class="options"><li>None; that's the normal way to update</li><li class="correct">The Deployment's spec still has the old image, so replacement pods come back with it</li><li>Pods can't be edited at all</li><li>The Deployment is deleted</li></ol>
+  <div class="explain">Change the Deployment (its template), not the pods.</div></div>
+<div class="check" data-type="mcq"><p class="q">Which flag lists pods across every namespace?</p>
+  <ol class="options"><li><code>-n all</code></li><li class="correct"><code>-A</code> / <code>--all-namespaces</code></li><li><code>-o wide</code></li><li><code>--global</code></li></ol>
+  <div class="explain"><code>-n all</code> would look for a namespace literally called "all".</div></div>
+<div class="check" data-type="mcq"><p class="q">A container restarted. Which command shows what it logged <i>before</i> the restart?</p>
+  <ol class="options"><li><code>kubectl logs pod</code></li><li class="correct"><code>kubectl logs pod --previous</code></li><li><code>kubectl describe pod --logs</code></li><li><code>kubectl get events</code></li></ol>
+  <div class="explain"><code>--previous</code> reads the last terminated container's logs.</div></div>
+<div class="check" data-type="mcq"><p class="q">Which command shows a pod's recent events (pulled, scheduled, probe failed)?</p>
+  <ol class="options"><li><code>kubectl get pod -o wide</code></li><li class="correct"><code>kubectl describe pod</code></li><li><code>kubectl explain pod</code></li><li><code>kubectl logs</code></li></ol>
+  <div class="explain">Events appear at the bottom of <code>describe</code>.</div></div>
+<div class="check" data-type="mcq"><p class="q">What does <code>kubectl apply -f k8s/</code> do with an object that already exists and matches the file?</p>
+  <ol class="options"><li>Deletes and recreates it</li><li class="correct">Nothing; it reports "unchanged"</li><li>Fails with "already exists"</li><li>Creates a copy with a new name</li></ol>
+  <div class="explain">Apply is idempotent. <code>kubectl create</code> is the one that fails if the object exists.</div></div>
+<div class="check" data-type="mcq"><p class="q">What does <code>kubectl --context aks-orders-dev get pods</code> do to your current context?</p>
+  <ol class="options"><li>Switches it to aks-orders-dev</li><li class="correct">Nothing; it uses aks-orders-dev for this one command only</li><li>Deletes the other contexts</li><li>Sets the namespace to dev</li></ol>
+  <div class="explain">Use <code>--context</code> in scripts so they never depend on the current context.</div></div>
+<div class="check" data-type="mcq"><p class="q">What is <code>orders-api:latest</code>?</p>
+  <ol class="options"><li>Always the newest image pushed to the repository</li><li class="correct">Whatever image was last pushed with the tag "latest", which may not be the newest</li><li>A digest</li><li>An error; tags must be numbers</li></ol>
+  <div class="explain"><code>latest</code> is only the default tag name.</div></div>
+<div class="check" data-type="mcq"><p class="q">Why pin images by digest?</p>
+  <ol class="options"><li>Digests are shorter</li><li class="correct">A digest always refers to exactly the same image content</li><li>Registries delete tagged images</li><li>Kubernetes requires it</li></ol>
+  <div class="explain">Tags can be moved; digests can't.</div></div>
+<div class="check" data-type="mcq"><p class="q">In a Dockerfile, why copy <code>go.mod</code>/<code>go.sum</code> and download dependencies before <code>COPY . .</code>?</p>
+  <ol class="options"><li>Go requires that order</li><li class="correct">So code changes don't invalidate the cached dependency layer</li><li>It makes the image smaller</li><li>It's needed for multi-stage builds</li></ol>
+  <div class="explain">Once a layer changes, every later layer rebuilds.</div></div>
+
+<h2 id="predict">Predict the outcome (3)</h2>
+<p class="muted">Predict before revealing. Only the first reveal counts toward the chapter score.</p>
+<div class="check" data-type="predict"><p class="q">Scenario 1: <code>kubectl delete pod orders-api-7d9c5f6b8-2xk9p</code> on a Deployment with 3 replicas. What does <code>kubectl get pods</code> show 10 seconds later?</p>
+  <ol class="options"><li>2 pods</li><li class="correct">3 pods, one with a new name and a young AGE</li><li>3 pods, all with the original names</li><li>0 pods</li></ol>
+  <div class="explain">The ReplicaSet controller replaced the deleted pod.</div></div>
+<div class="check" data-type="predict"><p class="q">Scenario 2: the scheduler is down. You scale <code>orders-api</code> from 3 to 5. What do the pods look like?</p>
+  <ol class="options"><li>5 Running</li><li class="correct">3 Running, 2 Pending with no node</li><li>0 Running</li><li>3 Running, and the scale command fails</li></ol>
+  <div class="explain">The ReplicaSet controller still creates the 2 new pods, but nothing assigns them a node until the scheduler returns.</div></div>
+<div class="check" data-type="predict"><p class="q">Scenario 3: node 2 (running 1 of 3 <code>orders-api</code> pods) loses power. What happens over the next few minutes?</p>
+  <ol class="options"><li>Nothing; the pod is shown as Running forever</li><li class="correct">The node becomes NotReady; after a timeout its pod is evicted and replaced on another node</li><li>All pods restart</li><li>The Deployment is deleted</li></ol>
+  <div class="explain">The node controller marks the node NotReady after about 40 seconds. Pods are evicted after a toleration timeout (5 minutes by default) and recreated elsewhere. Two replicas keep serving traffic in the meantime.</div></div>
+
+<h2 id="lab">Write lab: a Dockerfile for orders-api</h2>
+<div class="lab">
+  <p><b>Brief:</b> Write a production-ready <code>Dockerfile</code> for <code>orders-api</code> (Go, main package at <code>./cmd/orders-api</code>, listens on 8080). Graded by <b>yaml-rules (text mode)</b>.</p>
+  <pre class="start" data-file="Dockerfile">FROM golang:latest
+WORKDIR /src
+COPY . .
+ENV DB_PASSWORD=Sup3rS3cret!
+RUN go build -o /orders-api ./cmd/orders-api
+CMD ["/orders-api"]</pre>
+  <ul class="rules">
+    <li>Uses a multi-stage build (at least two <code>FROM</code> lines; the final stage copies <code>--from</code> the build stage).</li>
+    <li>Base images are pinned to a version tag or digest; no <code>:latest</code> and no untagged images.</li>
+    <li>Dependencies are downloaded before the full source is copied (<code>COPY go.mod go.sum</code> before <code>COPY . .</code>).</li>
+    <li><code>EXPOSE 8080</code> is present.</li>
+    <li class="critical">No secrets in <code>ENV</code> or <code>ARG</code> (no keys matching password, secret, token, key with a literal value).</li>
+    <li class="critical">The final stage runs as a non-root <code>USER</code> (a non-zero UID or a named non-root user such as <code>nonroot</code>).</li>
+    <li>Uses <code>ENTRYPOINT</code> or <code>CMD</code> in exec (JSON array) form.</li>
+  </ul>
+  <details class="solution"><summary>Reference solution</summary>
+<pre>FROM golang:1.23 AS build
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN CGO_ENABLED=0 go build -o /out/orders-api ./cmd/orders-api
+
+FROM gcr.io/distroless/static-debian12:nonroot
+COPY --from=build /out/orders-api /orders-api
+EXPOSE 8080
+USER nonroot:nonroot
+ENTRYPOINT ["/orders-api"]</pre>
+    <p>The database password is supplied at run time from a Kubernetes Secret, and later from Key Vault (Chapter 15). It's never baked into the image.</p>
+  </details>
+</div>
+
+<h2 id="walkthrough">Walkthrough: a kubectl tour of a running cluster</h2>
+<p>A narrated, scripted terminal (not graded). Each command runs against the sample cluster with a short explanation of what to notice:</p>
+<ol>
+  <li><code>kubectl config current-context</code>: always start here.</li>
+  <li><code>kubectl get nodes -o wide</code>: node names, versions, internal IPs.</li>
+  <li><code>kubectl get ns</code>, then <code>kubectl get all -n orders</code>.</li>
+  <li><code>kubectl describe deploy orders-api -n orders</code>: replicas, strategy, events.</li>
+  <li><code>kubectl get rs,pods -n orders -l app=orders-api</code>: the ownership chain.</li>
+  <li><code>kubectl logs deploy/orders-api -n orders --tail=20</code>.</li>
+  <li><code>kubectl get pods -n kube-system</code>: the add-ons Azure runs on your nodes.</li>
+  <li><code>kubectl explain pod.spec.containers.resources</code>: preview of Chapter 3.</li>
+</ol>
+
+<h2 id="try">Try it locally</h2>
+<p class="muted">Optional boxes for the <code>kind</code> lab from lesson 0.6. Never graded; tick "I tried it" for 5 XP.</p>
+
+<div class="try" data-lesson="1.1">
+  <p><b>1.1 Build, run and push orders-api.</b> From the course repo's <code>apps/orders-api</code> folder:</p>
+<pre>docker build -t localhost:5001/orders-api:1.0.0 .
+docker run -d --rm --name oa -p 8080:8080 localhost:5001/orders-api:1.0.0 &amp;&amp; curl -s localhost:8080/healthz
+docker push localhost:5001/orders-api:1.0.0
+docker images --digests localhost:5001/orders-api</pre>
+  <p>Expected: <code>ok</code> from the health check, then a <code>sha256:…</code> digest after the push.</p>
+  <p><b>Cleanup:</b> <code>docker stop oa</code></p>
+  <p class="muted">On AKS: the registry is ACR, and pushing needs AcrPush (Chapter 6).</p>
+</div>
+<div class="try" data-lesson="1.3">
+  <p><b>1.3 See the control plane.</b></p>
+<pre>kubectl get pods -n kube-system -o wide</pre>
+  <p>Expected: <code>etcd-kq-control-plane</code>, <code>kube-apiserver-…</code>, <code>kube-scheduler-…</code> and <code>kube-controller-manager-…</code> on the control-plane node, plus kube-proxy and CoreDNS.</p>
+  <p><b>Cleanup:</b> none.</p>
+  <p class="muted">On AKS: the control-plane pods are hidden; you'll only see add-ons like CoreDNS and kube-proxy (or Cilium).</p>
+</div>
+<div class="try" data-lesson="1.4">
+  <p><b>1.4 Watch reconciliation.</b></p>
+<pre>kubectl create deployment demo --image=localhost:5001/orders-api:1.0.0 --replicas=3
+kubectl get pods -l app=demo -w &amp;
+kubectl delete $(kubectl get pods -l app=demo -o name | head -1) --wait=false</pre>
+  <p>Expected: in the watch, pods go <code>Terminating</code> while new pods appear as <code>ContainerCreating</code> → <code>Running</code>.</p>
+  <p><b>Cleanup:</b> <code>kill %1; kubectl delete deployment demo</code></p>
+</div>
+<div class="try" data-lesson="1.5">
+  <p><b>1.5 The essentials, for real.</b></p>
+<pre>kubectl create deployment demo --image=localhost:5001/orders-api:1.0.0
+kubectl get pods -o wide
+kubectl describe deployment demo
+kubectl logs deploy/demo --tail=20</pre>
+  <p>Expected: one pod on a worker node, events showing the ReplicaSet scaled up, and startup log lines.</p>
+  <p><b>Cleanup:</b> <code>kubectl delete deployment demo</code></p>
+</div>
+<div class="try" data-lesson="1.6">
+  <p><b>1.6 Contexts.</b></p>
+<pre>kubectl config get-contexts
+kubectl config current-context</pre>
+  <p>Expected: a <code>kind-kq</code> context (marked <code>*</code> if it's current).</p>
+  <p><b>Cleanup:</b> switch back to your usual context with <code>kubectl config use-context …</code></p>
+</div>
+</main>
+</body>
+</html>

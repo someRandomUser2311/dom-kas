@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>9.2 · Default-deny</title>
+<link rel="stylesheet" href="../content.css">
+</head>
+<body>
+<article class="lesson" data-id="9.2" data-chapter="9">
+<nav class="crumbs"><a href="../index.html">Course</a> / <a href="index.html">Chapter 9</a> / 9.2</nav>
+<header>
+  <p class="kicker">Chapter 9 · Lesson 9.2 · ~10 steps · ~12 min</p>
+  <h1>Default-deny</h1>
+  <p class="meta">You'll be able to write the default-deny policy for a namespace, predict what it breaks, and use it as the starting point for every namespace.</p>
+</header>
+
+<section class="step" id="s1">
+  <h2>1. Start from "nothing allowed"</h2>
+  <div class="body">
+    <p>Allow-lists are only safe if the starting point is "deny". A <b>default-deny</b> policy selects <b>every</b> pod in a namespace and allows nothing. Every pod becomes isolated in both directions.</p>
+    <p>Every flow the app needs must then be added deliberately.</p>
+  </div>
+  <aside class="coming" data-set="A">
+    <dl>
+      <dt>Windows/IIS admin</dt><dd>Like setting Windows Firewall to "block all inbound and outbound", then adding rules per application.</dd>
+      <dt>Linux admin</dt><dd><code>iptables -P INPUT DROP; iptables -P OUTPUT DROP</code>, per namespace.</dd>
+      <dt>Developer (Compose)</dt><dd>Your app's calls will fail until someone adds an allow for each dependency. Plan for that.</dd>
+      <dt>Other clouds</dt><dd>Like a security group with no rules, attached to everything in the namespace.</dd>
+    </dl>
+  </aside>
+</section>
+
+<section class="step" id="s2">
+  <h2>2. The policy</h2>
+  <div class="check" data-type="fill">
+    <p class="q">Complete the selector that matches <b>every</b> pod in the namespace.</p>
+    <pre class="code" data-file="k8s/policies/default-deny.yaml">apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  namespace: orders
+spec:
+  podSelector: <span class="blank">?</span>
+  policyTypes:
+    - Ingress
+    - Egress</pre>
+    <ul class="chips">
+      <li class="correct"><code>{}</code></li>
+      <li><code>"*"</code> <span class="why">Selectors don't take wildcards.</span></li>
+      <li><code>all</code> <span class="why">Not valid; it would be read as the string "all".</span></li>
+      <li><code>[]</code> <span class="why">A selector is a map, not a list.</span></li>
+    </ul>
+    <div class="explain">An empty selector <code>{}</code> means "every pod in this namespace". With both policy types and no <code>ingress</code> or <code>egress</code> rules, nothing is allowed either way.</div>
+  </div>
+</section>
+
+<section class="step" id="s3">
+  <h2>3. Ingress-only vs both</h2>
+  <div class="body">
+    <ul>
+      <li><code>policyTypes: [Ingress]</code> only: nothing can <i>reach</i> pods, but they can still call out anywhere. That's a common first step.</li>
+      <li><code>[Ingress, Egress]</code>: full lockdown. It stops data exfiltration and lateral movement from a compromised pod, but you must allow every outbound dependency, <b>including DNS</b>.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="step" id="s4">
+  <h2>4. Apply it and watch</h2>
+  <div class="check" data-type="custom">
+    <p class="q">In the matrix, apply <code>default-deny</code> (Ingress + Egress) to namespace <code>orders</code>.</p>
+    <div class="widget" data-widget="netpol-eval">Success when the policy is applied and every cell to and from <code>orders-api</code> and <code>orders-worker</code> has turned ✗, including their DNS column. Cells between <code>web</code> and <code>db</code> stay ✓ (not affected).</div>
+    <div class="explain">The policy only affects pods in its own namespace. Apply one per namespace.</div>
+  </div>
+</section>
+
+<section class="step" id="s5">
+  <h2>5. What breaks first?</h2>
+  <div class="check" data-type="predict">
+    <p class="q">After applying full default-deny to <code>orders</code>, what's the <b>first</b> error <code>orders-api</code> logs when it tries to reach the database at <code>postgres.db.svc.cluster.local</code>?</p>
+    <ol class="options">
+      <li>Connection refused on 5432 <span class="why">It doesn't get that far.</span></li>
+      <li class="correct">A DNS lookup timeout: it can't even resolve the database's name</li>
+      <li>Authentication failed <span class="why">No connection is made at all.</span></li>
+      <li>Nothing; same-cluster traffic is exempt <span class="why">Nothing is exempt from an egress default-deny.</span></li>
+    </ol>
+    <div class="explain">Egress default-deny blocks the pod's calls to CoreDNS on port 53. Every name lookup fails, which makes it look like "everything is broken". Lesson 9.4 adds the DNS allow.</div>
+  </div>
+</section>
+
+<section class="step" id="s6">
+  <h2>6. Every namespace, from day one</h2>
+  <div class="body">
+    <p>Contoso puts <code>default-deny.yaml</code> in the namespace template (lesson 8.2). Every new namespace starts locked, and the app's allow policies are shipped alongside its manifests.</p>
+    <p>Adding default-deny <b>later</b>, to a busy namespace, means finding every flow first. Use flow logs (lesson 9.5) to discover them.</p>
+  </div>
+</section>
+
+<section class="step" id="s7">
+  <h2>7. What about kube-system?</h2>
+  <div class="body">
+    <p>Don't apply default-deny to <code>kube-system</code> or other add-on namespaces unless the add-on documents its required flows. You'll break CoreDNS, metrics and more.</p>
+    <p>Lock down <b>your</b> namespaces; leave platform namespaces to their own guidance.</p>
+  </div>
+</section>
+
+<section class="step" id="s8">
+  <h2>8. Allow-all exists too</h2>
+  <div class="body"><p>An empty rule (<code>ingress: [{}]</code>) allows everything. It's occasionally useful for debugging, but because policies are additive it also cancels any default-deny. Watch for it in reviews.</p></div>
+  <pre class="code" data-file="allow-all-ingress.yaml (don't ship this)">spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+  ingress:
+    - {}</pre>
+</section>
+
+<section class="step" id="s9">
+  <h2>9. Checking policies</h2>
+  <pre class="output">$ kubectl get networkpolicy -n orders
+NAME           POD-SELECTOR   AGE
+default-deny   &lt;none&gt;         3m
+$ kubectl describe networkpolicy default-deny -n orders
+Spec:
+  PodSelector:     &lt;none&gt; (Allowing the specific traffic to all pods in this namespace)
+  Allowing ingress traffic:
+    &lt;none&gt; (Selected pods are isolated for ingress connectivity)
+  Allowing egress traffic:
+    &lt;none&gt; (Selected pods are isolated for egress connectivity)
+  Policy Types: Ingress, Egress</pre>
+</section>
+
+<section class="step summary" id="s10">
+  <h2>Default-deny, sorted</h2>
+  <ul>
+    <li><code>podSelector: {}</code> + <code>policyTypes: [Ingress, Egress]</code> + no rules = deny all.</li>
+    <li>One per namespace you own, from day one.</li>
+    <li>Egress deny breaks DNS first.</li>
+    <li>Leave <code>kube-system</code> alone; watch for allow-all rules.</li>
+  </ul>
+</section>
+</article>
+</body>
+</html>

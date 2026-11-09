@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>6.5 · Private clusters</title>
+<link rel="stylesheet" href="../content.css">
+</head>
+<body>
+<article class="lesson" data-id="6.5" data-chapter="6">
+<nav class="crumbs"><a href="../index.html">Course</a> / <a href="index.html">Chapter 6</a> / 6.5</nav>
+<header>
+  <p class="kicker">Chapter 6 · Lesson 6.5 · ~13 steps · ~18 min</p>
+  <h1>Private clusters</h1>
+  <p class="meta">You'll be able to explain how a private AKS cluster's API server is reached, fix the DNS problems that come with it, and pick a way in for people and pipelines.</p>
+</header>
+
+<section class="step" id="s1">
+  <h2>1. No public API server</h2>
+  <div class="body">
+    <p>In a <b>private cluster</b>, the API server has <b>no public endpoint</b>. AKS creates a <b>private endpoint</b> for it in your node subnet, with a private IP such as <code>10.20.0.4</code>. Only networks that can route to that IP, <i>and</i> resolve its name, can manage the cluster.</p>
+  </div>
+  <pre class="code" data-file="create (excerpt)">az aks create ... --enable-private-cluster</pre>
+  <aside class="coming" data-set="A">
+    <dl>
+      <dt>Windows/IIS admin</dt><dd>Like taking remote management off the internet completely: you must be on the corporate network, or use a jump server, to administer it.</dd>
+      <dt>Linux admin</dt><dd>The API server is now only on an internal interface; you need a bastion or VPN.</dd>
+      <dt>Developer (Compose)</dt><dd>Your laptop can't <code>kubectl</code> directly unless it's on the VPN. That's the point.</dd>
+      <dt>Other clouds</dt><dd>Like EKS with endpoint private access only, or a GKE private cluster with no public endpoint.</dd>
+    </dl>
+  </aside>
+</section>
+
+<section class="step" id="s2">
+  <h2>2. Private doesn't mean isolated</h2>
+  <div class="body">
+    <p>"Private cluster" is only about the <b>API server</b>. It doesn't by itself mean:</p>
+    <ul>
+      <li>nodes have no internet: egress is the outbound type (lesson 5.3);</li>
+      <li>apps are private: that depends on your Services and gateways;</li>
+      <li>the registry is private: that's ACR's private endpoint (lesson 6.3).</li>
+    </ul>
+    <p>A fully private design combines all of them.</p>
+  </div>
+</section>
+
+<section class="step" id="s3">
+  <h2>3. DNS is the hard part</h2>
+  <div class="body">
+    <p>The API server's name looks like <code>aks-orders-prod-x7y8z9.privatelink.westeurope.azmk8s.io</code>. AKS creates a <b>private DNS zone</b>, <code>privatelink.westeurope.azmk8s.io</code>, containing an A record pointing at the private IP. By default the zone is linked to the cluster's VNet only.</p>
+    <p>Any client in <b>another</b> VNet (a hub, a peered agent VNet, on-premises through a DNS forwarder) must be able to resolve that zone. Otherwise the name isn't found, even if the network route works.</p>
+  </div>
+  <div class="widget" data-widget="private-cluster-net">A network diagram: a spoke VNet with AKS and its private endpoint; a hub VNet with a DNS resolver and Azure Firewall; a peered "agents" VNet; a laptop on VPN; a Microsoft-hosted agent on the internet. The learner places a client and toggles "zone linked to VNet X" and "custom DNS forwarder". Two lights show the result: DNS resolves ✓/✗ and TCP 443 connects ✓/✗.</div>
+</section>
+
+<section class="step" id="s4">
+  <h2>4. Diagnose the DNS failure</h2>
+  <div class="check" data-type="diagnose">
+    <p class="q">A self-hosted agent in a <b>peered</b> VNet runs <code>kubectl apply</code>. What's wrong?</p>
+    <pre class="output">E1103 10:14:22 memcache.go:265] couldn't get current server API group list:
+Get "https://aks-orders-prod-x7y8z9.privatelink.westeurope.azmk8s.io:443/api?timeout=32s":
+dial tcp: lookup aks-orders-prod-x7y8z9.privatelink.westeurope.azmk8s.io on 168.63.129.16:53: no such host</pre>
+    <ol class="options">
+      <li>The agent lacks an RBAC role <span class="why">That would be a 403 after connecting; this fails at name lookup.</span></li>
+      <li class="correct">The private DNS zone isn't linked to the agent's VNet (or its custom DNS doesn't forward to Azure DNS for that zone)</li>
+      <li>VNet peering is missing <span class="why">Peering problems show as a timeout after DNS succeeds.</span></li>
+      <li>Authorized IP ranges block the agent <span class="why">Authorized ranges don't apply to private clusters.</span></li>
+    </ol>
+    <div class="explain">"no such host" = DNS. Link <code>privatelink.westeurope.azmk8s.io</code> to the agent VNet, or, in hub-and-spoke, use a central zone linked to the hub and point spokes' DNS at a hub DNS Private Resolver. Then check the route (peering), then RBAC.</div>
+  </div>
+</section>
+
+<section class="step" id="s5">
+  <h2>5. Hub-and-spoke DNS done right</h2>
+  <div class="body">
+    <p>In enterprise networks, a central team owns DNS:</p>
+    <ul>
+      <li>a <b>custom private DNS zone</b> in a hub subscription, passed to AKS with <code>--private-dns-zone &lt;zone-id&gt;</code>;</li>
+      <li>the cluster identity gets <b>Private DNS Zone Contributor</b> on that zone;</li>
+      <li>all spokes and on-premises resolve through the hub's <b>Azure DNS Private Resolver</b>.</li>
+    </ul>
+    <p>Decide this <b>before</b> creating the cluster. The DNS zone option can't simply be changed later.</p>
+  </div>
+</section>
+
+<section class="step" id="s6">
+  <h2>6. Way in #1: a jump box</h2>
+  <div class="body">
+    <p>A small VM in the VNet (or a peered one), reached through <b>Azure Bastion</b>, with <code>az</code> and <code>kubectl</code> installed. Engineers connect to it and run commands from there.</p>
+    <p>It's simple and familiar, but it's another VM to patch, and access must be controlled.</p>
+  </div>
+</section>
+
+<section class="step" id="s7">
+  <h2>7. Way in #2: <code>az aks command invoke</code></h2>
+  <div class="body">
+    <p><code>az aks command invoke</code> sends a command through <b>Azure's management API</b>. AKS runs it in a temporary pod inside the cluster and returns the output.</p>
+    <p>There's no network path to the API server needed and no VNet access. It needs your Azure role on the cluster and nothing else, which makes it great for occasional admin tasks and emergencies.</p>
+    <p>It isn't built for high-volume or long-running work, and it's slower than kubectl.</p>
+  </div>
+  <pre class="code" data-file="terminal">az aks command invoke -g rg-orders-prod -n aks-orders-prod \
+  --command "kubectl get pods -n orders"
+
+# send files along and apply them
+az aks command invoke -g rg-orders-prod -n aks-orders-prod \
+  --command "kubectl apply -f deployment.yaml -n orders" \
+  --file deployment.yaml</pre>
+</section>
+
+<section class="step" id="s8">
+  <h2>8. Way in #3: agents inside the network</h2>
+  <div class="body">
+    <p>For pipelines, run the agent <b>inside</b> the network, in the same or a peered VNet with DNS resolving:</p>
+    <ul>
+      <li><b>Managed DevOps Pools</b>: Azure creates and recycles agent VMs in <i>your</i> subnet, so you don't patch agents yourself. Recommended.</li>
+      <li>Self-hosted agents on a VM Scale Set (the older "scale set agents").</li>
+      <li>Self-hosted agents running as pods, possibly in the cluster itself (careful: an agent that deploys the cluster it runs on).</li>
+    </ul>
+  </div>
+  <aside class="coming" data-set="B">
+    <dl>
+      <dt>GitHub Actions</dt><dd>Same pattern: self-hosted runners, or Azure private networking for GitHub-hosted runners, inside the VNet.</dd>
+      <dt>GitLab CI</dt><dd>A GitLab runner deployed into the VNet.</dd>
+      <dt>Jenkins</dt><dd>Your Jenkins agents need a route and DNS into the VNet. Same rules.</dd>
+      <dt>Classic pipelines</dt><dd>Deployment groups and agents work the same; just place them in the VNet.</dd>
+    </dl>
+  </aside>
+</section>
+
+<section class="step" id="s9">
+  <h2>9. Get the agent working</h2>
+  <div class="check" data-type="custom">
+    <p class="q">In the network diagram, place the release pipeline's agent so it can deploy to the private <code>aks-orders-prod</code>.</p>
+    <div class="widget" data-widget="private-cluster-net">Success when the agent is a Managed DevOps Pool (or self-hosted agent) in the AKS VNet, or in a peered VNet with the private DNS zone linked or resolvable via the hub resolver, so both lights are green. Feedback per position:
+      <ul>
+        <li><b>Microsoft-hosted:</b> "No route to a private IP."</li>
+        <li><b>Peered VNet without the DNS link:</b> "no such host."</li>
+        <li><b>Laptop off VPN:</b> "No route."</li>
+      </ul></div>
+    <div class="explain">Two conditions, both required: a <b>network route</b> to the private endpoint, and <b>DNS</b> that resolves the privatelink name. RBAC is the third check once connected.</div>
+  </div>
+</section>
+
+<section class="step" id="s10">
+  <h2>10. Way in #4: API Server VNet Integration</h2>
+  <div class="body">
+    <p><b>API Server VNet Integration</b> places the API server directly into a <b>delegated subnet</b> of your VNet, reached through an internal load balancer instead of a private endpoint.</p>
+    <p>It can be switched between private and public access without recreating the cluster, and node-to-API traffic stays inside your VNet.</p>
+    <p>DNS and agent placement rules are the same as for private clusters. Check its current regional availability when choosing it.</p>
+  </div>
+</section>
+
+<section class="step" id="s11">
+  <h2>11. "Public FQDN" for private clusters</h2>
+  <div class="body">
+    <p>The <code>--enable-public-fqdn</code> option adds a <b>public DNS name</b> that resolves to the cluster's <b>private</b> IP. That avoids private DNS zone links for clients that already have a network route.</p>
+    <p>It's a convenience trade-off. The API is still only reachable over the private network, but the private IP is now discoverable through public DNS.</p>
+  </div>
+</section>
+
+<section class="step" id="s12">
+  <h2>12. Connection checklist</h2>
+  <ol>
+    <li><b>DNS</b>: <code>nslookup &lt;api fqdn&gt;</code> from the client returns the private IP.</li>
+    <li><b>Route</b>: <code>nc -vz &lt;private ip&gt; 443</code> succeeds (peering, UDRs, NSGs, firewall).</li>
+    <li><b>Identity</b>: <code>kubectl auth can-i …</code> returns yes (Azure RBAC).</li>
+  </ol>
+</section>
+
+<section class="step summary" id="s13">
+  <h2>Private clusters, sorted</h2>
+  <ul>
+    <li>The API server becomes a private endpoint; there's no public access.</li>
+    <li>DNS (<code>privatelink.&lt;region&gt;.azmk8s.io</code>) must resolve from every client VNet; "no such host" = DNS.</li>
+    <li>Ways in: jump box + Bastion, <code>az aks command invoke</code>, Managed DevOps Pools / self-hosted agents in the VNet, VPN.</li>
+    <li>API Server VNet Integration is the alternative design.</li>
+    <li>Check in order: DNS → route → RBAC.</li>
+  </ul>
+</section>
+</article>
+</body>
+</html>

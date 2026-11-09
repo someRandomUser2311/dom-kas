@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>15.6 · Securing Azure DevOps</title>
+<link rel="stylesheet" href="../content.css">
+</head>
+<body>
+<article class="lesson" data-id="15.6" data-chapter="15">
+<nav class="crumbs"><a href="../index.html">Course</a> / <a href="index.html">Chapter 15</a> / 15.6</nav>
+<header>
+  <p class="kicker">Chapter 15 · Lesson 15.6 · ~12 steps · ~15 min</p>
+  <h1>Securing Azure DevOps</h1>
+  <p class="meta">You'll be able to protect service connections, environments, pools and variable groups with checks, so that only reviewed code on <code>main</code>, using the approved template, can reach production.</p>
+</header>
+
+<section class="step" id="s1">
+  <h2>1. YAML is code anyone can change</h2>
+  <div class="body">
+    <p>A YAML pipeline lives in the repo. Anyone who can push a branch can change the YAML, for example to add a step that uses the prod service connection.</p>
+    <p>The defence isn't hiding the YAML. It's putting <b>checks on the protected resources</b> themselves. Checks are configured in Azure DevOps, outside the repo, so a branch can't remove them.</p>
+  </div>
+  <aside class="coming" data-set="B">
+    <dl>
+      <dt>GitHub Actions</dt><dd>Environment protection rules (required reviewers, deployment branches), plus OIDC subject claims tied to an environment and branch.</dd>
+      <dt>GitLab CI</dt><dd>Protected environments, protected branches and protected variables.</dd>
+      <dt>Jenkins</dt><dd>Folder-scoped credentials and restricted job permissions, which are much harder to get right.</dd>
+      <dt>Classic pipelines</dt><dd>Release approvals and gates lived in the release definition; YAML moves them onto resources.</dd>
+    </dl>
+  </aside>
+</section>
+
+<section class="step" id="s2">
+  <h2>2. Protected resources</h2>
+  <div class="body">
+    <p>These can carry <b>checks</b> and <b>pipeline permissions</b>:</p>
+    <ul>
+      <li>service connections;</li>
+      <li>environments;</li>
+      <li>agent pools;</li>
+      <li>variable groups;</li>
+      <li>secure files;</li>
+      <li>repositories.</li>
+    </ul>
+    <p>A stage that uses a protected resource waits until all its checks pass.</p>
+  </div>
+</section>
+
+<section class="step" id="s3">
+  <h2>3. The checks</h2>
+  <table>
+    <tr><th>Check</th><th>Ensures</th></tr>
+    <tr><td><b>Approvals</b></td><td>Named people or groups approve (optionally not the person who queued the run)</td></tr>
+    <tr><td><b>Branch control</b></td><td>Only runs from allowed branches (e.g. <code>refs/heads/main</code>), and optionally only protected branches</td></tr>
+    <tr><td><b>Required template</b></td><td>The pipeline must <code>extends</code> an approved template</td></tr>
+    <tr><td><b>Business hours</b></td><td>Only within a time window</td></tr>
+    <tr><td><b>Exclusive lock</b></td><td>One run at a time</td></tr>
+    <tr><td><b>Query Azure Monitor alerts / Invoke REST API / Azure Function</b></td><td>External health or compliance gates</td></tr>
+  </table>
+</section>
+
+<section class="step" id="s4">
+  <h2>4. A feature branch tries prod</h2>
+  <div class="widget" data-widget="stage-sim">The stage simulator with checks. A run from <code>feature/x</code> modifies the YAML to deploy to prod using <code>sc-orders-prod</code>. The learner toggles checks on the service connection and the environment (branch control, required template, approval) and replays: the stage either runs (red, bad) or is blocked with the check that blocked it.</div>
+  <div class="check" data-type="custom">
+    <p class="q">Configure checks so that <b>only</b> runs from <code>main</code>, using <code>templates/secure-pipeline.yml@platform</code>, can deploy to prod, and only after approval.</p>
+    <div class="widget" data-widget="stage-sim">Success when:
+      <ul>
+        <li><code>sc-orders-prod</code> has branch control (main only) and required template;</li>
+        <li>the <code>prod</code> environment has an approval plus branch control.</li>
+      </ul>
+      Then the replay from <code>feature/x</code> is blocked, a run from <code>main</code> that doesn't use the template is blocked, and a run from <code>main</code> with the template waits for approval.</div>
+    <div class="explain">Put checks on the <b>service connection</b> too, not only the environment. Otherwise a job that doesn't target the environment could still use the connection.</div>
+  </div>
+</section>
+
+<section class="step" id="s5">
+  <h2>5. Pipeline permissions</h2>
+  <div class="body"><p>By default, a protected resource must be <b>authorized</b> for each pipeline that uses it. Don't click "Grant access to all pipelines" on prod service connections, variable groups or pools. Authorize only the release pipeline.</p></div>
+</section>
+
+<section class="step" id="s6">
+  <h2>6. Limit job authorization scope</h2>
+  <div class="body">
+    <p>Every job gets a token (<code>System.AccessToken</code>) for the Azure DevOps APIs. Turn these settings on, at organisation and project level:</p>
+    <ul>
+      <li><b>Limit job authorization scope to current project</b> for non-release and release pipelines;</li>
+      <li><b>Protect access to repositories in YAML pipelines</b>, so a pipeline can only check out repositories it's explicitly granted.</li>
+    </ul>
+    <p>A compromised job then can't read other projects' code or settings.</p>
+  </div>
+</section>
+
+<section class="step" id="s7">
+  <h2>7. Builds from forks</h2>
+  <div class="body">
+    <p>For public or GitHub-hosted repos, a PR from a <b>fork</b> runs code written by anyone. Keep the defaults:</p>
+    <ul>
+      <li>don't make secrets available to fork builds;</li>
+      <li>require a team member's comment or approval before fork PRs run.</li>
+    </ul>
+    <p>Run fork PRs only on Microsoft-hosted agents, never on self-hosted agents inside your network.</p>
+  </div>
+</section>
+
+<section class="step" id="s8">
+  <h2>8. Variable groups and secrets</h2>
+  <div class="body"><p>Link variable groups to <b>Key Vault</b> instead of storing secrets in Azure DevOps. Protect them with checks like any other resource. Remember: secret variables are masked in logs, but a malicious step can still send them elsewhere. Access control on <i>who can run with them</i> is the real protection.</p></div>
+</section>
+
+<section class="step" id="s9">
+  <h2>9. Agents are a target too</h2>
+  <div class="body"><p>Self-hosted agents and Managed DevOps Pools inside your network can reach private resources. Use separate pools for prod deploys, protect them with checks, and use ephemeral agents (Managed DevOps Pools recycle them) so one job can't leave something behind for the next.</p></div>
+</section>
+
+<section class="step" id="s10">
+  <h2>10. Which setting stops what?</h2>
+  <div class="check" data-type="mcq">
+    <p class="q">A developer pushes <code>feature/x</code> with YAML that adds <code>az aks command invoke … delete ns orders</code>, using <code>sc-orders-prod</code> in a normal job (no environment). What stops it?</p>
+    <ol class="options">
+      <li>The prod environment's approval <span class="why">The job doesn't target the environment, so that check never applies.</span></li>
+      <li class="correct">Branch control (main only) and required template on the <code>sc-orders-prod</code> service connection</li>
+      <li>The PR policy on main <span class="why">The branch isn't merged; CI on the feature branch still runs its YAML.</span></li>
+      <li>Nothing can stop it <span class="why">Resource checks exist exactly for this.</span></li>
+    </ol>
+    <div class="explain">Protect the <b>credential</b>, not just the environment.</div>
+  </div>
+</section>
+
+<section class="step" id="s11">
+  <h2>11. Audit</h2>
+  <div class="body"><p>Azure DevOps auditing records changes to checks, permissions and service connections. Stream it to Log Analytics or your SIEM, and alert when someone removes a check from a prod resource.</p></div>
+</section>
+
+<section class="step summary" id="s12">
+  <h2>Azure DevOps security, sorted</h2>
+  <ul>
+    <li>Checks live on resources (service connections, environments, pools, variable groups), outside the YAML.</li>
+    <li>Branch control + required template + approvals on both the prod service connection and the environment.</li>
+    <li>Authorize resources per pipeline; limit job token scope; protect repository access.</li>
+    <li>Fork builds without secrets; separate, ephemeral agent pools; audit changes.</li>
+  </ul>
+</section>
+</article>
+</body>
+</html>

@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chapter 6 · Practice</title>
+<link rel="stylesheet" href="../content.css">
+</head>
+<body>
+<main>
+<nav class="crumbs"><a href="../index.html">Course</a> / <a href="index.html">Chapter 6</a> / Practice</nav>
+<p class="kicker">Chapter 6 · Practice</p>
+<h1>Practice: quiz, predict, lab, try it locally</h1>
+
+<h2 id="quiz">Checkpoint quiz (10 drawn from 20)</h2>
+<div class="check" data-type="mcq"><p class="q">What's the login server of registry <code>contosoacr</code>?</p><ol class="options"><li><code>contosoacr.azure.com</code></li><li class="correct"><code>contosoacr.azurecr.io</code></li><li><code>acr.contosoacr.io</code></li><li><code>contosoacr</code></li></ol><div class="explain">Always use the full login server.</div></div>
+<div class="check" data-type="mcq"><p class="q">Which ACR SKU is needed for private endpoints?</p><ol class="options"><li>Basic</li><li>Standard</li><li class="correct">Premium</li><li>Any</li></ol><div class="explain">Premium also adds geo-replication.</div></div>
+<div class="check" data-type="mcq"><p class="q">Why keep the ACR admin user off?</p><ol class="options"><li>It's slow</li><li class="correct">It's a shared, full-rights password with no per-person audit</li><li>It's deprecated for pulls</li><li>It costs more</li></ol><div class="explain">Use Entra ID identities instead.</div></div>
+<div class="check" data-type="mcq"><p class="q">What does <code>az acr build</code> do?</p><ol class="options"><li>Builds locally with Docker</li><li class="correct">Uploads the source and builds and pushes the image in Azure</li><li>Builds a Helm chart</li><li>Scans an image</li></ol><div class="explain">No local Docker is needed.</div></div>
+<div class="check" data-type="mcq"><p class="q">What does <code>az aks update --attach-acr contosoacr</code> do?</p><ol class="options"><li>Creates an imagePullSecret</li><li class="correct">Grants AcrPull on the registry to the kubelet identity</li><li>Enables the admin user</li><li>Grants AcrPush to the pipeline</li></ol><div class="explain">No secrets involved.</div></div>
+<div class="check" data-type="mcq"><p class="q"><code>ImagePullBackOff</code> with "401 Unauthorized" means…</p><ol class="options"><li>Wrong tag</li><li class="correct">The pulling identity isn't authorised</li><li>DNS failure</li><li>Wrong CPU architecture</li></ol><div class="explain">"not found" would mean wrong name or tag.</div></div>
+<div class="check" data-type="mcq"><p class="q">"no such host" pulling from a registry with a private endpoint usually means…</p><ol class="options"><li>Missing AcrPull</li><li class="correct">The <code>privatelink.azurecr.io</code> zone doesn't resolve from that VNet</li><li>The tag is wrong</li><li>The registry is Basic SKU</li></ol><div class="explain">DNS comes first.</div></div>
+<div class="check" data-type="mcq"><p class="q">Public access on ACR is disabled. Which agent can still push?</p><ol class="options"><li>A Microsoft-hosted agent</li><li class="correct">A Managed DevOps Pool agent in a VNet with a path to the private endpoint</li><li>Any agent with AcrPush</li><li>None</li></ol><div class="explain">Network access and identity are both needed.</div></div>
+<div class="check" data-type="mcq"><p class="q">How can a pipeline be limited to pushing only to <code>orders/*</code> repositories?</p><ol class="options"><li>AcrPush</li><li class="correct">Repository permissions with ABAC conditions</li><li>Geo-replication</li><li>The admin user</li></ol><div class="explain">Plain AcrPush covers every repository.</div></div>
+<div class="check" data-type="mcq"><p class="q">What does a "public" AKS cluster expose?</p><ol class="options"><li>Nodes with public IPs</li><li class="correct">The API server's endpoint</li><li>All apps</li><li>etcd</li></ol><div class="explain">Apps and nodes are separate decisions.</div></div>
+<div class="check" data-type="mcq"><p class="q">You're outside the authorized IP ranges and run kubectl. You see…</p><ol class="options"><li>403 Forbidden</li><li class="correct">A connection timeout</li><li>A login prompt</li><li>An empty pod list</li></ol><div class="explain">The connection is dropped before auth.</div></div>
+<div class="check" data-type="mcq"><p class="q">Why are Microsoft-hosted agents hard to use with authorized IP ranges?</p><ol class="options"><li>They don't support kubectl</li><li class="correct">Their IPs come from a large, changing pool</li><li>They use IPv6 only</li><li>They're blocked by AKS</li></ol><div class="explain">Use agents with a fixed egress IP.</div></div>
+<div class="check" data-type="mcq"><p class="q">Do authorized IP ranges apply to private clusters?</p><ol class="options"><li>Yes</li><li class="correct">No</li><li>Only for kubectl</li><li>Only for pipelines</li></ol><div class="explain">Private clusters have no public endpoint to filter.</div></div>
+<div class="check" data-type="mcq"><p class="q">A private cluster's API server name resolves through…</p><ol class="options"><li>Public DNS</li><li class="correct">The private DNS zone <code>privatelink.&lt;region&gt;.azmk8s.io</code></li><li>CoreDNS</li><li>The hosts file</li></ol><div class="explain">Link it to every client VNet, or resolve via a hub resolver.</div></div>
+<div class="check" data-type="mcq"><p class="q">Which way in needs no network path to a private API server?</p><ol class="options"><li>A jump box</li><li class="correct"><code>az aks command invoke</code></li><li>A VPN</li><li>A peered agent</li></ol><div class="explain">It goes through Azure's management API.</div></div>
+<div class="check" data-type="mcq"><p class="q">Does "private cluster" mean nodes have no internet access?</p><ol class="options"><li>Yes</li><li class="correct">No; egress is set by the outbound type</li><li>Only in production</li><li>Only with Cilium</li></ol><div class="explain">Private = the API server only.</div></div>
+<div class="check" data-type="mcq"><p class="q">A peered-VNet agent gets "no such host" for the private API FQDN. First fix?</p><ol class="options"><li>Add an RBAC role</li><li class="correct">Link or resolve the private DNS zone for that VNet</li><li>Add authorized IPs</li><li>Recreate the cluster</li></ol><div class="explain">Then check the route, then RBAC.</div></div>
+<div class="check" data-type="mcq"><p class="q">What's the recommended way to run Azure Pipelines agents in your VNet without patching them yourself?</p><ol class="options"><li>Microsoft-hosted agents</li><li class="correct">Managed DevOps Pools</li><li>Classic deployment groups</li><li>A pod in kube-system</li></ol><div class="explain">Azure manages the agent VMs in your subnet.</div></div>
+<div class="check" data-type="mcq"><p class="q">A bank forbids internet-reachable management endpoints. Choose…</p><ol class="options"><li>Public + Entra ID</li><li>Public + authorized IPs</li><li class="correct">A private cluster (or private VNet Integration)</li><li>Free tier</li></ol><div class="explain">There's no public endpoint at all.</div></div>
+<div class="check" data-type="mcq"><p class="q">What does <code>--enable-public-fqdn</code> do on a private cluster?</p><ol class="options"><li>Makes the API public</li><li class="correct">Adds a public DNS name that resolves to the private IP</li><li>Disables private DNS</li><li>Adds authorized IPs</li></ol><div class="explain">Access still needs a private route.</div></div>
+
+<h2 id="predict">Predict the outcome (3)</h2>
+<div class="check" data-type="predict"><p class="q">1 · A new cluster deploys <code>contosoacr.azurecr.io/orders-api:1.4.2</code>. Nobody ran <code>--attach-acr</code>.</p><ol class="options"><li>Running</li><li class="correct"><code>ImagePullBackOff</code>, 401 Unauthorized in events</li><li>Pending</li><li>CrashLoopBackOff</li></ol><div class="explain">The kubelet identity needs AcrPull.</div></div>
+<div class="check" data-type="predict"><p class="q">2 · A pipeline on a Microsoft-hosted agent runs <code>kubectl apply</code> against a private cluster.</p><ol class="options"><li>Works</li><li class="correct">Fails: the name doesn't resolve publicly / no route to the private IP</li><li>403</li><li>Works but slowly</li></ol><div class="explain">Hosted agents aren't in your network.</div></div>
+<div class="check" data-type="predict"><p class="q">3 · An agent in a peered VNet, with peering working, but the private DNS zone only linked to the AKS VNet.</p><ol class="options"><li>Works</li><li class="correct">"lookup …privatelink…: no such host"</li><li>i/o timeout</li><li>Forbidden</li></ol><div class="explain">The route exists; DNS doesn't.</div></div>
+
+<h2 id="lab">Write lab: deploy-private.sh</h2>
+<div class="lab">
+  <p><b>Brief:</b> Write <code>deploy-private.sh</code> to apply <code>k8s/base/</code> to namespace <code>orders</code> on the private cluster <code>aks-orders-prod</code> in <code>rg-orders-prod</code>, using <code>az aks command invoke</code>. Graded by <b>cli-spec</b>.</p>
+  <ul class="rules">
+    <li>The script starts with <code>set -euo pipefail</code>.</li>
+    <li>It uses <code>az aks command invoke</code> with resource group <code>rg-orders-prod</code> and name <code>aks-orders-prod</code>.</li>
+    <li><code>--command</code> runs <code>kubectl apply</code> targeting namespace <code>orders</code>.</li>
+    <li><code>--file</code> attaches the manifests (a folder or files), and the paths in the command match.</li>
+    <li class="critical">The cluster stays private: no <code>az aks update</code> that enables a public endpoint or sets <code>--api-server-authorized-ip-ranges</code>.</li>
+    <li class="critical">No credentials hard-coded (no client secrets, passwords or tokens; no <code>az login -p</code>).</li>
+  </ul>
+  <details class="solution"><summary>Reference solution</summary><p>See lesson <a href="6.6-choosing.html#s7">6.6, step 7</a>.</p></details>
+</div>
+
+<h2 id="walkthrough">Walkthrough: public → private → fixed</h2>
+<ol>
+  <li><code>az acr build</code> pushes <code>orders-api:1.5.0</code>; <code>az aks update --attach-acr</code>; <code>az aks check-acr</code>.</li>
+  <li>Deploy to the public dev cluster from a pipeline with <code>KubernetesManifest@1</code>.</li>
+  <li>Run the same pipeline against private prod on a hosted agent: it fails at DNS.</li>
+  <li>Switch the job to the Managed DevOps Pool in the peered VNet with the hub DNS resolver: it succeeds.</li>
+  <li>Emergency path: <code>az aks command invoke … --command "kubectl rollout status deploy/orders-api -n orders"</code>.</li>
+</ol>
+
+<h2 id="try">Try it locally</h2>
+<div class="try" data-lesson="6.1"><p><b>6.1 Push and run from the local registry.</b></p>
+<pre>docker tag localhost:5001/orders-api:1.0.0 localhost:5001/orders/orders-api:1.0.1
+docker push localhost:5001/orders/orders-api:1.0.1
+kubectl create deployment oa --image=localhost:5001/orders/orders-api:1.0.1
+kubectl get pods -l app=oa</pre>
+<p>Expected: the pod runs, pulled from the local registry.</p><p><b>Cleanup:</b> <code>kubectl delete deploy oa</code></p>
+<p class="muted">On AKS: pulls are authenticated with the kubelet identity's AcrPull role.</p></div>
+<div class="try" data-lesson="6.2"><p><b>6.2 Read pull errors.</b></p>
+<pre>kubectl run bad-tag --image=localhost:5001/orders-api:9.9.9
+kubectl run bad-host --image=contosoacr.azurecr.io/orders-api:1.4.2
+sleep 20; kubectl describe pod bad-tag | grep -m1 Failed; kubectl describe pod bad-host | grep -m1 Failed</pre>
+<p>Expected: <code>bad-tag</code> → "not found"; <code>bad-host</code> → "no such host" or an authorisation error, depending on your network.</p>
+<p><b>Cleanup:</b> <code>kubectl delete pod bad-tag bad-host</code></p></div>
+</main>
+</body>
+</html>

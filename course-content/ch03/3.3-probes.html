@@ -1,0 +1,196 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>3.3 · Probes</title>
+<link rel="stylesheet" href="../content.css">
+</head>
+<body>
+<article class="lesson" data-id="3.3" data-chapter="3">
+<nav class="crumbs"><a href="../index.html">Course</a> / <a href="index.html">Chapter 3</a> / 3.3</nav>
+<header>
+  <p class="kicker">Chapter 3 · Lesson 3.3 · ~10 steps · ~13 min</p>
+  <h1>Probes</h1>
+  <p class="meta">You'll be able to choose between startup, readiness and liveness probes, configure each safely, and avoid the probe mistake that turns a slow database into a full outage.</p>
+</header>
+
+<section class="step" id="s1">
+  <h2>1. Running isn't the same as working</h2>
+  <div class="body">
+    <p>A process can be alive and still useless: still loading, deadlocked, or out of connections. Kubernetes can only react to what it can see.</p>
+    <p><b>Probes</b> let the kubelet ask the container about its state. They can run an HTTP GET, a TCP connect, a gRPC health check, or a command inside the container.</p>
+    <p>There are three probes. Each answers a different question and causes a different action.</p>
+  </div>
+  <table>
+    <tr><th>Probe</th><th>Question</th><th>On failure</th></tr>
+    <tr><td><b>startup</b></td><td>Has it finished starting?</td><td>Keep waiting; the other probes are paused. If it never succeeds, the container is restarted.</td></tr>
+    <tr><td><b>readiness</b></td><td>Should it get traffic right now?</td><td><b>Removed from Service endpoints.</b> Not restarted.</td></tr>
+    <tr><td><b>liveness</b></td><td>Is it stuck beyond repair?</td><td><b>Container is restarted.</b></td></tr>
+  </table>
+  <aside class="coming" data-set="A">
+    <dl>
+      <dt>Windows/IIS admin</dt><dd>Readiness is like a load balancer health probe taking a server out of the pool. Liveness is like IIS rapid-fail protection recycling a broken app pool.</dd>
+      <dt>Linux admin</dt><dd>Readiness = the HAProxy health check; liveness = a watchdog that restarts the service.</dd>
+      <dt>Developer (Compose)</dt><dd>Compose's <code>healthcheck</code> is closest to liveness, but it only marks the container unhealthy. Kubernetes splits it into three, and acts on each.</dd>
+      <dt>Other clouds</dt><dd>Like target-group health checks (readiness) plus ECS container health checks (liveness).</dd>
+    </dl>
+  </aside>
+</section>
+
+<section class="step" id="s2">
+  <h2>2. Readiness: take me out of rotation</h2>
+  <div class="body">
+    <p>Readiness gates <b>traffic</b>. While it fails, the pod stays running but is removed from the Service's endpoints. When it passes again, the pod is added back.</p>
+    <p>Readiness also drives <b>rollouts</b>: a new pod only counts as available, and old pods are only removed, once it's ready.</p>
+  </div>
+  <pre class="code" data-file="deployment.yaml (container)">readinessProbe:
+  httpGet:
+    path: /readyz
+    port: http
+  periodSeconds: 5
+  failureThreshold: 3</pre>
+  <div class="check" data-type="mcq">
+    <p class="q">An <code>orders-api</code> pod's readiness probe starts failing. What does Kubernetes do?</p>
+    <ol class="options">
+      <li>Restarts the container <span class="why">That's liveness.</span></li>
+      <li class="correct">Stops sending it Service traffic; the pod keeps running</li>
+      <li>Deletes the pod and creates a new one <span class="why">Nothing deletes pods because of probes.</span></li>
+      <li>Nothing until the rollout ends <span class="why">Readiness is checked continuously, not only during rollouts.</span></li>
+    </ol>
+    <div class="explain">Readiness is the safe probe: a pod that is temporarily overloaded or warming a cache just steps aside until it can serve again.</div>
+  </div>
+</section>
+
+<section class="step" id="s3">
+  <h2>3. Liveness: restart me</h2>
+  <div class="body">
+    <p>Liveness restarts the container when it fails <code>failureThreshold</code> times in a row. Use it for one thing only: a state the app <b>can't recover from on its own</b>, such as a deadlock.</p>
+    <p>A liveness endpoint should check only the process itself: "can I answer at all?". It must never check anything outside the container.</p>
+  </div>
+  <pre class="code" data-file="deployment.yaml (container)">livenessProbe:
+  httpGet:
+    path: /healthz      # only checks the process itself
+    port: http
+  periodSeconds: 10
+  failureThreshold: 3
+  timeoutSeconds: 2</pre>
+</section>
+
+<section class="step" id="s4">
+  <h2>4. The liveness death spiral</h2>
+  <div class="body">
+    <p>Contoso once pointed liveness at <code>/health/db</code>, which checks the database. Then the database got slow for two minutes:</p>
+    <ol>
+      <li>Every <code>orders-api</code> pod's liveness fails at the same moment.</li>
+      <li>Every pod is restarted at once, so there's zero capacity.</li>
+      <li>The restarted pods all reconnect to the struggling database at the same time, which makes it slower.</li>
+      <li>Liveness fails again, and the loop continues.</li>
+    </ol>
+    <p>A two-minute database slowdown became a 40-minute full outage. Restarting the API never fixes a database problem.</p>
+  </div>
+  <div class="widget" data-widget="probe-timeline">A timeline with 3 pods and the database's latency. The learner picks which endpoint liveness and readiness call (<code>/healthz</code> or <code>/health/db</code>), then clicks "DB slow for 2 minutes". With liveness on <code>/health/db</code>, all pods restart repeatedly. With readiness on <code>/health/db</code> and liveness on <code>/healthz</code>, pods briefly leave rotation and recover with no restarts.</div>
+</section>
+
+<section class="step" id="s5">
+  <h2>5. Spot the dangerous probe</h2>
+  <div class="check" data-type="tapline" data-match="path: /health/db">
+    <p class="q">One line here can turn a database blip into an outage. Tap it.</p>
+    <pre class="code" data-file="deployment.yaml (container)">readinessProbe:
+  httpGet:
+    path: /readyz
+    port: http
+livenessProbe:
+  httpGet:
+    path: /health/db
+    port: http
+  periodSeconds: 10</pre>
+    <div class="explain">Liveness depends on the database, so a slow database restarts every pod. Point liveness at <code>/healthz</code> (process only). If you want dependency checks, put them in <b>readiness</b>, and even then be careful, because every pod failing readiness at once still means no capacity.</div>
+  </div>
+</section>
+
+<section class="step" id="s6">
+  <h2>6. Startup: slow starters</h2>
+  <div class="body">
+    <p>Some apps take a minute or more to start: JVM warm-up, migrations, loading a cache. With only a liveness probe, they get killed before they're up.</p>
+    <p>A <b>startup probe</b> pauses the liveness and readiness probes until it succeeds once. Allow up to <code>failureThreshold × periodSeconds</code> for start-up, then hand over to fast liveness checks.</p>
+    <p>It's better than a large <code>initialDelaySeconds</code> on liveness: that delay is fixed, so it's too long for fast starts and too short for slow ones.</p>
+  </div>
+  <div class="check" data-type="fill">
+    <p class="q">The app sometimes needs up to 2 minutes to start. Liveness should still detect a hang within 30 seconds once it's running. What should you add?</p>
+    <pre class="code" data-file="deployment.yaml (container)"><span class="blank">?</span>:
+  httpGet: { path: /healthz, port: http }
+  periodSeconds: 10
+  failureThreshold: 12        # 12 × 10s = up to 120s to start
+livenessProbe:
+  httpGet: { path: /healthz, port: http }
+  periodSeconds: 10
+  failureThreshold: 3</pre>
+    <ul class="chips">
+      <li class="correct"><code>startupProbe</code></li>
+      <li><code>initialDelaySeconds</code> <span class="why">A field, not a probe. A 120 s delay would also wait 2 minutes after every quick restart.</span></li>
+      <li><code>readinessProbe</code> <span class="why">Readiness doesn't pause liveness.</span></li>
+      <li><code>preStopHook</code> <span class="why">That runs at shutdown.</span></li>
+    </ul>
+    <div class="explain">The startup probe allows a long start-up once; after that, liveness can be strict.</div>
+  </div>
+</section>
+
+<section class="step" id="s7">
+  <h2>7. Probe settings that matter</h2>
+  <div class="body">
+    <ul>
+      <li><code>periodSeconds</code>: how often (default 10).</li>
+      <li><code>timeoutSeconds</code>: how long to wait for an answer (default 1, often too short under load).</li>
+      <li><code>failureThreshold</code> and <code>successThreshold</code>: how many failures or successes in a row flip the state.</li>
+      <li>Keep probe endpoints <b>cheap</b>: no database queries, no locks. They run constantly on every pod.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="step" id="s8">
+  <h2>8. Graceful shutdown</h2>
+  <div class="body">
+    <p>The other end of the lifecycle: when a pod is removed, Kubernetes sends <code>SIGTERM</code> and waits up to <code>terminationGracePeriodSeconds</code> (default 30) before <code>SIGKILL</code>.</p>
+    <p>Endpoints are removed at about the same time, but not instantly everywhere. A short <code>preStop</code> sleep keeps the pod serving while the routing rules catch up. The app should stop accepting new work on SIGTERM, then finish in-flight requests.</p>
+  </div>
+  <pre class="code" data-file="deployment.yaml (container)">lifecycle:
+  preStop:
+    sleep:
+      seconds: 5</pre>
+  <aside class="more"><p>The <code>sleep</code> action is built in, so you don't need a shell in the image. Older examples use <code>exec: command: ["sleep", "5"]</code>, which fails on distroless images.</p></aside>
+</section>
+
+<section class="step" id="s9">
+  <h2>9. Contoso's probe set</h2>
+  <pre class="code" data-file="k8s/base/deployment.yaml (container)">ports:
+  - name: http
+    containerPort: 8080
+startupProbe:
+  httpGet: { path: /healthz, port: http }
+  periodSeconds: 5
+  failureThreshold: 24
+readinessProbe:
+  httpGet: { path: /readyz, port: http }
+  periodSeconds: 5
+  failureThreshold: 3
+livenessProbe:
+  httpGet: { path: /healthz, port: http }
+  periodSeconds: 10
+  timeoutSeconds: 2
+  failureThreshold: 3</pre>
+</section>
+
+<section class="step summary" id="s10">
+  <h2>Probes, sorted</h2>
+  <ul>
+    <li>startup = has it started (pauses the others); readiness = traffic on/off; liveness = restart.</li>
+    <li>Readiness failing removes the pod from endpoints; it doesn't restart it.</li>
+    <li>Liveness must check only the process, never a dependency.</li>
+    <li>Use a startupProbe, not a long <code>initialDelaySeconds</code>.</li>
+    <li>Handle SIGTERM; a short preStop sleep smooths rollouts.</li>
+  </ul>
+</section>
+</article>
+</body>
+</html>

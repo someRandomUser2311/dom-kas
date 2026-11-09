@@ -1,0 +1,6 @@
+.DS_Store
+backend/target/
+backend/data/
+frontend/node_modules/
+frontend/dist/
+*.tgz

@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>6.3 · ACR hardening</title>
+<link rel="stylesheet" href="../content.css">
+</head>
+<body>
+<article class="lesson" data-id="6.3" data-chapter="6">
+<nav class="crumbs"><a href="../index.html">Course</a> / <a href="index.html">Chapter 6</a> / 6.3</nav>
+<header>
+  <p class="kicker">Chapter 6 · Lesson 6.3 · ~9 steps · ~11 min</p>
+  <h1>ACR hardening</h1>
+  <p class="meta">You'll be able to take a registry off the public internet, limit access per repository, keep it tidy, and know what that means for your build agents.</p>
+</header>
+
+<section class="step" id="s1">
+  <h2>1. A registry is a high-value target</h2>
+  <div class="body">
+    <p>Whoever can <b>push</b> to your registry can run code in your clusters. Whoever can <b>pull</b> can read your images, including anything accidentally baked into them.</p>
+    <p>Hardening ACR means two things:</p>
+    <ul>
+      <li>shrink <i>who</i> can reach it: network;</li>
+      <li>shrink <i>what</i> each identity can do: permissions.</li>
+    </ul>
+  </div>
+  <aside class="coming" data-set="A">
+    <dl>
+      <dt>Windows/IIS admin</dt><dd>Like moving the build share off the DMZ and onto an internal-only network, with per-folder permissions.</dd>
+      <dt>Linux admin</dt><dd>Like a package repository reachable only from inside the network, behind proper authentication.</dd>
+      <dt>Developer (Compose)</dt><dd>Your laptop may no longer reach the registry directly. That's on purpose.</dd>
+      <dt>Other clouds</dt><dd>Like ECR with VPC endpoints and a repository policy, or Artifact Registry with VPC Service Controls.</dd>
+    </dl>
+  </aside>
+</section>
+
+<section class="step" id="s2">
+  <h2>2. Private endpoints (Premium)</h2>
+  <div class="body">
+    <p>A <b>private endpoint</b> gives the registry an IP inside your VNet, such as <code>10.20.5.4</code>, with DNS from the <code>privatelink.azurecr.io</code> private zone. AKS nodes then pull over the VNet.</p>
+    <p>Then set <b>public network access</b> to <code>Disabled</code>. The registry is no longer reachable from the internet at all.</p>
+    <p>A registry has two endpoints, and both get private IPs: the <b>login server</b> and a regional <b>data endpoint</b> (<code>contosoacr.westeurope.data.azurecr.io</code>), where image layers come from.</p>
+  </div>
+  <pre class="code" data-file="acr-private.sh">az network private-endpoint create -g rg-orders-net -n pe-contosoacr \
+  --vnet-name vnet-orders --subnet snet-private-links \
+  --private-connection-resource-id $(az acr show -n contosoacr --query id -o tsv) \
+  --group-id registry --connection-name contosoacr
+
+az acr update -n contosoacr --public-network-enabled false</pre>
+  <aside class="more"><p>The private DNS zone <code>privatelink.azurecr.io</code> must be linked to every VNet that needs to resolve the registry: the AKS VNet, the build agent's VNet, or a hub VNet whose DNS the spokes use.</p></aside>
+</section>
+
+<section class="step" id="s3">
+  <h2>3. The build agent problem</h2>
+  <div class="check" data-type="mcq">
+    <p class="q">Contoso disables public access on ACR. The pipeline, running on a <b>Microsoft-hosted</b> agent, still runs <code>docker push contosoacr.azurecr.io/orders-api:1.5.0</code>. What happens?</p>
+    <ol class="options">
+      <li>It works, because the agent runs in Azure <span class="why">Microsoft-hosted agents run in Microsoft's network, not in your VNet.</span></li>
+      <li class="correct">The push fails: the agent can only reach the public endpoint, which is now disabled</li>
+      <li>It works, because the pipeline uses a service connection <span class="why">The service connection proves identity; it doesn't provide a network path.</span></li>
+      <li>It pushes to a public mirror instead <span class="why">There's no such fallback.</span></li>
+    </ol>
+    <div class="explain">Locking down a resource's network means everything that talks to it must be <i>inside</i> the network: AKS nodes and build agents. Use a self-hosted agent or a <b>Managed DevOps Pool</b> in your VNet, or <code>az acr build</code> with a dedicated agent pool. It's the same lesson as private clusters (6.5).</div>
+  </div>
+</section>
+
+<section class="step" id="s4">
+  <h2>4. Trusted services and firewall rules</h2>
+  <div class="body">
+    <p>Between "fully public" and "fully private" there are two middle grounds:</p>
+    <ul>
+      <li><b>Firewall rules</b> that allow specific public IP ranges.</li>
+      <li><b>Allow trusted Microsoft services</b>, which lets certain Azure services, such as Defender scanning and ACR Tasks with managed identity, reach a locked-down registry.</li>
+    </ul>
+    <p>Use them sparingly. Private endpoints are the clean answer.</p>
+  </div>
+</section>
+
+<section class="step" id="s5">
+  <h2>5. Least privilege per repository</h2>
+  <div class="body">
+    <p>By default, roles like AcrPush and AcrPull apply to <b>every repository</b> in the registry.</p>
+    <p>Newer ACR <b>repository permissions</b> use role assignments with <b>ABAC conditions</b> (for example, "Container Registry Repository Writer" only on repositories starting with <code>orders/</code>). One team's pipeline can then push only its own images.</p>
+    <p><b>Scope maps and tokens</b> also exist, for clients that can't use Entra ID. They're useful, but they're stored credentials.</p>
+  </div>
+</section>
+
+<section class="step" id="s6">
+  <h2>6. Keeping it tidy</h2>
+  <div class="body">
+    <p>Every build pushes a new image, and storage grows forever. Two tools keep it in check:</p>
+    <ul>
+      <li><b><code>acr purge</code></b> as a scheduled ACR task, for example: delete tags older than 30 days, keep the last 10.</li>
+      <li>A <b>retention policy</b> for untagged manifests.</li>
+    </ul>
+    <p>Never purge the tags or digests that production is running. Lock them with <code>--write-enabled false</code>, or exclude them with a filter.</p>
+  </div>
+  <pre class="code" data-file="purge-task.sh">az acr task create -r contosoacr -n purge-old \
+  --cmd "acr purge --filter 'orders-api:^ci-.*' --ago 30d --keep 10 --untagged" \
+  --schedule "0 3 * * Sun" --context /dev/null</pre>
+</section>
+
+<section class="step" id="s7">
+  <h2>7. Geo-replication</h2>
+  <div class="body">
+    <p>Premium registries can <b>replicate</b> to other regions. Clusters in each region pull from a nearby replica under the same login server, and the registry survives a regional outage.</p>
+    <p>Contoso, in one region, doesn't need it yet.</p>
+  </div>
+</section>
+
+<section class="step" id="s8">
+  <h2>8. Requirement → feature</h2>
+  <div class="check" data-type="match">
+    <p class="q">Match each requirement to the ACR feature.</p>
+    <table class="pairs">
+      <tr><td>The registry must not be reachable from the internet</td><td>Private endpoint + public network access disabled</td></tr>
+      <tr><td>Team A's pipeline may only push to <code>teamA/*</code></td><td>Repository permissions with ABAC conditions</td></tr>
+      <tr><td>Clusters in two regions pull locally</td><td>Geo-replication</td></tr>
+      <tr><td>Storage keeps growing from CI images</td><td>A scheduled <code>acr purge</code> task</td></tr>
+      <tr><td>Only signed images may be deployed</td><td>Image signing + admission policy (Chapter 16)</td></tr>
+    </table>
+    <div class="explain">Network, permissions, availability, hygiene and supply-chain trust are five separate controls.</div>
+  </div>
+</section>
+
+<section class="step summary" id="s9">
+  <h2>ACR hardening, sorted</h2>
+  <ul>
+    <li>Private endpoint (Premium) + public access disabled; link the <code>privatelink.azurecr.io</code> zone.</li>
+    <li>Build agents must be inside the network too.</li>
+    <li>Repository-scoped permissions (ABAC); avoid tokens and the admin user.</li>
+    <li>Purge old tags on a schedule; geo-replicate for multi-region.</li>
+    <li>Signing and admission policy come in Chapter 16.</li>
+  </ul>
+</section>
+</article>
+</body>
+</html>

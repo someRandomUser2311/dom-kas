@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>4.3 · Scaling nodes</title>
+<link rel="stylesheet" href="../content.css">
+</head>
+<body>
+<article class="lesson" data-id="4.3" data-chapter="4">
+<nav class="crumbs"><a href="../index.html">Course</a> / <a href="index.html">Chapter 4</a> / 4.3</nav>
+<header>
+  <p class="kicker">Chapter 4 · Lesson 4.3 · ~9 steps · ~11 min</p>
+  <h1>Scaling nodes</h1>
+  <p class="meta">You'll be able to configure the cluster autoscaler on a node pool, explain Node Auto Provisioning, and trace how a traffic spike turns into new VMs.</p>
+</header>
+
+<section class="step" id="s1">
+  <h2>1. Pods scale fast; nodes must follow</h2>
+  <div class="body">
+    <p>In lesson 3.5 the HPA added pods in seconds. But pods need room. When the user pool is full, new pods stay <code>Pending</code>.</p>
+    <p>On AKS, two features add nodes for you:</p>
+    <ul>
+      <li>the <b>cluster autoscaler</b>, per node pool;</li>
+      <li><b>Node Auto Provisioning</b>, cluster-wide and Karpenter-based.</li>
+    </ul>
+  </div>
+  <aside class="coming" data-set="A">
+    <dl>
+      <dt>Windows/IIS admin</dt><dd>Like VMSS autoscale, but triggered by "work is waiting with nowhere to run" instead of a CPU threshold.</dd>
+      <dt>Linux admin</dt><dd>Capacity follows demand; you set floors and ceilings.</dd>
+      <dt>Developer (Compose)</dt><dd>There's no Compose equivalent; this is the "more servers" part you'd otherwise do by hand.</dd>
+      <dt>Other clouds</dt><dd>Cluster autoscaler ≈ the EKS/GKE cluster autoscaler. Node Auto Provisioning ≈ Karpenter on EKS or GKE node auto-provisioning.</dd>
+    </dl>
+  </aside>
+</section>
+
+<section class="step" id="s2">
+  <h2>2. The cluster autoscaler</h2>
+  <div class="body">
+    <p>You enable it per pool with a <b>min</b> and <b>max</b> node count. About every 10 seconds it checks two things:</p>
+    <ul>
+      <li><b>Scale up:</b> are there pods Pending because they don't fit, which <i>would</i> fit on a new node of this pool? If so, add nodes (up to max).</li>
+      <li><b>Scale down:</b> has a node been underused (requests below ~50%) for a while, and can its pods move elsewhere? If so, drain it and remove it (down to min).</li>
+    </ul>
+    <p>It looks at <b>requests</b>, not real usage, which is one more reason to set them.</p>
+  </div>
+  <pre class="code" data-file="autoscaler.sh">az aks nodepool update -g rg-orders-dev --cluster-name aks-orders-dev -n user \
+  --enable-cluster-autoscaler --min-count 2 --max-count 10
+
+# tune behaviour cluster-wide with a profile
+az aks update -g rg-orders-dev -n aks-orders-dev \
+  --cluster-autoscaler-profile scale-down-unneeded-time=10m scan-interval=10s</pre>
+</section>
+
+<section class="step" id="s3">
+  <h2>3. From load to a new VM</h2>
+  <div class="widget" data-widget="hpa-sim">An extended version of the lesson 3.5 simulator, now with a node strip underneath. Load goes up: the HPA raises replicas, new pods turn Pending (amber), the cluster autoscaler adds a node (it fades in over ~3 minutes), and the Pending pods schedule onto it. Lowering the load reverses it, with the scale-down delay shown as a countdown.</div>
+  <div class="check" data-type="order">
+    <p class="q">Put the chain in order.</p>
+    <ol class="options">
+      <li>Traffic rises and CPU per pod climbs</li>
+      <li>The HPA raises the Deployment's replicas</li>
+      <li>New pods are Pending: no node has room for their requests</li>
+      <li>The cluster autoscaler adds a node to the pool</li>
+      <li>The new node joins and the Pending pods are scheduled on it</li>
+    </ol>
+    <div class="explain">The cluster autoscaler never looks at CPU usage; it reacts to Pending pods. Adding a node takes a few minutes, so keep some headroom for sudden spikes.</div>
+  </div>
+</section>
+
+<section class="step" id="s4">
+  <h2>4. When the autoscaler can't help</h2>
+  <div class="body">
+    <p>Pods stay Pending even with the autoscaler on if:</p>
+    <ul>
+      <li>the pool is at <b>max</b>;</li>
+      <li>no pool's VM size could ever fit the pod (it requests 32 GiB on 16 GiB nodes);</li>
+      <li>the pod needs a node label or toleration no pool has;</li>
+      <li>the subscription has no <b>vCPU quota</b> left for that VM family in the region;</li>
+      <li>the subnet has run out of IPs (Chapter 5).</li>
+    </ul>
+    <p>The pod's events say <code>pod didn't trigger scale-up</code> with a reason.</p>
+  </div>
+  <pre class="output">Events:
+  Normal   NotTriggerScaleUp  cluster-autoscaler  pod didn't trigger scale-up: 1 max node group size reached</pre>
+</section>
+
+<section class="step" id="s5">
+  <h2>5. Scale-down blockers</h2>
+  <div class="body">
+    <p>The autoscaler won't remove a node whose pods can't be safely moved:</p>
+    <ul>
+      <li>pods that would break a PDB;</li>
+      <li>pods with local storage (<code>emptyDir</code>, unless configured otherwise);</li>
+      <li>bare pods with no controller;</li>
+      <li>pods annotated <code>cluster-autoscaler.kubernetes.io/safe-to-evict: "false"</code>.</li>
+    </ul>
+    <p>If your bill stays high after traffic drops, look for these.</p>
+  </div>
+</section>
+
+<section class="step" id="s6">
+  <h2>6. Node Auto Provisioning</h2>
+  <div class="body">
+    <p>With the classic autoscaler, <b>you</b> pre-define pools and sizes. <b>Node Auto Provisioning (NAP)</b>, based on the open-source Karpenter project, picks VM sizes itself.</p>
+    <p>It looks at the Pending pods' requests, zones and constraints, then creates right-sized nodes. It also consolidates them later to save money.</p>
+    <p>You give it rules (allowed VM families, limits) with <code>NodePool</code> and <code>AKSNodeClass</code> resources. NAP is used by default in AKS Automatic (lesson 4.5).</p>
+  </div>
+  <pre class="code" data-file="nap.sh">az aks update -g rg-orders-dev -n aks-orders-dev --node-provisioning-mode Auto</pre>
+</section>
+
+<section class="step" id="s7">
+  <h2>7. Which one?</h2>
+  <div class="check" data-type="mcq">
+    <p class="q">Contoso runs a few predictable services on one VM size and wants simple, explicit control. Which node scaling fits best?</p>
+    <ol class="options">
+      <li class="correct">The cluster autoscaler on the user pool with sensible min/max</li>
+      <li>Node Auto Provisioning <span class="why">Great for varied workloads and cost optimisation; more than Contoso needs right now.</span></li>
+      <li>No autoscaling; scale by hand <span class="why">That works until a traffic spike at 2 am.</span></li>
+      <li>Only the HPA <span class="why">The HPA adds pods, not nodes.</span></li>
+    </ol>
+    <div class="explain">Start simple. Move to NAP when you have many differently-shaped workloads or want automatic bin-packing and consolidation.</div>
+  </div>
+</section>
+
+<section class="step" id="s8">
+  <h2>8. Headroom and cost</h2>
+  <div class="body">
+    <ul>
+      <li>Set <b>min</b> high enough that normal traffic never waits for a new node.</li>
+      <li>Set <b>max</b> to cap cost, and make sure your vCPU quota and subnet IPs can actually reach it.</li>
+      <li>Requests that are too generous make nodes look full: you pay for idle capacity and the autoscaler adds even more.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="step summary" id="s9">
+  <h2>Scaling nodes, sorted</h2>
+  <ul>
+    <li>HPA adds pods; the cluster autoscaler adds nodes when pods are Pending.</li>
+    <li>Per-pool min/max; decisions are based on requests.</li>
+    <li>It can't help at max, without quota or IPs, or if no pool could fit the pod.</li>
+    <li>PDBs, local storage and bare pods block scale-down.</li>
+    <li>Node Auto Provisioning (Karpenter) picks VM sizes itself.</li>
+  </ul>
+</section>
+</article>
+</body>
+</html>

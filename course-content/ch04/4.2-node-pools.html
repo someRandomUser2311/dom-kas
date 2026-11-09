@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>4.2 · Node pools</title>
+<link rel="stylesheet" href="../content.css">
+</head>
+<body>
+<article class="lesson" data-id="4.2" data-chapter="4">
+<nav class="crumbs"><a href="../index.html">Course</a> / <a href="index.html">Chapter 4</a> / 4.2</nav>
+<header>
+  <p class="kicker">Chapter 4 · Lesson 4.2 · ~11 steps · ~14 min</p>
+  <h1>Node pools</h1>
+  <p class="meta">You'll be able to design an AKS cluster's node pools (system vs user, VM size, zones, spot), add one with the CLI, and avoid breaking AKS by editing its resources directly.</p>
+</header>
+
+<section class="step" id="s1">
+  <h2>1. A node pool is a group of identical nodes</h2>
+  <div class="body">
+    <p>AKS groups nodes into <b>node pools</b>. Every node in a pool has the same VM size, OS, zones, labels and taints.</p>
+    <p>Under the hood, each pool is an Azure <b>Virtual Machine Scale Set</b> in the node resource group.</p>
+    <p>A cluster can have many pools, for example a general-purpose pool, a memory-heavy pool and a GPU pool. Pods are steered to them with the Chapter 3 tools.</p>
+  </div>
+  <aside class="coming" data-set="A">
+    <dl>
+      <dt>Windows/IIS admin</dt><dd>Like having separate server farms for web and batch, built from different VM templates, all managed by one cluster.</dd>
+      <dt>Linux admin</dt><dd>Each pool is an autoscaled group of identical hosts, built from one image.</dd>
+      <dt>Developer (Compose)</dt><dd>Compose has no equivalent; you'd just pick one bigger VM.</dd>
+      <dt>Other clouds</dt><dd>AKS node pool ≈ EKS managed node group ≈ GKE node pool. The VMSS is the auto-scaling group.</dd>
+    </dl>
+  </aside>
+</section>
+
+<section class="step" id="s2">
+  <h2>2. System pools vs user pools</h2>
+  <div class="body">
+    <p>Every pool has a <b>mode</b>:</p>
+    <ul>
+      <li><b>System</b>: hosts critical add-ons such as CoreDNS, metrics-server and konnectivity. Every cluster needs at least one system pool, and AKS keeps it from being removed or scaled to zero.</li>
+      <li><b>User</b>: for your apps. It can scale to zero and be added or removed freely.</li>
+    </ul>
+    <p>Best practice is a small, dedicated system pool, tainted <code>CriticalAddonsOnly=true:NoSchedule</code>, with at least 2–3 nodes across zones. Your apps then run in separate user pools.</p>
+    <p>That way a runaway app can't starve CoreDNS, and you can resize app pools without touching system components.</p>
+  </div>
+  <div class="check" data-type="mcq">
+    <p class="q">Contoso's cluster has a <code>system</code> pool (tainted <code>CriticalAddonsOnly</code>) and a <code>user</code> pool. Where should <code>orders-api</code> run?</p>
+    <ol class="options">
+      <li>On the system pool, because it's important <span class="why">"System" means cluster add-ons, not "business critical".</span></li>
+      <li class="correct">On the user pool. It doesn't tolerate the system taint, so it goes there automatically</li>
+      <li>On both, for redundancy <span class="why">Redundancy comes from replicas and zones within the user pool.</span></li>
+      <li>On a new pool per replica <span class="why">Unnecessary; one user pool across zones is enough.</span></li>
+    </ol>
+    <div class="explain">The taint keeps apps off the system pool without anyone having to remember a nodeSelector.</div>
+  </div>
+</section>
+
+<section class="step" id="s3">
+  <h2>3. Choosing a VM size</h2>
+  <div class="body">
+    <ul>
+      <li>General purpose <b>D-series</b> (e.g. <code>Standard_D4ds_v5</code>, 4 vCPU / 16 GiB) is the usual start.</li>
+      <li>Memory-heavy apps: <b>E-series</b>. GPU work: <b>NC/ND-series</b>.</li>
+      <li>Bigger nodes waste less to per-node overhead and fit large pods, but each one you lose takes more pods with it.</li>
+      <li>Allocatable is less than the VM's size: AKS reserves CPU and memory for the kubelet and the OS. Check <code>kubectl describe node</code>.</li>
+      <li>Prefer sizes with a local temporary disk (the <code>d</code> in <code>Dds</code>) for <b>ephemeral OS disks</b>, which are faster and cheaper.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="step" id="s4">
+  <h2>4. Zones</h2>
+  <div class="body">
+    <p>Create pools with <code>--zones 1 2 3</code> and AKS spreads their nodes across availability zones. Nodes get the label <code>topology.kubernetes.io/zone=westeurope-1</code> (and so on), which topology spread uses (lesson 3.2).</p>
+    <p>Zones are chosen <b>when the pool is created</b> and can't be changed afterwards. Get this right the first time; fixing it means adding a new pool and moving workloads.</p>
+    <p>Remember zonal disks (lesson 3.4): a pod with an LRS disk is tied to that disk's zone.</p>
+  </div>
+</section>
+
+<section class="step" id="s5">
+  <h2>5. Adding a user pool</h2>
+  <pre class="code" data-file="add-pool.sh">az aks nodepool add \
+  --resource-group rg-orders-dev \
+  --cluster-name aks-orders-dev \
+  --name user \
+  --mode User \
+  --node-vm-size Standard_D4ds_v5 \
+  --zones 1 2 3 \
+  --enable-cluster-autoscaler --min-count 2 --max-count 10 \
+  --labels workload=general</pre>
+  <div class="check" data-type="tapline" data-match="--zones 1 2 3">
+    <p class="q">Tap the option that you can't change after the pool exists.</p>
+    <div class="explain">A pool's zones are fixed at creation. VM size is also fixed per pool; to change either, add a new pool and drain the old one. Autoscaler bounds and labels can be updated later.</div>
+  </div>
+</section>
+
+<section class="step" id="s6">
+  <h2>6. Spot pools for cheap, interruptible work</h2>
+  <div class="body">
+    <p><b>Spot</b> pools use spare Azure capacity at a large discount. Azure can take the VMs back at any time, with about 30 seconds' notice.</p>
+    <p>AKS taints spot nodes with <code>kubernetes.azure.com/scalesetpriority=spot:NoSchedule</code>, so only pods that tolerate it land there.</p>
+    <p>Spot pools are good for batch jobs, CI agents and dev environments. They're <b>not</b> for <code>orders-api</code> in production.</p>
+  </div>
+  <pre class="code" data-file="spot.sh">az aks nodepool add -g rg-orders-dev --cluster-name aks-orders-dev \
+  --name spot --priority Spot --eviction-policy Delete --spot-max-price -1 \
+  --enable-cluster-autoscaler --min-count 0 --max-count 5</pre>
+</section>
+
+<section class="step" id="s7">
+  <h2>7. Don't touch the <code>MC_</code> resource group</h2>
+  <div class="check" data-type="diagnose">
+    <p class="q">Contoso's cluster upgrade fails. What went wrong?</p>
+    <pre class="output">$ az aks upgrade -g rg-orders-dev -n aks-orders-dev --kubernetes-version 1.33.2
+(OperationNotAllowed) ... The node pool 'user' is in a failed provisioning state.
+$ az aks nodepool show -g rg-orders-dev --cluster-name aks-orders-dev -n user --query "{count:count, vm:vmSize}"
+{ "count": 3, "vm": "Standard_D4ds_v5" }
+$ az vmss list -g MC_rg-orders-dev_aks-orders-dev_westeurope --query "[].{name:name, cap:sku.capacity, size:sku.name}"
+[ { "name": "aks-user-12345678-vmss", "cap": 5, "size": "Standard_D8ds_v5" } ]</pre>
+    <ol class="options">
+      <li>The Kubernetes version doesn't exist <span class="why">The error is about the node pool's state, not the version.</span></li>
+      <li class="correct">Someone resized and scaled the VMSS directly in the <code>MC_</code> group, so it no longer matches what AKS thinks the pool is</li>
+      <li>The cluster autoscaler is broken <span class="why">The autoscaler would change the count through AKS, and never the VM size.</span></li>
+      <li>The subscription is out of quota <span class="why">That gives a quota error.</span></li>
+    </ol>
+    <div class="explain">AKS believes the pool is 3 × D4ds_v5; the VMSS is 5 × D8ds_v5. Always change pools through <code>az aks nodepool</code> (or IaC). To recover, reconcile through AKS: <code>az aks nodepool update</code>, or add a new pool and delete the broken one. Some organisations block edits to <code>MC_</code> groups with Azure Policy or deny assignments.</div>
+  </div>
+</section>
+
+<section class="step" id="s8">
+  <h2>8. OS and node images</h2>
+  <div class="body">
+    <p>Linux pools default to <b>Ubuntu</b>. <b>Azure Linux</b> is Microsoft's own smaller, hardened distro, chosen with <code>--os-sku AzureLinux</code>.</p>
+    <p>Windows pools exist for Windows containers. They need a Linux system pool too.</p>
+    <p>Each pool runs a <b>node image version</b>, which Azure updates regularly (lesson 4.4).</p>
+  </div>
+</section>
+
+<section class="step" id="s9">
+  <h2>9. Pool settings at a glance</h2>
+  <div class="check" data-type="match">
+    <p class="q">Match each setting to whether it can be changed on an existing pool.</p>
+    <table class="pairs">
+      <tr><td>VM size</td><td>Fixed: create a new pool</td></tr>
+      <tr><td>Availability zones</td><td>Fixed: create a new pool</td></tr>
+      <tr><td>Autoscaler min/max</td><td>Changeable with <code>az aks nodepool update</code></td></tr>
+      <tr><td>Node labels and taints</td><td>Changeable with <code>az aks nodepool update</code></td></tr>
+      <tr><td>Node count (autoscaler off)</td><td>Changeable with <code>az aks nodepool scale</code></td></tr>
+    </table>
+    <div class="explain">Plan size and zones carefully; everything else can be tuned later.</div>
+  </div>
+</section>
+
+<section class="step" id="s10">
+  <h2>10. Contoso's pool design</h2>
+  <table>
+    <tr><th>Pool</th><th>Mode</th><th>Size</th><th>Zones</th><th>Scale</th><th>Taint</th></tr>
+    <tr><td><code>system</code></td><td>System</td><td>Standard_D4ds_v5</td><td>1 2 3</td><td>3 (fixed)</td><td><code>CriticalAddonsOnly=true:NoSchedule</code></td></tr>
+    <tr><td><code>user</code></td><td>User</td><td>Standard_D4ds_v5</td><td>1 2 3</td><td>2–10 (autoscaler)</td><td>none</td></tr>
+    <tr><td><code>batch</code> (dev only)</td><td>User</td><td>Standard_D4ds_v5, Spot</td><td>1 2 3</td><td>0–5</td><td>spot (automatic)</td></tr>
+  </table>
+</section>
+
+<section class="step summary" id="s11">
+  <h2>Node pools, sorted</h2>
+  <ul>
+    <li>A pool = identical nodes = a VMSS in the <code>MC_</code> group.</li>
+    <li>A small tainted system pool for add-ons; user pools for apps.</li>
+    <li>VM size and zones are fixed per pool; choose zones 1 2 3.</li>
+    <li>Spot pools for interruptible work only.</li>
+    <li>Change pools only through AKS (CLI/IaC), never the VMSS directly.</li>
+  </ul>
+</section>
+</article>
+</body>
+</html>

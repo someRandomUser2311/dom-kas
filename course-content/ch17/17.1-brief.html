@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>17.1 · The brief</title>
+<link rel="stylesheet" href="../content.css">
+</head>
+<body>
+<article class="lesson" data-id="17.1" data-chapter="17">
+<nav class="crumbs"><a href="../index.html">Course</a> / <a href="index.html">Chapter 17</a> / 17.1</nav>
+<header>
+  <p class="kicker">Chapter 17 · Lesson 17.1 · ~8 steps · ~10 min</p>
+  <h1>The brief</h1>
+  <p class="meta">You'll be able to read Contoso's production requirements, trace each one to the chapter that taught it, and to the file in the repo that satisfies it.</p>
+</header>
+
+<section class="step" id="s1">
+  <h2>1. The memo</h2>
+  <div class="body">
+    <p><i>From: Contoso CTO. To: the platform team.</i></p>
+    <p>"Orders goes to production next quarter. Before launch, I need these requirements met, and verified automatically, not by someone's word."</p>
+    <ol>
+      <li><b>Private cluster</b>: no public management endpoint for prod.</li>
+      <li><b>Two environments</b>: dev and prod, from the same code.</li>
+      <li><b>Canary releases</b> to prod, with automatic rollback.</li>
+      <li><b>Zero secrets in Git</b>, and no secrets in pods where avoidable.</li>
+      <li><b>Default-deny networking</b>: only the flows the app needs.</li>
+      <li><b>Signed images only</b>, from our registry.</li>
+      <li><b>SLO alerting</b>: we hear about problems before customers do.</li>
+    </ol>
+  </div>
+</section>
+
+<section class="step" id="s2">
+  <h2>2. Requirements → chapters</h2>
+  <div class="check" data-type="multi">
+    <p class="q">Requirement 4, "zero secrets in Git", is met by techniques from which chapters? Select all.</p>
+    <ol class="options">
+      <li class="correct">Chapter 5: workload identity</li>
+      <li class="correct">Chapter 7: WIF service connections and Key Vault variable groups</li>
+      <li class="correct">Chapter 15: Key Vault via the Secrets Store CSI driver</li>
+      <li class="correct">Chapters 12–13: <code>sensitive</code>/<code>@secure()</code>, and no secrets in tfvars or bicepparam</li>
+      <li>Chapter 11: canary releases <span class="why">Release strategy, not secrets.</span></li>
+    </ol>
+    <div class="explain">Most requirements draw on several chapters. That's why the capstone grades every file together.</div>
+  </div>
+</section>
+
+<section class="step" id="s3">
+  <h2>3. Requirements → files</h2>
+  <div class="check" data-type="match">
+    <p class="q">Match each requirement to the file where it's mainly satisfied.</p>
+    <table class="pairs">
+      <tr><td>Private cluster</td><td><code>infra/terraform/*.tf</code> (or <code>infra/bicep/*.bicep</code>)</td></tr>
+      <tr><td>Canary releases</td><td><code>azure-pipelines.yml</code> (canary deployment job)</td></tr>
+      <tr><td>Default-deny networking</td><td><code>k8s/policies/*.yaml</code></td></tr>
+      <tr><td>Signed images only</td><td><code>k8s/policies/cluster/</code> (admission) + the sign step in the pipeline</td></tr>
+      <tr><td>Two environments from one code base</td><td><code>k8s/overlays/{dev,prod}</code> + tfvars/bicepparam per environment</td></tr>
+    </table>
+    <div class="explain">The repository layout from the course README, now with every folder filled in.</div>
+  </div>
+</section>
+
+<section class="step" id="s4">
+  <h2>4. The repository</h2>
+  <pre class="code" data-file="orders-api/">orders-api/
+├─ Dockerfile
+├─ k8s/
+│  ├─ base/                      deployment, service, configmap, hpa, pdb, serviceaccount
+│  ├─ overlays/{dev,prod}/       kustomization + patches
+│  ├─ policies/                  default-deny, allow-dns, app flows
+│  ├─ policies/cluster/          admission policies (registries, signed, no latest…)
+│  ├─ gateway/                   gateway, httproutes, redirect
+│  └─ secrets/                   secretproviderclass
+├─ infra/terraform/  or  infra/bicep/
+├─ infra-pipeline.yml
+├─ templates/                    deploy, canary, terraform/bicep steps
+└─ azure-pipelines.yml</pre>
+</section>
+
+<section class="step" id="s5">
+  <h2>5. "Verified automatically"</h2>
+  <div class="body">
+    <p>The CTO's last line matters. Each requirement maps to <b>rules</b> that a grader checks, the same graders you met chapter by chapter:</p>
+    <ul>
+      <li>manifest-lint</li>
+      <li>cross-ref</li>
+      <li>netpol-eval</li>
+      <li>policy-rules</li>
+      <li>kustomize-lite</li>
+      <li>iac-rules</li>
+      <li>pipeline-rules</li>
+      <li>stage-sim</li>
+    </ul>
+    <p>Lesson 17.4 shows the full rubric.</p>
+  </div>
+</section>
+
+<section class="step" id="s6">
+  <h2>6. Non-goals</h2>
+  <div class="body">
+    <p>Out of scope for launch:</p>
+    <ul>
+      <li>multi-region;</li>
+      <li>a service mesh;</li>
+      <li>GitOps controllers;</li>
+      <li>running the database on AKS (it stays Azure Database for PostgreSQL).</li>
+    </ul>
+    <p>Knowing what <i>not</i> to build is part of the brief.</p>
+  </div>
+</section>
+
+<section class="step" id="s7">
+  <h2>7. Choose your IaC language</h2>
+  <div class="body"><p>You'll submit <code>infra/terraform/</code> <b>or</b> <code>infra/bicep/</code>. Both are graded against the same requirement rules, so the score is identical. Submit both for the "Bilingual IaC" badge.</p></div>
+</section>
+
+<section class="step summary" id="s8">
+  <h2>The brief, sorted</h2>
+  <ul>
+    <li>Seven requirements: private, two environments, canary, no secrets, default-deny, signed images, SLO alerts.</li>
+    <li>Each maps to chapters and to files; every file is graded automatically.</li>
+    <li>Terraform or Bicep, your choice.</li>
+  </ul>
+</section>
+</article>
+</body>
+</html>

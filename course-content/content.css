@@ -1,0 +1,44 @@
+/* Readability styles for the course source pages. Not the app's design. */
+:root { --bg: #fff; --text: #1b1f24; --muted: #59636e; --line: #d8dee4; --soft: #f4f6f8; --accent: #2563eb; --ok: #15803d; --bad: #b91c1c; --warn: #b45309; color-scheme: light dark; }
+@media (prefers-color-scheme: dark) { :root { --bg: #0f1420; --text: #e6e9ef; --muted: #9aa4b2; --line: #2a3242; --soft: #171d2a; --accent: #6b9bff; --ok: #4ade80; --bad: #f87171; --warn: #fbbf24; } }
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif; }
+main, article { max-width: 860px; margin: 0 auto; padding: 24px 16px 80px; }
+a { color: var(--accent); }
+h1 { font-size: 30px; line-height: 1.2; margin: 6px 0 10px; }
+h2 { font-size: 21px; margin: 0 0 10px; }
+h3 { font-size: 16px; margin: 14px 0 6px; }
+code, pre { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 13.5px; }
+:not(pre) > code { background: var(--soft); padding: 1px 5px; border-radius: 4px; }
+pre { background: var(--soft); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; overflow-x: auto; line-height: 1.5; }
+pre[data-file]::before { content: attr(data-file); display: block; color: var(--muted); font-size: 12px; margin-bottom: 6px; }
+pre.output { border-left: 3px solid var(--warn); }
+table { border-collapse: collapse; width: 100%; margin: 10px 0; font-size: 15px; }
+th, td { border: 1px solid var(--line); padding: 6px 9px; text-align: left; vertical-align: top; }
+.kicker { color: var(--muted); font-size: 13px; text-transform: uppercase; letter-spacing: .06em; margin: 0; }
+.meta, .muted { color: var(--muted); }
+nav.crumbs { font-size: 14px; color: var(--muted); }
+.step { border-top: 1px solid var(--line); padding: 22px 0; }
+.step.summary { background: var(--soft); border-radius: 10px; padding: 18px; border: 0; margin-top: 18px; }
+.widget { border: 1px dashed var(--accent); border-radius: 8px; padding: 10px 14px; margin: 12px 0; }
+.widget::before { content: "🧩 Widget: " attr(data-widget); display: block; font-weight: 600; color: var(--accent); font-size: 13px; }
+.coming { border-left: 3px solid var(--muted); padding: 4px 12px; margin: 12px 0; font-size: 15px; }
+.coming::before { content: "Coming from (set " attr(data-set) ")"; font-weight: 600; font-size: 13px; color: var(--muted); }
+.coming dt { font-weight: 600; margin-top: 6px; }
+.coming dd { margin: 0 0 0 0; }
+.more { background: var(--soft); border-radius: 8px; padding: 8px 14px; margin: 12px 0; font-size: 15px; }
+.more::before { content: "📖 Read more"; font-weight: 600; font-size: 13px; color: var(--muted); }
+.check { border: 1px solid var(--line); border-radius: 10px; padding: 12px 16px; margin: 14px 0; }
+.check::before { content: "✅ Check · " attr(data-type); display: block; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--accent); }
+.check .q { font-weight: 600; }
+.check li.correct::marker { color: var(--ok); }
+.check li.correct { color: var(--ok); }
+.check .why, .check .explain { display: block; color: var(--muted); font-size: 14px; }
+.check .explain::before { content: "Explanation: "; font-weight: 600; }
+.chips li.correct { font-weight: 600; }
+.blank { border-bottom: 2px solid var(--accent); padding: 0 6px; }
+.rules li.critical::before { content: "⛔ "; }
+.try { border: 1px solid var(--ok); border-radius: 10px; padding: 12px 16px; margin: 14px 0; }
+.try::before { content: "💻 Try it locally"; font-weight: 700; color: var(--ok); font-size: 13px; }
+.lab { border: 2px solid var(--accent); border-radius: 10px; padding: 14px 18px; margin: 18px 0; }
+ul.lessons li { margin: 4px 0; }

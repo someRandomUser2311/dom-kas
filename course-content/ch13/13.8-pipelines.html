@@ -1,0 +1,224 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>13.8 · Bicep in Azure Pipelines &amp; choosing a tool</title>
+<link rel="stylesheet" href="../content.css">
+</head>
+<body>
+<article class="lesson" data-id="13.8" data-chapter="13">
+<nav class="crumbs"><a href="../index.html">Course</a> / <a href="index.html">Chapter 13</a> / 13.8</nav>
+<header>
+  <p class="kicker">Chapter 13 · Lesson 13.8 · ~13 steps · ~17 min</p>
+  <h1>Bicep in Azure Pipelines &amp; choosing a tool</h1>
+  <p class="meta">You'll be able to build a Bicep infra pipeline (lint → what-if → approval → deploy) with workload identity federation, and choose between Bicep and Terraform for a given team.</p>
+</header>
+
+<section class="step" id="s1">
+  <h2>1. The same shape as Chapter 12</h2>
+  <div class="body">
+    <ul>
+      <li><b>PR:</b> build and lint, build the parameters, what-if against the target, results in the run summary.</li>
+      <li><b>Main:</b> what-if stage → environment approval → deploy stage.</li>
+    </ul>
+    <p>Authentication uses the same WIF service connection, with the same least-privilege identities.</p>
+  </div>
+  <aside class="coming" data-set="TF">
+    <dl>
+      <dt>Terraform</dt><dd>what-if ↔ plan; deploy ↔ apply. One important gap: there's no saved what-if to apply. The deploy re-evaluates the template, so re-run what-if right before deploying (step 5).</dd>
+    </dl>
+  </aside>
+  <aside class="coming" data-set="B">
+    <dl>
+      <dt>GitHub Actions</dt><dd><code>azure/login</code> (OIDC) + <code>azure/arm-deploy</code> or <code>az deployment</code>; the same stages behind environment protection rules.</dd>
+      <dt>GitLab CI</dt><dd>az CLI jobs with OIDC id_tokens; manual deploy job for prod.</dd>
+      <dt>Jenkins</dt><dd>az CLI stages with a federated credential plugin, or a managed identity on the agent.</dd>
+      <dt>Classic pipelines</dt><dd>The ARM template deployment task in a release stage, now in YAML.</dd>
+    </dl>
+  </aside>
+</section>
+
+<section class="step" id="s2">
+  <h2>2. PR checks</h2>
+  <pre class="code" data-file="infra-bicep-pr.yml (steps)">- task: AzureCLI@2
+  displayName: Lint, build, what-if
+  inputs:
+    azureSubscription: sc-orders-infra-readonly
+    scriptType: bash
+    scriptLocation: inlineScript
+    workingDirectory: infra/bicep
+    inlineScript: |
+      set -euo pipefail
+      az bicep lint --file main.bicep                  # rules from bicepconfig.json; errors fail the step
+      az bicep build-params --file main.prod.bicepparam --outfile /tmp/params.json
+      az deployment group what-if -g rg-orders-prod -f main.bicep -p main.prod.bicepparam \
+        --exclude-change-types NoChange Ignore --no-pretty-print &gt; whatif.json
+      az deployment group what-if -g rg-orders-prod -f main.bicep -p main.prod.bicepparam \
+        --exclude-change-types NoChange Ignore &gt; whatif.txt
+- script: |
+    { echo '## What-if (prod)'; echo '```'; cat infra/bicep/whatif.txt; echo '```'; } &gt; summary.md
+    echo "##vso[task.uploadsummary]$(System.DefaultWorkingDirectory)/summary.md"
+  displayName: Publish what-if summary</pre>
+</section>
+
+<section class="step" id="s3">
+  <h2>3. The main pipeline</h2>
+  <pre class="code" data-file="infra-pipeline.yml (Bicep)">trigger:
+  branches: { include: [main] }
+  paths: { include: [infra/bicep/*] }
+
+stages:
+  - stage: WhatIf
+    jobs:
+      - job: whatif
+        steps:
+          - task: AzureCLI@2
+            inputs:
+              azureSubscription: sc-orders-infra-prod
+              scriptType: bash
+              scriptLocation: inlineScript
+              workingDirectory: infra/bicep
+              inlineScript: |
+                az bicep lint --file main.bicep
+                az deployment group what-if -g rg-orders-prod -f main.bicep -p main.prod.bicepparam
+
+  - stage: Deploy
+    dependsOn: WhatIf
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+    jobs:
+      - deployment: deploy
+        environment: infra-prod            # approval check
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: self
+                - task: AzureCLI@2
+                  inputs:
+                    azureSubscription: sc-orders-infra-prod
+                    scriptType: bash
+                    scriptLocation: inlineScript
+                    workingDirectory: infra/bicep
+                    inlineScript: |
+                      set -euo pipefail
+                      az stack group create --name stack-orders-prod -g rg-orders-prod \
+                        -f main.bicep -p main.prod.bicepparam \
+                        --action-on-unmanage deleteResources \
+                        --deny-settings-mode denyWriteAndDelete \
+                        --deny-settings-excluded-principals "$(pipelineSpObjectId)" --yes</pre>
+</section>
+
+<section class="step" id="s4">
+  <h2>4. The task alternative</h2>
+  <div class="body"><p><code>AzureResourceManagerTemplateDeployment@3</code> deploys a <code>.bicep</code> file directly (<code>csmFile</code>), with the service connection and resource group as inputs. It's useful if you prefer tasks to scripts. Deployment stacks need the CLI step shown above.</p></div>
+  <pre class="code" data-file="(step)">- task: AzureResourceManagerTemplateDeployment@3
+  inputs:
+    deploymentScope: Resource Group
+    azureResourceManagerConnection: sc-orders-infra-prod
+    resourceGroupName: rg-orders-prod
+    location: westeurope
+    csmFile: infra/bicep/main.bicep
+    csmParametersFile: infra/bicep/main.prod.bicepparam
+    deploymentMode: Incremental</pre>
+</section>
+
+<section class="step" id="s5">
+  <h2>5. what-if isn't a saved plan</h2>
+  <div class="body"><p>Terraform applies the exact plan the approver saw (lesson 12.8). Bicep can't: the deploy evaluates the template and Azure as they are <i>at deploy time</i>. Keep the gap between what-if and deploy short, run what-if again inside the deploy job just before the deployment, and use an exclusive lock so nothing else changes the target in between.</p></div>
+</section>
+
+<section class="step" id="s6">
+  <h2>6. Arrange the stages</h2>
+  <div class="check" data-type="custom">
+    <p class="q">Arrange the Bicep infra pipeline so a deploy can only happen after an approved what-if.</p>
+    <div class="widget" data-widget="stage-sim">Cards: "lint + build-params", "what-if (published to summary)", "approval on infra-prod", "what-if again + deploy (stack)", plus decoys "deploy on PR" and "skip what-if on main". Success: lint → what-if → approval → re-check + deploy, with the decoys discarded.</div>
+    <div class="explain">The approver reviews the what-if; the deploy step re-checks right before acting.</div>
+  </div>
+</section>
+
+<section class="step" id="s7">
+  <h2>7. Identities and permissions</h2>
+  <ul>
+    <li>PR identity: <b>Reader</b> on the target, enough for what-if.</li>
+    <li>Deploy identity: <b>Contributor</b> on the resource group(s), <b>RBAC Administrator</b> (conditioned) for role assignments, and rights to manage deployment stacks there.</li>
+    <li>That deploy identity is excluded from the stack's deny settings, so it's the only way to change prod.</li>
+  </ul>
+</section>
+
+<section class="step" id="s8">
+  <h2>8. Bicep vs Terraform: the decision matrix</h2>
+  <table>
+    <tr><th>Factor</th><th>Bicep</th><th>Terraform</th></tr>
+    <tr><td>Clouds and providers</td><td>Azure only</td><td>Multi-cloud plus thousands of providers (GitHub, Datadog, Kubernetes, Entra ID …)</td></tr>
+    <tr><td>New Azure features</td><td>Day zero (new API version)</td><td>After the azurerm provider adds them (azapi covers the gap)</td></tr>
+    <tr><td>State</td><td>None to manage (stacks add lifecycle)</td><td>A state file to store, lock and protect</td></tr>
+    <tr><td>Removing resources</td><td>Kept, unless you use a stack with delete</td><td>Destroyed on apply</td></tr>
+    <tr><td>Plan fidelity</td><td>what-if (prediction)</td><td>Saved plan applied exactly</td></tr>
+    <tr><td>Ecosystem</td><td>AVM, Microsoft support</td><td>Huge community, AVM, OpenTofu fork</td></tr>
+    <tr><td>Team skills</td><td>Natural for Azure-only teams</td><td>Natural for teams already on Terraform</td></tr>
+  </table>
+</section>
+
+<section class="step" id="s9">
+  <h2>9. Scenarios</h2>
+  <div class="check" data-type="mcq">
+    <p class="q">A company runs workloads on Azure and AWS, and manages GitHub repos and Datadog monitors as code. Which IaC tool fits best as the standard?</p>
+    <ol class="options">
+      <li>Bicep <span class="why">Azure only.</span></li>
+      <li class="correct">Terraform (or OpenTofu)</li>
+      <li>ARM JSON <span class="why">Azure only, and verbose.</span></li>
+      <li>az CLI scripts <span class="why">Not declarative.</span></li>
+    </ol>
+    <div class="explain">One tool and one workflow across every provider.</div>
+  </div>
+  <div class="check" data-type="mcq">
+    <p class="q">An Azure-only team wants new AKS preview features the day they ship, and doesn't want to manage a state backend. Which fits?</p>
+    <ol class="options">
+      <li class="correct">Bicep, with deployment stacks for lifecycle</li>
+      <li>Terraform with azurerm only <span class="why">Workable, but they'd wait for provider support (or use azapi) and manage state.</span></li>
+      <li>Portal <span class="why">Not IaC.</span></li>
+      <li>Pulumi <span class="why">Also needs a state backend.</span></li>
+    </ol>
+    <div class="explain">There's no wrong answer in general. Pick by context, then use the tool well.</div>
+  </div>
+</section>
+
+<section class="step" id="s10">
+  <h2>10. What's required either way</h2>
+  <div class="check" data-type="multi">
+    <p class="q">Select what Contoso's infra pipeline needs <b>whichever</b> language it uses.</p>
+    <ol class="options">
+      <li class="correct">PR checks with a preview of changes (plan or what-if)</li>
+      <li class="correct">An approval before changing prod</li>
+      <li class="correct">Workload identity federation, no client secrets</li>
+      <li class="correct">Least-privilege identities (read-only for PRs)</li>
+      <li>A remote state backend <span class="why">Only Terraform needs one.</span></li>
+      <li>Complete deployment mode <span class="why">Neither needs it; it's risky.</span></li>
+    </ol>
+    <div class="explain">The pipeline discipline is the same; only the commands differ.</div>
+  </div>
+</section>
+
+<section class="step" id="s11">
+  <h2>11. Mixing tools</h2>
+  <div class="body"><p>It's fine to use both for different <b>layers</b>: Terraform for landing zones and shared networking, Bicep for an app team's resources. Never let two tools manage the <b>same</b> resource. They'll fight, and each will undo the other's changes.</p></div>
+</section>
+
+<section class="step" id="s12">
+  <h2>12. The capstone accepts either</h2>
+  <div class="body"><p>In Chapter 17 you submit <code>infra/terraform/</code> <b>or</b> <code>infra/bicep/</code>. Both are graded against the same requirement rules, and submitting both earns the "Bilingual IaC" badge.</p></div>
+</section>
+
+<section class="step summary" id="s13">
+  <h2>Bicep pipelines &amp; choosing, sorted</h2>
+  <ul>
+    <li>PR: <code>az bicep lint</code>, <code>build-params</code>, what-if to the run summary.</li>
+    <li>Main: what-if → approval (deployment job + environment) → re-check + deploy (stack or <code>az deployment group create</code>).</li>
+    <li>what-if isn't a saved plan; keep the gap short and lock the environment.</li>
+    <li>Choose by clouds, feature timing, state preferences and team skills; never let two tools own one resource.</li>
+  </ul>
+</section>
+</article>
+</body>
+</html>

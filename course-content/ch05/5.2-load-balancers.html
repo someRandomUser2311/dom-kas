@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>5.2 · Services meet Azure</title>
+<link rel="stylesheet" href="../content.css">
+</head>
+<body>
+<article class="lesson" data-id="5.2" data-chapter="5">
+<nav class="crumbs"><a href="../index.html">Course</a> / <a href="index.html">Chapter 5</a> / 5.2</nav>
+<header>
+  <p class="kicker">Chapter 5 · Lesson 5.2 · ~10 steps · ~12 min</p>
+  <h1>Services meet Azure</h1>
+  <p class="meta">You'll be able to explain what AKS builds in Azure when you create a LoadBalancer Service, make it internal or give it a static IP, and know when to stop creating them.</p>
+</header>
+
+<section class="step" id="s1">
+  <h2>1. From YAML to an Azure Load Balancer</h2>
+  <div class="body">
+    <p>When you create a Service with <code>type: LoadBalancer</code>, the <b>cloud-controller-manager</b> (Azure's side of the control plane) sees it and configures the cluster's <b>Azure Load Balancer</b>. It:</p>
+    <ul>
+      <li>adds a frontend IP (a new public IP resource);</li>
+      <li>adds a load-balancing rule for the Service's port;</li>
+      <li>adds a health probe;</li>
+      <li>points them all at the node pool's VMSS.</li>
+    </ul>
+    <p>Then it writes the IP into the Service's <code>status</code>.</p>
+  </div>
+  <div class="widget" data-widget="lb-builder">A split view. The left shows the Service YAML; the right shows the Azure resources in the node resource group. Applying the YAML animates a public IP <code>kubernetes-a1b2c3…</code>, a frontend IP configuration, a rule <code>TCP 80</code> and a probe appearing on the <code>kubernetes</code> load balancer. Deleting the Service removes them. Toggling the internal annotation moves the frontend to <code>kubernetes-internal</code> with a VNet IP.</div>
+  <aside class="coming" data-set="A">
+    <dl>
+      <dt>Windows/IIS admin</dt><dd>It's like asking for a new VIP on the hardware load balancer, except a Kubernetes object files the request, and it's done in a minute.</dd>
+      <dt>Linux admin</dt><dd>The Azure LB is a layer-4 pass-through load balancer. Traffic hits a node's NodePort, then kube-proxy or Cilium sends it to a pod.</dd>
+      <dt>Developer (Compose)</dt><dd><code>ports: "80:8080"</code> on a VM, but with a real cloud load balancer and a public IP.</dd>
+      <dt>Other clouds</dt><dd>Same as EKS creating an NLB or GKE a network load balancer.</dd>
+    </dl>
+  </aside>
+</section>
+
+<section class="step" id="s2">
+  <h2>2. Watch it happen</h2>
+  <pre class="output">$ kubectl apply -f web-svc.yaml
+service/web created
+$ kubectl get svc web -n web -w
+NAME   TYPE           CLUSTER-IP    EXTERNAL-IP   PORT(S)        AGE
+web    LoadBalancer   172.16.88.3   &lt;pending&gt;     80:31452/TCP   3s
+web    LoadBalancer   172.16.88.3   20.50.12.34   80:31452/TCP   41s</pre>
+  <div class="body"><p>While <code>EXTERNAL-IP</code> is <code>&lt;pending&gt;</code>, Azure resources are being created. If it stays pending, check the Service's events. The usual causes are a permission error for the cluster identity, or quota.</p></div>
+</section>
+
+<section class="step" id="s3">
+  <h2>3. Internal load balancers</h2>
+  <div class="body">
+    <p>Not everything should be on the internet. Add one annotation and the Service gets a <b>private IP from your VNet</b>, on a separate <code>kubernetes-internal</code> load balancer. Other VNets, VPN users and on-premises networks can reach it; the internet can't.</p>
+    <p>A second annotation picks which subnet the IP comes from.</p>
+  </div>
+  <div class="check" data-type="fill">
+    <p class="q">Make this Service internal.</p>
+    <pre class="code" data-file="svc.yaml">apiVersion: v1
+kind: Service
+metadata:
+  name: orders-admin
+  namespace: orders
+  annotations:
+    <span class="blank">?</span>: "true"
+    service.beta.kubernetes.io/azure-load-balancer-internal-subnet: snet-ingress
+spec:
+  type: LoadBalancer
+  selector: { app: orders-admin }
+  ports:
+    - port: 443
+      targetPort: 8443</pre>
+    <ul class="chips">
+      <li class="correct"><code>service.beta.kubernetes.io/azure-load-balancer-internal</code></li>
+      <li><code>service.beta.kubernetes.io/azure-internal</code> <span class="why">Close, but not the exact name; unknown annotations are silently ignored, so you'd get a public IP.</span></li>
+      <li><code>kubernetes.io/internal-lb</code> <span class="why">Not an Azure annotation.</span></li>
+      <li><code>networking.azure.com/private</code> <span class="why">Doesn't exist.</span></li>
+    </ul>
+    <div class="explain">The exact key matters: a typo in an annotation doesn't cause an error, it just creates a <b>public</b> IP. Always check <code>EXTERNAL-IP</code> after applying.</div>
+  </div>
+</section>
+
+<section class="step" id="s4">
+  <h2>4. Static IPs</h2>
+  <div class="body">
+    <p>By default the public IP is created and deleted with the Service. Delete and recreate the Service, and the address changes, breaking DNS records and firewall rules that point at it.</p>
+    <p>For a stable address:</p>
+    <ol>
+      <li>Create a <b>Standard SKU public IP</b> yourself (or with IaC).</li>
+      <li>Give the cluster identity <b>Network Contributor</b> on its resource group.</li>
+      <li>Reference it by name with an annotation.</li>
+    </ol>
+  </div>
+  <pre class="code" data-file="svc.yaml (metadata)">annotations:
+  service.beta.kubernetes.io/azure-pip-name: pip-orders-web
+  service.beta.kubernetes.io/azure-load-balancer-resource-group: rg-orders-net</pre>
+  <aside class="more"><p><code>spec.loadBalancerIP</code> also exists, but it's deprecated in Kubernetes. Prefer the annotation.</p></aside>
+</section>
+
+<section class="step" id="s5">
+  <h2>5. Keeping the client's IP</h2>
+  <div class="body">
+    <p>By default, traffic may arrive at any node and be forwarded to a pod on another node. The pod then sees the <b>node's</b> IP, not the client's.</p>
+    <p><code>externalTrafficPolicy: Local</code> sends traffic only to nodes that have a ready pod. That keeps the client's source IP, at the cost of potentially uneven load.</p>
+    <p>For HTTP apps, a gateway usually passes the client IP in a header anyway (Chapter 8).</p>
+  </div>
+</section>
+
+<section class="step" id="s6">
+  <h2>6. The problem with many LoadBalancer Services</h2>
+  <div class="check" data-type="mcq">
+    <p class="q">Contoso has 10 HTTP services and gives each one a public LoadBalancer Service. What's the main downside, compared with one gateway in front of them all?</p>
+    <ol class="options">
+      <li>It doesn't work: AKS allows only one LoadBalancer Service <span class="why">You can have many.</span></li>
+      <li class="correct">10 public IPs to pay for, secure, certify and put in DNS, with no shared TLS, routing or WAF</li>
+      <li>LoadBalancer Services can't do HTTPS <span class="why">They pass TCP through, so the app can terminate TLS, but each one must manage its own certificate.</span></li>
+      <li>It's cheaper <span class="why">Each public IP and rule costs money.</span></li>
+    </ol>
+    <div class="explain">For HTTP, expose <b>one</b> entry point (a Gateway or Ingress, Chapter 8) that routes by host and path to ClusterIP Services. Keep LoadBalancer Services for non-HTTP TCP/UDP or the gateway itself.</div>
+  </div>
+</section>
+
+<section class="step" id="s7">
+  <h2>7. Permissions: why <code>&lt;pending&gt;</code> lasts forever</h2>
+  <div class="check" data-type="diagnose">
+    <p class="q">EXTERNAL-IP stays <code>&lt;pending&gt;</code>. Why?</p>
+    <pre class="output">$ kubectl describe svc web -n web | tail -4
+Events:
+  Type     Reason                  From                Message
+  Warning  SyncLoadBalancerFailed  service-controller  Error syncing load balancer: failed to ensure load balancer:
+           ... does not have authorization to perform action 'Microsoft.Network/publicIPAddresses/read'
+           over scope '/subscriptions/…/resourceGroups/rg-orders-net/providers/Microsoft.Network/publicIPAddresses/pip-orders-web'</pre>
+    <ol class="options">
+      <li>The Service selector is wrong <span class="why">That gives no endpoints, but the IP would still be assigned.</span></li>
+      <li class="correct">The cluster identity lacks permission on the resource group holding the static public IP</li>
+      <li>The cluster is on the Free tier <span class="why">Free clusters can create load balancers.</span></li>
+      <li>The pods aren't ready <span class="why">IP assignment doesn't wait for pods.</span></li>
+    </ol>
+    <div class="explain">Grant the <b>cluster (control-plane) identity</b> Network Contributor on <code>rg-orders-net</code>. The next lessons cover which identity does what.</div>
+  </div>
+</section>
+
+<section class="step" id="s8">
+  <h2>8. A friendly DNS name</h2>
+  <div class="body">
+    <p>The annotation <code>service.beta.kubernetes.io/azure-dns-label-name: contoso-orders-web</code> gives the public IP a name like <code>contoso-orders-web.westeurope.cloudapp.azure.com</code>. That's handy for demos. In production, use your own domain with Azure DNS.</p>
+  </div>
+</section>
+
+<section class="step" id="s9">
+  <h2>9. Outbound uses the same load balancer</h2>
+  <div class="body">
+    <p>The same Azure Load Balancer also handles <b>outbound</b> traffic from nodes by default, using its own public IP. The next lesson covers why you might change that.</p>
+  </div>
+</section>
+
+<section class="step summary" id="s10">
+  <h2>Services in Azure, sorted</h2>
+  <ul>
+    <li><code>type: LoadBalancer</code> → the cloud-controller-manager adds a frontend IP, rule and probe to the Azure LB.</li>
+    <li>Internal: <code>service.beta.kubernetes.io/azure-load-balancer-internal: "true"</code> (+ subnet).</li>
+    <li>Static IP: a pre-created Standard public IP + <code>azure-pip-name</code> + Network Contributor for the cluster identity.</li>
+    <li><code>&lt;pending&gt;</code> forever → read the Service's events.</li>
+    <li>Many HTTP services → one gateway (Chapter 8), not many public IPs.</li>
+  </ul>
+</section>
+</article>
+</body>
+</html>

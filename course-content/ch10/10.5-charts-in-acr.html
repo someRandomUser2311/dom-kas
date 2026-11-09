@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>10.5 · Charts in ACR (OCI)</title>
+<link rel="stylesheet" href="../content.css">
+</head>
+<body>
+<article class="lesson" data-id="10.5" data-chapter="10">
+<nav class="crumbs"><a href="../index.html">Course</a> / <a href="index.html">Chapter 10</a> / 10.5</nav>
+<header>
+  <p class="kicker">Chapter 10 · Lesson 10.5 · ~8 steps · ~9 min</p>
+  <h1>Charts in ACR (OCI)</h1>
+  <p class="meta">You'll be able to package a chart, push it to ACR as an OCI artifact, install it from there, and version charts separately from apps.</p>
+</header>
+
+<section class="step" id="s1">
+  <h2>1. Why publish a chart?</h2>
+  <div class="body">
+    <p>Installing from a folder in Git works for one repo. When other teams, or other pipelines, use the chart, publish a <b>versioned package</b>.</p>
+    <p>Helm charts can be stored as <b>OCI artifacts</b> in any OCI registry, including ACR, right beside the images.</p>
+  </div>
+  <aside class="coming" data-set="A">
+    <dl>
+      <dt>Windows/IIS admin</dt><dd>Like publishing an MSI to an internal software repository instead of copying it from a share.</dd>
+      <dt>Linux admin</dt><dd>Like pushing a package to your internal repository.</dd>
+      <dt>Developer (Compose)</dt><dd>Same registry, same login: <code>oci://</code> URLs instead of image names.</dd>
+      <dt>Other clouds</dt><dd>ECR and Artifact Registry store Helm OCI charts the same way.</dd>
+    </dl>
+  </aside>
+</section>
+
+<section class="step" id="s2">
+  <h2>2. Package and push</h2>
+  <pre class="code" data-file="terminal">helm package charts/orders-api                     # → orders-api-0.3.0.tgz
+TOKEN=$(az acr login -n contosoacr --expose-token --query accessToken -o tsv)
+helm registry login contosoacr.azurecr.io \
+  --username 00000000-0000-0000-0000-000000000000 --password "$TOKEN"
+helm push orders-api-0.3.0.tgz oci://contosoacr.azurecr.io/helm</pre>
+  <div class="body"><p>The chart lands in repository <code>helm/orders-api</code> with tag <code>0.3.0</code>, the chart <b>version</b>. The pushing identity needs AcrPush (or repository Writer).</p></div>
+  <div class="check" data-type="command">
+    <p class="q">Push the packaged chart <code>orders-api-0.3.0.tgz</code> to the <code>helm</code> namespace of <code>contosoacr</code>.</p>
+    <p class="answer"><code>helm push orders-api-0.3.0.tgz oci://contosoacr.azurecr.io/helm</code></p>
+    <p class="accept">Only the <code>oci://</code> form is accepted; the chart name and version come from the package.</p>
+    <div class="explain">Don't include the chart name in the destination; Helm appends it.</div>
+  </div>
+</section>
+
+<section class="step" id="s3">
+  <h2>3. Install from the registry</h2>
+  <pre class="code" data-file="terminal">helm upgrade --install orders-api oci://contosoacr.azurecr.io/helm/orders-api \
+  --version 0.3.0 -n orders -f values-prod.yaml --set image.tag=1.4.2 --atomic --wait
+helm show values oci://contosoacr.azurecr.io/helm/orders-api --version 0.3.0</pre>
+</section>
+
+<section class="step" id="s4">
+  <h2>4. Two versions: chart and app</h2>
+  <div class="body">
+    <ul>
+      <li><code>version</code>: the <b>chart</b>'s version. Bump it whenever templates or default values change.</li>
+      <li><code>appVersion</code>: the <b>app</b> version the chart deploys by default. Informational, and used as the default tag in our template.</li>
+    </ul>
+    <p>Most releases change only the image tag, passed as a value, not the chart. Version the chart only when the chart itself changes.</p>
+  </div>
+  <div class="check" data-type="mcq">
+    <p class="q">You add a PodDisruptionBudget template to the chart. The app is still 1.4.2. What changes?</p>
+    <ol class="options">
+      <li>Only appVersion, to 1.4.3 <span class="why">The app didn't change.</span></li>
+      <li class="correct">The chart <code>version</code> (e.g. 0.3.0 → 0.4.0); appVersion stays</li>
+      <li>Nothing; templates aren't versioned <span class="why">Templates are the chart, so they're exactly what's versioned.</span></li>
+      <li>Both must always change together <span class="why">They're independent.</span></li>
+    </ol>
+    <div class="explain">Chart versions follow semantic versioning of the chart's interface (its values and templates). Pushed chart versions should be immutable.</div>
+  </div>
+</section>
+
+<section class="step" id="s5">
+  <h2>5. Immutability and provenance</h2>
+  <div class="body">
+    <ul>
+      <li>Never re-push the same chart version with different content. Lock it in ACR, as you would image tags.</li>
+      <li>Pin chart versions in deployments (<code>--version 0.3.0</code>); never install "latest".</li>
+      <li>Charts can be signed like images (Chapter 16).</li>
+    </ul>
+  </div>
+</section>
+
+<section class="step" id="s6">
+  <h2>6. Dependencies</h2>
+  <div class="body"><p>A chart can depend on other charts, declared in <code>Chart.yaml</code> <code>dependencies:</code> with OCI or HTTP repositories. <code>helm dependency update</code> downloads them into <code>charts/</code>, and <code>Chart.lock</code> pins the exact versions. Commit the lock file.</p></div>
+</section>
+
+<section class="step" id="s7">
+  <h2>7. Public charts through your registry</h2>
+  <div class="body"><p>Third-party charts, such as cert-manager or Kyverno, can be imported into ACR (<code>az acr import</code>, or <code>helm pull</code> then <code>helm push</code>). Clusters then only pull from <b>your</b> registry. That works with private endpoints and supports the allowed-registries policy in Chapter 16.</p></div>
+</section>
+
+<section class="step summary" id="s8">
+  <h2>Charts in ACR, sorted</h2>
+  <ul>
+    <li><code>helm package</code> → <code>helm push … oci://contosoacr.azurecr.io/helm</code>.</li>
+    <li>Install with <code>oci://…/orders-api --version x.y.z</code>.</li>
+    <li>Chart <code>version</code> ≠ <code>appVersion</code>; bump the chart only when the chart changes.</li>
+    <li>Immutable, pinned versions; mirror third-party charts into ACR.</li>
+  </ul>
+</section>
+</article>
+</body>
+</html>

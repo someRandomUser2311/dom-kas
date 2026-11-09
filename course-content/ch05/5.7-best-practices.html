@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>5.7 · Best practices recap</title>
+<link rel="stylesheet" href="../content.css">
+</head>
+<body>
+<article class="lesson" data-id="5.7" data-chapter="5">
+<nav class="crumbs"><a href="../index.html">Course</a> / <a href="index.html">Chapter 5</a> / 5.7</nav>
+<header>
+  <p class="kicker">Chapter 5 · Lesson 5.7 · ~8 steps · ~10 min</p>
+  <h1>Best practices recap</h1>
+  <p class="meta">You'll be able to review any AKS cluster's network and identity settings against a baseline checklist, and spot what's missing.</p>
+</header>
+
+<section class="step" id="s1">
+  <h2>1. The baseline</h2>
+  <div class="body">
+    <p>Everything in Chapters 4 and 5 boils down to this checklist. Contoso applies it to every cluster: dev, prod, and the next one.</p>
+  </div>
+  <table>
+    <tr><th>Area</th><th>Baseline</th></tr>
+    <tr><td>Pod networking</td><td>Azure CNI Overlay + Cilium dataplane; planned, non-overlapping VNet / pod / Service ranges</td></tr>
+    <tr><td>Egress</td><td>NAT gateway for most clusters; UDR through Azure Firewall where policy requires inspection</td></tr>
+    <tr><td>Ingress</td><td>One gateway for HTTP (Chapter 8); internal load balancers for private services</td></tr>
+    <tr><td>Cluster identities</td><td>User-assigned managed identities only; Network Contributor and AcrPull scoped narrowly</td></tr>
+    <tr><td>Human access</td><td>Entra ID + Azure RBAC, groups only, namespace-scoped where possible, PIM for production</td></tr>
+    <tr><td>Static credentials</td><td>Local accounts disabled</td></tr>
+    <tr><td>App identity</td><td>Workload identity, one managed identity per app, no secrets in pods</td></tr>
+    <tr><td>Azure services</td><td>Private endpoints for ACR, Key Vault, databases</td></tr>
+  </table>
+  <aside class="coming" data-set="A">
+    <dl>
+      <dt>Windows/IIS admin</dt><dd>Treat this like a server hardening baseline (CIS), but for the cluster's network and identity.</dd>
+      <dt>Linux admin</dt><dd>Same idea as a build standard for every host; Azure Policy can enforce parts of it (Chapter 15).</dd>
+      <dt>Developer (Compose)</dt><dd>Most items are the platform team's job, but "no secrets in pods" and "one identity per app" are yours.</dd>
+      <dt>Other clouds</dt><dd>It maps closely to the EKS and GKE best-practice guides; only the product names differ.</dd>
+    </dl>
+  </aside>
+</section>
+
+<section class="step" id="s2">
+  <h2>2. Why each item matters</h2>
+  <div class="body">
+    <ul>
+      <li><b>Overlay:</b> you won't run out of VNet IPs as you scale.</li>
+      <li><b>NAT gateway or firewall:</b> predictable egress IPs, no SNAT exhaustion, optional inspection.</li>
+      <li><b>Managed identities:</b> nothing expires at 2 am.</li>
+      <li><b>Entra ID + Azure RBAC + no local accounts:</b> every action is a named person or pipeline, and auditable.</li>
+      <li><b>Workload identity:</b> a leaked pod spec or image contains no credentials.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="step" id="s3">
+  <h2>3. Review a cluster</h2>
+  <div class="check" data-type="multi">
+    <p class="q">A colleague's cluster has these settings. Select <b>every</b> baseline violation.</p>
+    <pre class="code" data-file="cluster review">networkProfile:
+  networkPlugin: kubenet
+  outboundType: loadBalancer
+identity:
+  type: SystemAssigned
+servicePrincipalProfile: { clientId: msi }
+aadProfile: { managed: true, enableAzureRbac: true }
+disableLocalAccounts: false
+securityProfile:
+  workloadIdentity: { enabled: false }
+k8s/base/deployment.yaml:
+  env: [ { name: AZURE_CLIENT_SECRET, valueFrom: { secretKeyRef: { name: sp-creds, key: secret } } } ]</pre>
+    <ol class="options">
+      <li class="correct">kubenet networking (retiring; use Azure CNI Overlay)</li>
+      <li class="correct">Local accounts still enabled</li>
+      <li class="correct">Workload identity disabled, and the app uses a client secret instead</li>
+      <li>Entra ID with Azure RBAC is enabled <span class="why">That's correct, and part of the baseline.</span></li>
+      <li>outboundType loadBalancer <span class="why">Acceptable for a simple cluster; consider a NAT gateway at scale. Not a violation by itself.</span></li>
+      <li>A system-assigned cluster identity <span class="why">It's a managed identity, which is fine. User-assigned is preferred for rebuilds, but it's not a violation.</span></li>
+    </ol>
+    <div class="explain">Three must-fix items: network model, static admin access, and a secret in the pod. The rest are judgement calls.</div>
+  </div>
+</section>
+
+<section class="step" id="s4">
+  <h2>4. Turning the checklist into code</h2>
+  <div class="body">
+    <p>A checklist in a wiki drifts. Contoso enforces it in three places:</p>
+    <ul>
+      <li><b>IaC</b> (Chapters 12–13): the cluster is defined in Terraform or Bicep, so the settings are reviewed in pull requests.</li>
+      <li><b>Pipeline checks</b> (Chapter 16): manifests are scanned for secrets and bad patterns before they deploy.</li>
+      <li><b>Azure Policy</b> (Chapter 15): non-compliant clusters and pods are flagged or blocked.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="step" id="s5">
+  <h2>5. Tools that check for you</h2>
+  <div class="body">
+    <ul>
+      <li><b>Azure Advisor</b> and <b>Microsoft Defender for Cloud</b> recommendations for AKS.</li>
+      <li><b>AKS deployment safeguards</b>, which warn about or enforce good manifests (on by default in AKS Automatic).</li>
+      <li>The <b>AKS baseline architecture</b> reference from Microsoft, the source of most of this list.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="step" id="s6">
+  <h2>6. What's next</h2>
+  <div class="body">
+    <p>Contoso's cluster is now well-networked and secretless. Next, <b>Chapter 6</b> adds the container registry (ACR) and decides how the cluster's API server is exposed: public or private.</p>
+  </div>
+</section>
+
+<section class="step summary" id="s7">
+  <h2>Baseline, sorted</h2>
+  <ul>
+    <li>Overlay + Cilium; planned ranges; NAT gateway or firewall egress.</li>
+    <li>Managed identities only; narrow role scopes.</li>
+    <li>Entra ID + Azure RBAC, groups, no local accounts.</li>
+    <li>Workload identity per app; no secrets in pods.</li>
+    <li>Enforce with IaC, pipeline checks and Azure Policy.</li>
+  </ul>
+</section>
+</article>
+</body>
+</html>

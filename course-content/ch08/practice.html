@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chapter 8 · Practice</title>
+<link rel="stylesheet" href="../content.css">
+</head>
+<body>
+<main>
+<nav class="crumbs"><a href="../index.html">Course</a> / <a href="index.html">Chapter 8</a> / Practice</nav>
+<p class="kicker">Chapter 8 · Practice</p>
+<h1>Practice: quiz, predict, lab, try it locally</h1>
+
+<h2 id="quiz">Checkpoint quiz (10 drawn from 20)</h2>
+<div class="check" data-type="mcq"><p class="q">What does a namespace isolate by default?</p><ol class="options"><li>Network traffic</li><li class="correct">Names, RBAC scope, quotas and policies</li><li>Nodes</li><li>The kernel</li></ol><div class="explain">Network isolation needs NetworkPolicies.</div></div>
+<div class="check" data-type="mcq"><p class="q">Which is cluster-scoped?</p><ol class="options"><li>Service</li><li>Secret</li><li class="correct">StorageClass</li><li>HTTPRoute</li></ol><div class="explain">Check with <code>kubectl api-resources --namespaced=false</code>.</div></div>
+<div class="check" data-type="mcq"><p class="q">Can a pod mount a Secret from another namespace?</p><ol class="options"><li>Yes</li><li class="correct">No</li><li>Only with ReferenceGrant</li><li>Only cluster admins' pods</li></ol><div class="explain">ReferenceGrant is a Gateway API mechanism, not for pod volumes.</div></div>
+<div class="check" data-type="mcq"><p class="q">A compute ResourceQuota exists. A pod has no requests and there's no LimitRange. Result?</p><ol class="options"><li>Scheduled with no limits</li><li class="correct">Rejected: must specify requests</li><li>BestEffort and allowed</li><li>Pending</li></ol><div class="explain">Add requests or a LimitRange with defaults.</div></div>
+<div class="check" data-type="mcq"><p class="q">Where do you see "exceeded quota" errors for a Deployment?</p><ol class="options"><li>Pod events</li><li class="correct">ReplicaSet events</li><li>Node events</li><li>The Service</li></ol><div class="explain">No pod was created, so there's no pod to describe.</div></div>
+<div class="check" data-type="mcq"><p class="q">Which LimitRange field sets default requests?</p><ol class="options"><li><code>default</code></li><li class="correct"><code>defaultRequest</code></li><li><code>min</code></li><li><code>requests</code></li></ol><div class="explain"><code>default</code> sets default limits.</div></div>
+<div class="check" data-type="mcq"><p class="q">An Ingress is created but nothing routes. ADDRESS is empty. Most likely?</p><ol class="options"><li>The DNS record is missing</li><li class="correct">No controller claims it: wrong or missing <code>ingressClassName</code></li><li>The Service has no endpoints</li><li>TLS is missing</li></ol><div class="explain">The object is only rules; a controller does the work.</div></div>
+<div class="check" data-type="mcq"><p class="q">With <code>pathType: Prefix</code> and <code>path: /api</code>, which request matches?</p><ol class="options"><li><code>/apiary</code></li><li class="correct"><code>/api/orders</code></li><li><code>/v1/api</code></li><li>All of them</li></ol><div class="explain">Prefix matching is by path segment.</div></div>
+<div class="check" data-type="mcq"><p class="q">Two rules match <code>/api/admin/users</code>: Prefix <code>/api</code> and Prefix <code>/api/admin</code>. Which wins?</p><ol class="options"><li>The first in the file</li><li class="correct"><code>/api/admin</code> (longest match)</li><li>Random</li><li>Neither (conflict)</li></ol><div class="explain">Longest path wins.</div></div>
+<div class="check" data-type="mcq"><p class="q">Why are Ingress manifests hard to move between controllers?</p><ol class="options"><li>Different apiVersions</li><li class="correct">Most features are controller-specific annotations</li><li>They can't use TLS</li><li>They're cluster-scoped</li></ol><div class="explain">The Gateway API puts features in the spec.</div></div>
+<div class="check" data-type="mcq"><p class="q">Who typically owns a Gateway?</p><ol class="options"><li>The app developer</li><li class="correct">The platform or cluster operator team</li><li>Azure</li><li>Nobody</li></ol><div class="explain">App teams own HTTPRoutes.</div></div>
+<div class="check" data-type="mcq"><p class="q">How does an HTTPRoute attach to a Gateway?</p><ol class="options"><li><code>gatewayRef</code></li><li class="correct"><code>parentRefs</code></li><li><code>backendRefs</code></li><li>A label</li></ol><div class="explain">Optionally with <code>sectionName</code> for a listener.</div></div>
+<div class="check" data-type="mcq"><p class="q">A route shows <code>Accepted: False, reason: NotAllowedByListeners</code>. Fix?</p><ol class="options"><li>Recreate the Service</li><li class="correct">Allow the route's namespace in the Gateway's <code>allowedRoutes</code> (e.g. add the selector label)</li><li>Add a ReferenceGrant</li><li>Change the GatewayClass</li></ol><div class="explain">The default is <code>from: Same</code>.</div></div>
+<div class="check" data-type="mcq"><p class="q">What lets an HTTPRoute in <code>web</code> send traffic to a Service in <code>orders</code>?</p><ol class="options"><li>Nothing; it's always allowed</li><li class="correct">A ReferenceGrant in <code>orders</code> allowing HTTPRoutes from <code>web</code></li><li>A NetworkPolicy</li><li>RBAC on the Service</li></ol><div class="explain">The target namespace must consent.</div></div>
+<div class="check" data-type="mcq"><p class="q">How do you split 10% of traffic to a canary with the Gateway API?</p><ol class="options"><li>An annotation</li><li class="correct">Weights on <code>backendRefs</code></li><li>Two Gateways</li><li>A NodePort</li></ol><div class="explain">Used again in Chapter 11.</div></div>
+<div class="check" data-type="mcq"><p class="q">Which AKS option runs the L7 data plane outside the cluster and supports a WAF?</p><ol class="options"><li>The app routing add-on</li><li class="correct">Application Gateway for Containers</li><li>Community ingress-nginx</li><li>kube-proxy</li></ol><div class="explain">Its in-cluster ALB controller programs the Azure resource.</div></div>
+<div class="check" data-type="mcq"><p class="q">What's the status of the community ingress-nginx project?</p><ol class="options"><li>The recommended default</li><li class="correct">Retired: no further releases or security fixes; migrate (ideally to the Gateway API)</li><li>Replaced by kube-proxy</li><li>Only for Windows</li></ol><div class="explain">Check the AKS add-on's own support timeline separately.</div></div>
+<div class="check" data-type="mcq"><p class="q">Where should TLS private keys for the gateway live?</p><ol class="options"><li>In Git, base64-encoded</li><li class="correct">Created by automation (cert-manager or a Key Vault sync) into a TLS Secret, never committed</li><li>In a ConfigMap</li><li>In the image</li></ol><div class="explain">Leaked keys allow impersonation.</div></div>
+<div class="check" data-type="mcq"><p class="q">The browser shows "Kubernetes Ingress Controller Fake Certificate". Likely cause?</p><ol class="options"><li>Expired certificate</li><li class="correct">The referenced TLS Secret is missing or in the wrong namespace</li><li>Port 80 is blocked</li><li>No endpoints</li></ol><div class="explain">The controller falls back to a default certificate.</div></div>
+<div class="check" data-type="mcq"><p class="q">How do you redirect HTTP to HTTPS with the Gateway API?</p><ol class="options"><li>An annotation</li><li class="correct">A <code>RequestRedirect</code> filter on a route attached to the HTTP listener</li><li>Delete port 80</li><li>A NetworkPolicy</li></ol><div class="explain">It's a portable, standard filter.</div></div>
+
+<h2 id="predict">Predict the outcome (3)</h2>
+<div class="check" data-type="predict"><p class="q">1 · Overlapping paths: rules Prefix <code>/</code> → web and Prefix <code>/api</code> → orders-api. Requests: <code>/api/orders</code>, <code>/apidocs</code>, <code>/</code>.</p><ol class="options"><li class="correct">orders-api, web, web</li><li>orders-api, orders-api, web</li><li>web, web, web</li><li>orders-api, 404, web</li></ol><div class="explain"><code>/apidocs</code> isn't under the <code>/api</code> segment.</div></div>
+<div class="check" data-type="predict"><p class="q">2 · An Ingress without <code>ingressClassName</code> in a cluster with two controllers and no default class.</p><ol class="options"><li>Both controllers serve it</li><li class="correct">Neither claims it; ADDRESS stays empty and nothing routes</li><li>The API server rejects it</li><li>The first controller installed takes it</li></ol><div class="explain">Always set the class (or mark one IngressClass as default).</div></div>
+<div class="check" data-type="predict"><p class="q">3 · The Gateway has <code>allowedRoutes.namespaces.from: Same</code> (in <code>gateway-infra</code>). An HTTPRoute in <code>orders</code> references it.</p><ol class="options"><li>Attached and serving</li><li class="correct">Accepted=False (NotAllowedByListeners); requests get 404 from the gateway</li><li>The route is deleted</li><li>The Gateway crashes</li></ol><div class="explain">The platform team must allow the namespace.</div></div>
+
+<h2 id="lab">Write lab: Gateway + HTTPRoutes with TLS</h2>
+<div class="lab">
+  <p><b>Brief:</b> Write <code>k8s/gateway/gateway.yaml</code>, <code>orders-route.yaml</code> and <code>web-route.yaml</code>:</p>
+  <ul>
+    <li>A Gateway <code>shop-gateway</code> in <code>gateway-infra</code> (class <code>azure-alb-external</code>) serves <code>shop.contoso.example</code> on HTTPS and redirects HTTP.</li>
+    <li><code>/api</code> goes to <code>orders-api:80</code> (namespace <code>orders</code>); everything else goes to <code>web:80</code> (namespace <code>web</code>).</li>
+    <li>Given: the Services exist as in Chapter 2, and namespaces <code>orders</code> and <code>web</code> carry <code>shop-routes: allowed</code>.</li>
+  </ul>
+  <p>Graded by <b>manifest-lint</b> and <b>cross-ref</b>.</p>
+  <ul class="rules">
+    <li>All resources use <code>gateway.networking.k8s.io/v1</code>.</li>
+    <li class="critical">The public listener uses <code>protocol: HTTPS</code> on 443 with <code>tls.mode: Terminate</code> and a <code>certificateRefs</code> entry.</li>
+    <li class="critical">No TLS private key in any file (no Secret with <code>tls.key</code> data).</li>
+    <li>Each HTTPRoute's <code>parentRefs</code> matches the Gateway's name and namespace.</li>
+    <li><code>allowedRoutes</code> admits the route namespaces (selector on <code>shop-routes: allowed</code>).</li>
+    <li>Route <code>hostnames</code> match the listener's hostname.</li>
+    <li>Every <code>backendRefs</code> entry names an existing Service and port in the route's namespace.</li>
+    <li>HTTP (port 80) is only used for a <code>RequestRedirect</code> to HTTPS.</li>
+  </ul>
+  <details class="solution"><summary>Reference solution</summary><p>The Gateway from lesson <a href="8.4-gateway-api.html#s3">8.4, step 3</a> (with <code>hostname: shop.contoso.example</code> and an added <code>http</code> listener), the two routes from 8.4 steps 4–5, and the redirect route from <a href="8.6-tls.html#s6">8.6, step 6</a>. The certificate comes from cert-manager through the Gateway annotation.</p></details>
+</div>
+
+<h2 id="walkthrough">Walkthrough: quota rejection → fix → expose → curl</h2>
+<ol>
+  <li>Apply the namespace template (quota, no LimitRange) and deploy <code>orders-worker</code>; read the ReplicaSet's "must specify requests" event.</li>
+  <li>Add the LimitRange; the pods start.</li>
+  <li>Apply the Gateway and HTTPRoutes; <code>kubectl get gateway</code> shows an address.</li>
+  <li><code>curl https://shop.contoso.example/api/healthz</code> and <code>curl -I http://shop.contoso.example/</code> (a 301 to HTTPS).</li>
+</ol>
+
+<h2 id="try">Try it locally</h2>
+<div class="try" data-lesson="8.1-8.2"><p><b>8.1–8.2 Quota rejection.</b></p>
+<pre>kubectl create ns quota-demo
+kubectl create quota q -n quota-demo --hard=requests.cpu=1,requests.memory=1Gi
+kubectl create deployment nr -n quota-demo --image=localhost:5001/orders-api:1.0.0
+kubectl describe rs -n quota-demo | grep -m1 "must specify"</pre>
+<p>Expected: "failed quota: q: must specify requests.cpu…".</p><p><b>Cleanup:</b> <code>kubectl delete ns quota-demo</code></p></div>
+<div class="try" data-lesson="8.3"><p><b>8.3 An Ingress.</b> Install the lab's maintained Ingress controller (pinned in <code>lab/addons/ingress.sh</code>), then:</p>
+<pre>./lab/addons/ingress.sh
+kubectl apply -f lab/examples/ch08/shop-ingress.yaml     # web + orders-api + Ingress
+kubectl port-forward -n ingress svc/ingress-controller 8080:80 &amp;
+curl -s -H "Host: shop.local" localhost:8080/api/healthz; curl -s -H "Host: shop.local" localhost:8080/ | head -1</pre>
+<p>Expected: <code>ok</code> from orders-api, then the web page's first line.</p><p><b>Cleanup:</b> <code>kill %1; kubectl delete -f lab/examples/ch08/shop-ingress.yaml</code></p></div>
+<div class="try" data-lesson="8.4"><p><b>8.4 Gateway + HTTPRoutes</b> (with the Gateway API implementation pinned in <code>lab/addons/gateway.sh</code>).</p>
+<pre>./lab/addons/gateway.sh
+kubectl apply -f lab/examples/ch08/gateway/          # GatewayClass, Gateway, two routes
+kubectl get httproute -A -o wide; ./lab/addons/gateway-port-forward.sh 8080 &amp;
+curl -s -H "Host: shop.local" localhost:8080/api/healthz</pre>
+<p>Expected: both routes Accepted, and <code>ok</code>. Change a route's namespace label and watch it lose acceptance.</p><p><b>Cleanup:</b> <code>kill %1; kubectl delete -f lab/examples/ch08/gateway/</code></p></div>
+<div class="try" data-lesson="8.6"><p><b>8.6 cert-manager with a self-signed issuer.</b></p>
+<pre>./lab/addons/cert-manager.sh
+kubectl apply -f lab/examples/ch08/selfsigned-cert.yaml
+kubectl get certificate -A; kubectl get secret shop-local-tls -o jsonpath='{.type}'</pre>
+<p>Expected: the Certificate is <code>READY True</code>, and the Secret type is <code>kubernetes.io/tls</code>.</p><p><b>Cleanup:</b> <code>kubectl delete -f lab/examples/ch08/selfsigned-cert.yaml</code></p></div>
+</main>
+</body>
+</html>

@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>3.1 · Requests, limits &amp; QoS</title>
+<link rel="stylesheet" href="../content.css">
+</head>
+<body>
+<article class="lesson" data-id="3.1" data-chapter="3">
+<nav class="crumbs"><a href="../index.html">Course</a> / <a href="index.html">Chapter 3</a> / 3.1</nav>
+<header>
+  <p class="kicker">Chapter 3 · Lesson 3.1 · ~11 steps · ~14 min</p>
+  <h1>Requests, limits &amp; QoS</h1>
+  <p class="meta">You'll be able to set CPU and memory requests and limits, predict what happens when a container exceeds them, and read a pod's QoS class.</p>
+</header>
+
+<section class="step" id="s1">
+  <h2>1. Two numbers per resource</h2>
+  <div class="body">
+    <p>Each container can declare, for CPU and memory:</p>
+    <ul>
+      <li><b>request</b>: what it needs. The <b>scheduler</b> uses this to choose a node with that much free.</li>
+      <li><b>limit</b>: the most it may use. The <b>kubelet</b> and the kernel enforce it on the node.</li>
+    </ul>
+    <p>CPU is measured in cores: <code>250m</code> is a quarter of a core. Memory is measured in bytes: <code>256Mi</code> is 256 mebibytes.</p>
+  </div>
+  <pre class="code" data-file="deployment.yaml (container)">resources:
+  requests:
+    cpu: 250m
+    memory: 256Mi
+  limits:
+    memory: 512Mi</pre>
+  <aside class="coming" data-set="A">
+    <dl>
+      <dt>Windows/IIS admin</dt><dd>Like IIS app-pool CPU and private-memory limits, plus a reservation the load balancer respects when it places the site.</dd>
+      <dt>Linux admin</dt><dd>Requests feed the scheduler and cgroup CPU weights; limits become cgroup <code>cpu.max</code> and <code>memory.max</code>.</dd>
+      <dt>Developer (Compose)</dt><dd>Like <code>deploy.resources.reservations</code> and <code>limits</code> in Compose. Here, reservations really decide placement.</dd>
+      <dt>Other clouds</dt><dd>Same as ECS task CPU/memory, except at container level and with separate request and limit.</dd>
+    </dl>
+  </aside>
+</section>
+
+<section class="step" id="s2">
+  <h2>2. Requests decide placement</h2>
+  <div class="body">
+    <p>Each node has <b>allocatable</b> CPU and memory: its capacity minus what the OS and Kubernetes reserve.</p>
+    <p>The scheduler adds up the <b>requests</b> of the pods already on a node, not their actual use. It only places a new pod where its request still fits.</p>
+    <p>If no node fits, the pod stays <code>Pending</code> with <code>Insufficient cpu</code> or <code>Insufficient memory</code>.</p>
+  </div>
+  <div class="widget" data-widget="node-capacity">Three node bars (each 3.8 CPU / 12 GiB allocatable) filling as the learner adds pods with chosen requests. When a pod can't fit anywhere, it's shown as Pending, with the event <code>0/3 nodes are available: 3 Insufficient cpu</code>. A second toggle shows actual usage as a lighter bar, which is often far below the requests.</div>
+</section>
+
+<section class="step" id="s3">
+  <h2>3. Limits: CPU throttles, memory kills</h2>
+  <div class="body">
+    <p>The two resources behave very differently at the limit:</p>
+    <ul>
+      <li><b>CPU</b> is compressible. A container at its CPU limit is <b>throttled</b>: it gets slower, but keeps running.</li>
+      <li><b>Memory</b> is not compressible. A container that goes over its memory limit is <b>killed</b> by the kernel (<code>OOMKilled</code>, exit code 137), then restarted.</li>
+    </ul>
+    <p>Common guidance: <b>always set a memory limit</b>, usually equal to or a bit above the request. Many teams don't set a CPU limit, so idle CPU on the node can be used. Throttling under a tight CPU limit causes latency spikes.</p>
+  </div>
+</section>
+
+<section class="step" id="s4">
+  <h2>4. Diagnose: what happened?</h2>
+  <div class="check" data-type="diagnose">
+    <p class="q">The pod restarts every few minutes. What's the cause?</p>
+    <pre class="output">$ kubectl describe pod orders-api-7d9c5f6b8-z5t2n -n orders
+    State:          Running
+      Started:      Tue, 03 Nov 2026 10:42:07
+    Last State:     Terminated
+      Reason:       OOMKilled
+      Exit Code:    137
+    Restart Count:  6
+    Limits:
+      memory:  128Mi
+    Requests:
+      cpu:     250m
+      memory:  128Mi</pre>
+    <ol class="options">
+      <li>The CPU limit is too low <span class="why">There's no CPU limit, and CPU overuse throttles rather than kills.</span></li>
+      <li class="correct">The app needs more than its 128Mi memory limit and is killed when it exceeds it</li>
+      <li>The node is out of memory <span class="why">That would show an eviction, not <code>OOMKilled</code> with the container's own limit.</span></li>
+      <li>A liveness probe is failing <span class="why">A probe kill shows as an event ("Liveness probe failed") and a different reason.</span></li>
+    </ol>
+    <div class="explain">Measure real usage (<code>kubectl top pod</code>, Container Insights), then raise the memory request and limit, or fix a leak. Restarts alone won't fix it.</div>
+  </div>
+</section>
+
+<section class="step" id="s5">
+  <h2>5. Limits don't reserve anything</h2>
+  <div class="body">
+    <p>A limit is a <b>ceiling</b>, not a reservation. The node only guarantees the <b>request</b>.</p>
+    <p>If many pods have limits much higher than their requests, the node is <b>overcommitted</b>. When they all get busy together, the node runs out of memory and the kubelet <b>evicts</b> pods. It evicts the ones using the most above their requests first.</p>
+  </div>
+</section>
+
+<section class="step" id="s6">
+  <h2>6. Quality of Service classes</h2>
+  <div class="body">
+    <p>From its requests and limits, every pod gets a <b>QoS class</b>. It decides who is evicted first under memory pressure:</p>
+    <ul>
+      <li><b>Guaranteed</b>: every container has CPU <i>and</i> memory requests equal to its limits. Evicted last.</li>
+      <li><b>Burstable</b>: at least one request or limit is set, but it isn't Guaranteed.</li>
+      <li><b>BestEffort</b>: no requests or limits at all. Evicted first.</li>
+    </ul>
+  </div>
+  <div class="check" data-type="mcq">
+    <p class="q">What QoS class does this pod get?</p>
+    <pre class="code" data-file="resources">resources:
+  requests: { cpu: 500m, memory: 512Mi }
+  limits:   { cpu: 500m, memory: 512Mi }</pre>
+    <ol class="options">
+      <li class="correct">Guaranteed</li>
+      <li>Burstable <span class="why">Requests equal limits for both CPU and memory, which makes it Guaranteed.</span></li>
+      <li>BestEffort <span class="why">BestEffort has no requests or limits at all.</span></li>
+    </ol>
+    <div class="explain">Guaranteed requires requests = limits for both CPU and memory in every container. Check with <code>kubectl get pod -o jsonpath='{.status.qosClass}'</code>.</div>
+  </div>
+</section>
+
+<section class="step" id="s7">
+  <h2>7. Choosing numbers</h2>
+  <div class="body">
+    <ol>
+      <li>Start from measured usage under realistic load (<code>kubectl top</code>, Azure Monitor).</li>
+      <li>Request around the typical usage; set the memory limit at the peak plus headroom.</li>
+      <li>Revisit after real traffic. The Vertical Pod Autoscaler can recommend values in recommendation-only mode.</li>
+    </ol>
+    <p>Requests that are too high waste money: nodes look full while sitting idle. Requests that are too low cause noisy neighbours and evictions.</p>
+  </div>
+</section>
+
+<section class="step" id="s8">
+  <h2>8. Namespace defaults and quotas</h2>
+  <div class="body">
+    <ul>
+      <li><b>LimitRange</b>: default requests and limits for containers that don't set any, plus minimums and maximums.</li>
+      <li><b>ResourceQuota</b>: a cap on the total requests and limits (and object counts) in a namespace.</li>
+    </ul>
+    <p>Chapter 8 uses both to share a cluster between teams.</p>
+  </div>
+</section>
+
+<section class="step" id="s9">
+  <h2>9. Seeing usage</h2>
+  <pre class="output">$ kubectl top pods -n orders
+NAME                         CPU(cores)   MEMORY(bytes)
+orders-api-7d9c5f6b8-2xk9p   38m          141Mi
+orders-api-7d9c5f6b8-q8w4m   41m          139Mi
+$ kubectl describe node aks-user-1234-vmss000000 | grep -A6 "Allocated resources"
+Allocated resources:
+  Resource           Requests      Limits
+  --------           --------      ------
+  cpu                2850m (75%)   1 (26%)
+  memory             6.1Gi (51%)   9.4Gi (79%)</pre>
+  <div class="body"><p><code>kubectl top</code> needs <b>metrics-server</b>, which AKS installs by default. The node shows requests at 75% even though actual use is far lower. Scheduling works from requests.</p></div>
+</section>
+
+<section class="step" id="s10">
+  <h2>10. Changing resources</h2>
+  <div class="body">
+    <p>Changing <code>resources</code> in a Deployment is a template change, so it rolls out new pods.</p>
+    <p>Kubernetes also supports <b>in-place pod resize</b> (GA since 1.35), which adjusts a running pod's resources without recreating it. That's useful for one-off fixes; Deployments still roll out normally.</p>
+  </div>
+</section>
+
+<section class="step summary" id="s11">
+  <h2>Resources, sorted</h2>
+  <ul>
+    <li>Requests decide placement; limits cap usage.</li>
+    <li>Over the CPU limit you're throttled; over the memory limit you're OOMKilled (exit 137).</li>
+    <li>Always set a memory limit; be careful with CPU limits.</li>
+    <li>QoS: Guaranteed (requests = limits) &gt; Burstable &gt; BestEffort in eviction order.</li>
+    <li>Size from measurements; namespaces can enforce defaults and quotas.</li>
+  </ul>
+</section>
+</article>
+</body>
+</html>

@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>17.2 · Architecture review</title>
+<link rel="stylesheet" href="../content.css">
+</head>
+<body>
+<article class="lesson" data-id="17.2" data-chapter="17">
+<nav class="crumbs"><a href="../index.html">Course</a> / <a href="index.html">Chapter 17</a> / 17.2</nav>
+<header>
+  <p class="kicker">Chapter 17 · Lesson 17.2 · ~10 steps · ~13 min</p>
+  <h1>Architecture review</h1>
+  <p class="meta">You'll be able to walk Contoso's target architecture component by component, and defend each design choice.</p>
+</header>
+
+<section class="step" id="s1">
+  <h2>1. The big picture</h2>
+  <div class="widget" data-widget="architecture-diagram">A clickable diagram. Each component links to the lesson that taught it:
+    <ul>
+      <li><b>Hub VNet</b>: Azure Firewall, DNS Private Resolver, Bastion, a central private DNS zone.</li>
+      <li><b>Prod spoke VNet</b>: private AKS (system + user pools across 3 zones, Cilium overlay), Application Gateway for Containers, private endpoints for ACR (Premium), Key Vault and PostgreSQL.</li>
+      <li><b>Agents VNet</b>: Managed DevOps Pool.</li>
+      <li><b>Monitoring</b>: Log Analytics, an Azure Monitor workspace (Prometheus), Managed Grafana, alert rules.</li>
+      <li><b>Azure DevOps</b>: repos, pipelines, environments with checks, WIF service connections.</li>
+    </ul></div>
+  <aside class="coming" data-set="A">
+    <dl>
+      <dt>Windows/IIS admin</dt><dd>Hub-and-spoke is like a central DMZ and core services network with application VLANs hanging off it.</dd>
+      <dt>Linux admin</dt><dd>One transit network with a firewall and DNS; workloads in isolated subnets peered to it.</dd>
+      <dt>Developer (Compose)</dt><dd>Your app sees none of this directly, just DNS names, identities and one gateway URL.</dd>
+      <dt>Other clouds</dt><dd>Like a Transit Gateway or Shared VPC design with a central egress firewall.</dd>
+    </dl>
+  </aside>
+  <aside class="coming" data-set="B">
+    <dl>
+      <dt>GitHub Actions</dt><dd>The pipeline pieces map to GitHub environments, OIDC federation and self-hosted runners in the agents VNet.</dd>
+      <dt>GitLab CI</dt><dd>Runners in the agents VNet, protected environments, OIDC to Azure.</dd>
+      <dt>Jenkins</dt><dd>Agents in the agents VNet; credentials replaced by federated identity where possible.</dd>
+      <dt>Classic pipelines</dt><dd>Release stages become environments with checks; the agent placement is the same.</dd>
+    </dl>
+  </aside>
+  <aside class="coming" data-set="C">
+    <dl>
+      <dt>Portal/ARM</dt><dd>Everything in the diagram is defined in IaC; the portal is read-only for humans.</dd>
+      <dt>az CLI scripts</dt><dd>Your Chapter 4–6 commands are now arguments in Terraform or Bicep.</dd>
+      <dt>CloudFormation</dt><dd>One stack (or stack set) per layer: hub, spoke, cluster.</dd>
+      <dt>Pulumi</dt><dd>Same layering into separate projects/stacks.</dd>
+    </dl>
+  </aside>
+</section>
+
+<section class="step" id="s2">
+  <h2>2. Why a hub?</h2>
+  <div class="check" data-type="mcq">
+    <p class="q">Why put Azure Firewall and the DNS resolver in a hub, instead of in the AKS VNet?</p>
+    <ol class="options">
+      <li>AKS forbids firewalls in its VNet <span class="why">It doesn't.</span></li>
+      <li class="correct">They're shared by every spoke (other apps, agents, on-premises), managed centrally, and egress and DNS stay consistent</li>
+      <li>It's cheaper per cluster to have one each <span class="why">The opposite: sharing is the saving.</span></li>
+      <li>Private clusters require it <span class="why">They need DNS resolution, not a specific topology.</span></li>
+    </ol>
+    <div class="explain">Lessons 5.3 and 6.5.</div>
+  </div>
+</section>
+
+<section class="step" id="s3">
+  <h2>3. Why private AKS with Managed DevOps Pools?</h2>
+  <div class="check" data-type="mcq">
+    <p class="q">Why does the prod deploy run on a Managed DevOps Pool in a peered VNet?</p>
+    <ol class="options">
+      <li>It's faster than hosted agents <span class="why">Speed isn't the reason.</span></li>
+      <li class="correct">The API server is private; agents need a network route and private DNS to reach it, without anyone patching agent VMs</li>
+      <li>Hosted agents can't run kubectl <span class="why">They can, just not against a private endpoint.</span></li>
+      <li>Licensing <span class="why">Unrelated.</span></li>
+    </ol>
+    <div class="explain">Lessons 6.5–6.6.</div>
+  </div>
+</section>
+
+<section class="step" id="s4">
+  <h2>4. Why Application Gateway for Containers?</h2>
+  <div class="check" data-type="mcq">
+    <p class="q">Why AGC rather than the app routing add-on for prod?</p>
+    <ol class="options">
+      <li class="correct">A WAF requirement, plus Gateway API weighted routing for canaries, with the data plane outside the cluster</li>
+      <li>The add-on can't do TLS <span class="why">It can.</span></li>
+      <li>AGC is free <span class="why">It's billed.</span></li>
+      <li>It's required for private clusters <span class="why">Both work with private clusters.</span></li>
+    </ol>
+    <div class="explain">Lesson 8.5.</div>
+  </div>
+</section>
+
+<section class="step" id="s5">
+  <h2>5. Why private endpoints for ACR, Key Vault and the database?</h2>
+  <div class="check" data-type="mcq">
+    <p class="q">With private endpoints in place, what else must be true for images to pull?</p>
+    <ol class="options">
+      <li>Public access enabled <span class="why">The point is to disable it.</span></li>
+      <li class="correct"><code>privatelink.azurecr.io</code> resolves from the AKS VNet (through the hub DNS), and the kubelet has AcrPull</li>
+      <li>The admin user enabled <span class="why">Never.</span></li>
+      <li>NodePort Services <span class="why">Unrelated.</span></li>
+    </ol>
+    <div class="explain">Lessons 6.2–6.3.</div>
+  </div>
+</section>
+
+<section class="step" id="s6">
+  <h2>6. Why workload identity everywhere?</h2>
+  <div class="check" data-type="mcq">
+    <p class="q">How does orders-api reach PostgreSQL without a password?</p>
+    <ol class="options">
+      <li>A password in a Secret <span class="why">That's what we're avoiding.</span></li>
+      <li class="correct">Its workload identity is an Entra ID user on Azure Database for PostgreSQL; the app gets a token via <code>DefaultAzureCredential</code></li>
+      <li>The kubelet identity <span class="why">Never use the kubelet identity for apps.</span></li>
+      <li>The pipeline's identity <span class="why">The pipeline doesn't run the app.</span></li>
+    </ol>
+    <div class="explain">Lessons 5.6 and 15.4. Key Vault is kept for third-party API keys.</div>
+  </div>
+</section>
+
+<section class="step" id="s7">
+  <h2>7. Zones and resilience</h2>
+  <div class="body"><p>Node pools span zones 1–3, pods spread with topology constraints, and PDBs allow one disruption. The database is zone-redundant and AGC is zonal. One datacentre can fail without an outage (Chapters 3–4).</p></div>
+</section>
+
+<section class="step" id="s8">
+  <h2>8. Observability</h2>
+  <div class="body"><p>Container Insights, managed Prometheus, Grafana dashboards for the golden signals, <code>kube-audit-admin</code> logs, and an SLO burn alert on the 5xx ratio. The same metric gates the canary (Chapters 11 and 14).</p></div>
+</section>
+
+<section class="step" id="s9">
+  <h2>9. What would you change?</h2>
+  <div class="body"><p>Good reviews end with trade-offs. Cost: AGC + Premium ACR + Firewall add up for a small app. Complexity: a hub needs a network team. Alternatives: the app routing add-on with a separate WAF, or AKS Automatic. Write down what you'd change if the budget halved. It's part of the capstone reflection.</p></div>
+</section>
+
+<section class="step summary" id="s10">
+  <h2>Architecture, sorted</h2>
+  <ul>
+    <li>Hub (firewall, DNS, Bastion) + prod spoke (private AKS, AGC, private endpoints) + agents VNet.</li>
+    <li>Identity everywhere: WIF for pipelines, workload identity for apps.</li>
+    <li>Zones, PDBs, observability and SLO alerts that also gate releases.</li>
+    <li>Every choice traced to a chapter, with its trade-offs stated.</li>
+  </ul>
+</section>
+</article>
+</body>
+</html>

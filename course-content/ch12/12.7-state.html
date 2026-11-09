@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>12.7 · State</title>
+<link rel="stylesheet" href="../content.css">
+</head>
+<body>
+<article class="lesson" data-id="12.7" data-chapter="12">
+<nav class="crumbs"><a href="../index.html">Course</a> / <a href="index.html">Chapter 12</a> / 12.7</nav>
+<header>
+  <p class="kicker">Chapter 12 · Lesson 12.7 · ~13 steps · ~17 min</p>
+  <h1>State</h1>
+  <p class="meta">You'll be able to explain what Terraform state is, store it safely in Azure, refactor and import without destroying anything, and detect drift.</p>
+</header>
+
+<section class="step" id="s1">
+  <h2>1. What state is</h2>
+  <div class="body">
+    <p>Terraform keeps a <b>state file</b> that maps each resource address in your code (<code>azurerm_kubernetes_cluster.main</code>) to the real Azure resource ID. It also caches each resource's attributes.</p>
+    <p>That's how Terraform knows which resources <i>it</i> manages, and what to update or delete.</p>
+    <p>Lose the state and Terraform forgets everything. The next plan wants to <b>create</b> it all again, and fails on name clashes.</p>
+  </div>
+  <div class="widget" data-widget="state-diagram">Three columns: Code, State and Azure, with lines linking each resource across them. The learner can rename in code, change a value in the portal, delete from state or delete in Azure, and see what <code>terraform plan</code> would propose for each.</div>
+  <aside class="coming" data-set="C">
+    <dl>
+      <dt>Portal/ARM</dt><dd>ARM has no state file: Azure itself is the record (that's Bicep's model, Chapter 13). Terraform keeps its own.</dd>
+      <dt>az CLI scripts</dt><dd>Scripts have no memory at all, which is why they can't safely delete or rename.</dd>
+      <dt>CloudFormation</dt><dd>CloudFormation keeps "state" inside the stack, managed by AWS. Terraform's state is a file you must store and protect.</dd>
+      <dt>Pulumi</dt><dd>Same idea as Pulumi's state backend (Pulumi Cloud or self-managed blob storage).</dd>
+    </dl>
+  </aside>
+</section>
+
+<section class="step" id="s2">
+  <h2>2. State contains secrets</h2>
+  <div class="body"><p>State holds every attribute of every resource, including <b>secrets in plain text</b>: generated passwords, storage account keys, kubeconfig credentials if you read them. <code>sensitive = true</code> only hides values in output; the state still contains them.</p><p>Treat the state file like a password vault.</p></div>
+</section>
+
+<section class="step" id="s3">
+  <h2>3. The azurerm backend</h2>
+  <div class="body">
+    <p>Store state remotely, in an <b>Azure Storage blob</b>, created once outside this configuration and protected:</p>
+    <ul>
+      <li>a private endpoint, or restricted network access;</li>
+      <li>versioning and soft delete on;</li>
+      <li>access only for the pipeline identity and the platform admins.</li>
+    </ul>
+    <p>The backend uses Entra ID auth (no storage keys) and <b>blob-lease locking</b>, so two runs can't write at once.</p>
+  </div>
+  <pre class="code" data-file="versions.tf">terraform {
+  backend "azurerm" {
+    resource_group_name  = "rg-tfstate"
+    storage_account_name = "sttfstatecontoso"
+    container_name       = "tfstate"
+    key                  = "orders/prod.tfstate"
+    use_azuread_auth     = true
+    use_oidc             = true
+  }
+}</pre>
+</section>
+
+<section class="step" id="s4">
+  <h2>4. Locks</h2>
+  <div class="check" data-type="diagnose">
+    <p class="q">A pipeline run fails at plan. What's going on?</p>
+    <pre class="output">│ Error: Error acquiring the state lock
+│
+│ Error message: state blob is already locked
+│ Lock Info:
+│   ID:        2b6c3c1e-9a7d-4c1b-8f0e-6e1f0d2a7b44
+│   Path:      tfstate/orders/prod.tfstate
+│   Operation: OperationTypeApply
+│   Who:       vsts@agent-mdp-0003
+│   Created:   2026-11-05 16:40:12 UTC</pre>
+    <ol class="options">
+      <li>The storage account is down <span class="why">It answered: the blob is leased.</span></li>
+      <li class="correct">Another apply holds the lock. Either it's still running, or it was killed without releasing the lease</li>
+      <li>The state is corrupted <span class="why">Locking is working exactly as designed.</span></li>
+      <li>The pipeline lacks permissions <span class="why">That gives a 403.</span></li>
+    </ol>
+    <div class="explain">First check whether another run is active. If the earlier run really died, release the lease with <code>terraform force-unlock &lt;ID&gt;</code>, but only after confirming no one else is applying. Pipeline concurrency limits (exclusive lock checks) prevent most of these.</div>
+  </div>
+</section>
+
+<section class="step" id="s5">
+  <h2>5. Never edit state by hand</h2>
+  <div class="body"><p>Don't download and edit the JSON. Use the CLI (<code>terraform state list</code>, <code>show</code>, <code>rm</code>), or better, the <b>declarative blocks</b> below. They're reviewed in PRs and show up in the plan.</p></div>
+</section>
+
+<section class="step" id="s6">
+  <h2>6. Renaming without destroying: <code>moved</code></h2>
+  <div class="body"><p>Rename <code>azurerm_kubernetes_cluster.main</code> to <code>.orders</code> and Terraform sees one resource removed and another added. It would <b>destroy and recreate the cluster</b>. A <code>moved</code> block tells it they're the same thing.</p></div>
+  <div class="check" data-type="custom">
+    <p class="q">You renamed the cluster resource to <code>azurerm_kubernetes_cluster.orders</code>. Add what's needed so the plan shows no destroy.</p>
+    <div class="widget" data-widget="iac-editor">Graded by simulated plan: success when the plan for the cluster shows "has moved to azurerm_kubernetes_cluster.orders" with 0 to destroy.</div>
+    <details class="solution"><summary>Solution</summary>
+<pre>moved {
+  from = azurerm_kubernetes_cluster.main
+  to   = azurerm_kubernetes_cluster.orders
+}</pre></details>
+    <div class="explain"><code>moved</code> also works for moving resources into a module (<code>to = module.aks.azurerm_kubernetes_cluster.this</code>) and for changing a <code>count</code> resource to a <code>for_each</code> one.</div>
+  </div>
+</section>
+
+<section class="step" id="s7">
+  <h2>7. Adopting existing resources: <code>import</code></h2>
+  <div class="body"><p>Contoso's first cluster was created by hand in Chapter 4. To bring it under Terraform without recreating it, write the resource block and an <code>import</code> block with its Azure ID. Plan, adjust the code until the plan shows no changes, then apply.</p></div>
+  <pre class="code" data-file="import.tf">import {
+  to = azurerm_kubernetes_cluster.main
+  id = "/subscriptions/&lt;sub&gt;/resourceGroups/rg-orders-dev/providers/Microsoft.ContainerService/managedClusters/aks-orders-dev"
+}</pre>
+  <aside class="more"><p><code>terraform plan -generate-config-out=generated.tf</code> writes a starting resource block for imported resources. Clean it up before committing.</p></aside>
+</section>
+
+<section class="step" id="s8">
+  <h2>8. Drift</h2>
+  <div class="body"><p>Someone scales the system pool to 5 in the portal during an incident. The next <code>terraform plan</code> compares code (3) with reality (5), and proposes changing it back. <code>terraform plan -refresh-only</code> shows drift without proposing fixes. It's useful as a scheduled drift report.</p></div>
+  <div class="check" data-type="mcq">
+    <p class="q">The code says <code>node_count = 3</code> for the system pool. Someone set it to 5 in the portal. What does the next normal plan show?</p>
+    <ol class="options">
+      <li>Nothing; Terraform only looks at its state <span class="why">Plan refreshes from Azure first.</span></li>
+      <li class="correct">An in-place update: <code>node_count: 5 → 3</code></li>
+      <li>Replace the cluster <span class="why">The node count updates in place.</span></li>
+      <li>An error <span class="why">Drift isn't an error.</span></li>
+    </ol>
+    <div class="explain">Code wins. If the change was right, put it in the code; if the field is managed elsewhere (the autoscaler), ignore it (next step).</div>
+  </div>
+</section>
+
+<section class="step" id="s9">
+  <h2>9. <code>lifecycle</code></h2>
+  <div class="body">
+    <ul>
+      <li><code>ignore_changes</code>: don't fight another controller. If the cluster autoscaler manages a pool, ignore its <code>node_count</code>.</li>
+      <li><code>prevent_destroy</code>: a plan that would destroy this resource fails. Use it for the cluster, the state storage and the registry.</li>
+      <li><code>create_before_destroy</code>: build the replacement first.</li>
+    </ul>
+  </div>
+  <pre class="code" data-file="aks.tf (excerpt)">  lifecycle {
+    prevent_destroy = true
+    ignore_changes  = [default_node_pool[0].node_count]
+  }</pre>
+</section>
+
+<section class="step" id="s10">
+  <h2>10. <code>removed</code> blocks</h2>
+  <div class="body"><p>To stop managing something without deleting it, for example handing a resource to another team's configuration, use a <code>removed</code> block with <code>lifecycle { destroy = false }</code>. It leaves Terraform's state, and stays in Azure.</p></div>
+</section>
+
+<section class="step" id="s11">
+  <h2>11. One state per environment, small blast radius</h2>
+  <div class="body"><p>Separate keys (<code>orders/dev.tfstate</code>, <code>orders/prod.tfstate</code>) and separate root folders mean a broken dev run can never touch prod state. Splitting very large configurations (network, shared, cluster) also keeps plans fast and failures contained.</p></div>
+</section>
+
+<section class="step" id="s12">
+  <h2>12. Reading other states</h2>
+  <div class="body"><p>To use the network team's VNet ID, prefer a <b>data source</b> (look it up by name) over <code>terraform_remote_state</code>. Reading another team's state needs read access to their whole state file, secrets included.</p></div>
+</section>
+
+<section class="step summary" id="s13">
+  <h2>State, sorted</h2>
+  <ul>
+    <li>State maps code to real resources and contains secrets; protect it like a vault.</li>
+    <li>azurerm backend: Entra ID auth, OIDC, blob-lease locking; one key per environment.</li>
+    <li><code>moved</code> for renames, <code>import</code> to adopt, <code>removed</code> to let go; no hand edits.</li>
+    <li>Plan shows drift; <code>-refresh-only</code> reports it; <code>lifecycle</code> for prevent_destroy and ignore_changes.</li>
+  </ul>
+</section>
+</article>
+</body>
+</html>

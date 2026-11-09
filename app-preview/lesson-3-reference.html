@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agents and agent pools · Lesson 3</title>
+<link rel="stylesheet" href="assets/styles.css">
+</head>
+<body data-page="l3">
+<header id="topbar"></header>
+<div class="lesson-shell">
+<aside class="curriculum" id="curriculum"></aside>
+<main class="reader"><div class="reader-inner">
+
+  <div class="breadcrumb"><a href="index.html">Home</a><span class="sep">/</span><a href="chapter.html">Ch 7 · Azure Pipelines</a><span class="sep">/</span><span>Lesson 3</span></div>
+  <div class="lesson-head">
+    <span class="badge badge-accent">Lesson 3 · Reference view</span> <a class="badge badge-violet" href="lesson.html?l=ch07/l3">▶ Take the guided version</a>
+    <h1 style="margin-top:10px">Agents and agent pools</h1>
+    <div class="meta"><span>⏱ 14 min</span><span>·</span><span>Agent matcher simulation</span><span>·</span><span>2 knowledge checks</span></div>
+  </div>
+
+  <p>Your YAML is only instructions. Something has to <em>execute</em> them: clone the repo, run <code>npm test</code>, call <code>docker build</code>. That something is an <strong>agent</strong>: a small program (the Azure Pipelines agent) running on a VM or container that polls Azure DevOps for work.</p>
+  <p>Agents are grouped into <strong>agent pools</strong>. A job asks for a pool (<code>pool:</code>), and Azure DevOps hands the job to any free agent in that pool that <em>meets the job's demands</em>.</p>
+
+  <h2>Microsoft-hosted vs self-hosted</h2>
+  <div class="tabs" data-tabs="host">
+    <button class="tab active" data-tab="ms">☁️ Microsoft-hosted</button>
+    <button class="tab" data-tab="self">🏠 Self-hosted</button>
+    <button class="tab" data-tab="mdp">🧩 Managed DevOps Pools / VMSS</button>
+  </div>
+
+  <div data-panel="host:ms" class="card" style="margin-top:12px">
+    <div id="y-ms"></div>
+    <div class="grid grid-2">
+      <div><strong style="color:var(--success-strong)">Pros</strong><ul class="muted" style="font-size:14px;padding-left:18px"><li>Zero maintenance: a fresh, patched VM per job</li><li>Lots of tools preinstalled (Docker, kubectl, Azure CLI, Helm, Node…)</li><li>Clean environment every time, no leftover state</li></ul></div>
+      <div><strong style="color:var(--danger)">Cons</strong><ul class="muted" style="font-size:14px;padding-left:18px"><li>Runs on the public internet, so it <b>can't reach a private AKS API server</b> or private ACR</li><li>No cache between runs (slower Docker builds)</li><li>Time limits per job, and limited parallel jobs on the free tier</li></ul></div>
+    </div>
+  </div>
+  <div data-panel="host:self" class="card hidden" style="margin-top:12px">
+    <div id="y-self"></div>
+    <div class="grid grid-2">
+      <div><strong style="color:var(--success-strong)">Pros</strong><ul class="muted" style="font-size:14px;padding-left:18px"><li>Runs <b>inside your network/VNet</b>, so it can reach private AKS, private ACR and on-prem systems</li><li>Warm caches and faster builds</li><li>Any tools or hardware you need</li></ul></div>
+      <div><strong style="color:var(--danger)">Cons</strong><ul class="muted" style="font-size:14px;padding-left:18px"><li><b>You</b> patch the OS, update the agent and secure it</li><li>State leaks between jobs unless you clean up</li><li>A compromised agent is inside your network, so treat it as a sensitive host</li></ul></div>
+    </div>
+  </div>
+  <div data-panel="host:mdp" class="card hidden" style="margin-top:12px">
+    <p style="margin-top:0">The middle ground: <b>Azure-managed scaling of self-hosted-style agents</b>, with VMs created in <em>your</em> subscription and VNet and recycled after each job.</p>
+    <ul class="muted" style="font-size:14px;padding-left:18px">
+      <li><b>Managed DevOps Pools</b>: the current recommended option. Azure runs the pool, you choose the image, size and VNet.</li>
+      <li><b>VM Scale Set agents</b>: the older approach; you own the scale set and Azure DevOps scales it.</li>
+      <li>Both give you <b>private network access + fresh machines</b>, ideal for deploying to private AKS.</li>
+    </ul>
+  </div>
+
+  <h2>How a job finds an agent: demands & capabilities</h2>
+  <p>Every agent advertises <strong>capabilities</strong> (its OS, installed tools, custom tags). A job can list <strong>demands</strong>. Only agents that satisfy <em>every</em> demand are eligible. Toggle the demands and dispatch the job.</p>
+
+  <div class="card">
+    <div style="display:flex;flex-wrap:wrap;gap:14px;align-items:center;margin-bottom:14px">
+      <strong style="font-size:14px">Job demands:</strong>
+      <label class="toggle"><input type="checkbox" data-d="Agent.OS -equals Linux" checked><span class="track"></span><code>Agent.OS -equals Linux</code></label>
+      <label class="toggle"><input type="checkbox" data-d="docker" checked><span class="track"></span><code>docker</code></label>
+      <label class="toggle"><input type="checkbox" data-d="vnet -equals aks-private"><span class="track"></span><code>vnet -equals aks-private</code></label>
+    </div>
+    <div class="agents" id="agents"></div>
+    <div style="display:flex;gap:10px;align-items:center;margin-top:14px;flex-wrap:wrap">
+      <button class="btn btn-primary btn-sm" id="dispatch">▶ Dispatch job</button>
+      <span class="subtle" id="dispatch-res">Pool: <code>linux-builders</code> · 3 agents</span>
+    </div>
+  </div>
+
+  <div class="callout"><span class="c-ico">🧠</span><div><strong>Parallel jobs = how many jobs run at once</strong> across your organization. With one parallel job, a second pipeline run <em>queues</em> even if you have ten idle self-hosted agents. Capacity is purchased (or granted on the free tier) separately for Microsoft-hosted and self-hosted.</div></div>
+
+  <div class="check-card" data-answer="b">
+    <div class="kicker">Check your knowledge</div>
+    <strong>Your AKS cluster is a private cluster (the API server has no public IP). Your deploy stage uses <code>vmImage: ubuntu-latest</code> and fails with a timeout calling the API server. Best fix?</strong>
+    <div class="options">
+      <button class="option" data-v="a"><span class="key">A</span><span>Increase the job's <code>timeoutInMinutes</code></span></button>
+      <button class="option" data-v="b"><span class="key">B</span><span>Run the deploy job on a self-hosted agent or Managed DevOps Pool inside a VNet that can reach the cluster</span></button>
+      <button class="option" data-v="c"><span class="key">C</span><span>Switch to <code>vmImage: windows-latest</code></span></button>
+      <button class="option" data-v="d"><span class="key">D</span><span>Add the Microsoft-hosted agent's IP to the cluster's authorized IP ranges</span></button>
+    </div>
+    <div class="check-result" data-ok="A private API server is only reachable from inside the network. Microsoft-hosted agents run on the public internet with changing IPs, so authorized IP ranges (D) don't help a <em>private</em> cluster. (Another option is <code>az aks command invoke</code>, which you'll meet in chapter 6.)"></div>
+  </div>
+
+  <div class="check-card" data-answer="a">
+    <div class="kicker">Check your knowledge</div>
+    <strong>Two engineers push at the same time. You have 5 idle self-hosted agents but only 1 self-hosted parallel job. What happens?</strong>
+    <div class="options">
+      <button class="option" data-v="a"><span class="key">A</span><span>One run starts, the other queues until the first job finishes</span></button>
+      <button class="option" data-v="b"><span class="key">B</span><span>Both run, because there are enough idle agents</span></button>
+      <button class="option" data-v="c"><span class="key">C</span><span>The second run fails immediately</span></button>
+    </div>
+    <div class="check-result" data-ok="Parallel jobs are a licensing limit, separate from how many agents you have. Extra runs wait in the queue."></div>
+  </div>
+
+  <div id="lesson-nav"></div>
+</div></main>
+</div>
+
+<script src="assets/app.js"></script>
+<script src="assets/yaml.js"></script>
+<script>
+KQY.block(document.getElementById("y-ms"), `pool:
+  vmImage: ubuntu-latest   # Microsoft-hosted, fresh VM per job`, { title: "Microsoft-hosted" });
+KQY.block(document.getElementById("y-self"), `pool:
+  name: linux-builders     # your self-hosted pool
+  demands:
+    - docker
+    - Agent.OS -equals Linux`, { title: "Self-hosted" });
+
+const AGENTS = [
+  { name: "build-01", caps: { "Agent.OS": "Linux", docker: true, vnet: "aks-private" }, busy: false },
+  { name: "build-02", caps: { "Agent.OS": "Linux", docker: true, vnet: "corp" }, busy: true },
+  { name: "win-01", caps: { "Agent.OS": "Windows_NT", docker: false, vnet: "aks-private" }, busy: false },
+];
+const host = document.getElementById("agents");
+function draw(state = {}) {
+  host.innerHTML = AGENTS.map(a => `<div class="agent ${state[a.name] || ""} ${a.busy && !state[a.name] ? "busy" : ""}">
+    <div class="ag-name">🖥️ ${a.name} ${a.busy ? '<span class="badge badge-warn" style="height:18px">busy</span>' : '<span class="badge badge-success" style="height:18px">idle</span>'}</div>
+    <div class="caps"><span>Agent.OS=${a.caps["Agent.OS"]}</span>${a.caps.docker ? "<span>docker</span>" : ""}<span>vnet=${a.caps.vnet}</span></div>
+  </div>`).join("");
+}
+function meets(a, d) {
+  if (d === "docker") return !!a.caps.docker;
+  const m = d.match(/^([\w.]+) -equals (.+)$/);
+  return m ? a.caps[m[1]] === m[2] : true;
+}
+document.getElementById("dispatch").onclick = () => {
+  const demands = [...document.querySelectorAll("[data-d]:checked")].map(i => i.dataset.d);
+  const state = {};
+  let pick = null;
+  AGENTS.forEach(a => {
+    const ok = demands.every(d => meets(a, d));
+    state[a.name] = ok ? "match" : "nomatch";
+    if (ok && !a.busy && !pick) pick = a;
+  });
+  draw(state);
+  const eligible = AGENTS.filter(a => state[a.name] === "match");
+  const res = document.getElementById("dispatch-res");
+  if (pick) res.innerHTML = `✅ Job assigned to <code>${pick.name}</code>. ${eligible.length} eligible agent(s).`;
+  else if (eligible.length) res.innerHTML = `⏳ ${eligible.length} eligible agent(s), but all are busy, so the job <b>waits in the queue</b>.`;
+  else res.innerHTML = `❌ <b>No agent satisfies all demands.</b> In Azure DevOps the run shows "No agent found in pool which satisfies the specified demands".`;
+};
+draw();
+</script>
+</body>
+</html>

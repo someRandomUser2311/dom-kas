@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>12.3 · Variables, locals, outputs &amp; data sources</title>
+<link rel="stylesheet" href="../content.css">
+</head>
+<body>
+<article class="lesson" data-id="12.3" data-chapter="12">
+<nav class="crumbs"><a href="../index.html">Course</a> / <a href="index.html">Chapter 12</a> / 12.3</nav>
+<header>
+  <p class="kicker">Chapter 12 · Lesson 12.3 · ~12 steps · ~15 min</p>
+  <h1>Variables, locals, outputs &amp; data sources</h1>
+  <p class="meta">You'll be able to make one configuration serve dev and prod with validated variables, compute names with locals, expose outputs, and look up existing resources.</p>
+</header>
+
+<section class="step" id="s1">
+  <h2>1. Input variables</h2>
+  <div class="body"><p>A <code>variable</code> block declares an input, with a type, an optional default and a description. Use it as <code>var.&lt;name&gt;</code>.</p></div>
+  <pre class="code" data-file="variables.tf">variable "environment" {
+  type        = string
+  description = "Environment name: dev or prod."
+}
+
+variable "location" {
+  type    = string
+  default = "westeurope"
+}
+
+variable "user_pool" {
+  type = object({
+    vm_size   = string
+    min_count = number
+    max_count = number
+  })
+}</pre>
+  <aside class="coming" data-set="C">
+    <dl>
+      <dt>Portal/ARM</dt><dd>Like ARM template <code>parameters</code> with types, plus a parameters file per environment.</dd>
+      <dt>az CLI scripts</dt><dd>Like the variables at the top of your script, but typed and validated.</dd>
+      <dt>CloudFormation</dt><dd>Like <code>Parameters</code> with <code>AllowedValues</code>.</dd>
+      <dt>Pulumi</dt><dd>Like stack config values (<code>pulumi config</code>).</dd>
+    </dl>
+  </aside>
+</section>
+
+<section class="step" id="s2">
+  <h2>2. Validation</h2>
+  <div class="check" data-type="custom">
+    <p class="q">Add a validation so <code>environment</code> can only be <code>dev</code> or <code>prod</code>, with a helpful error message.</p>
+    <div class="widget" data-widget="iac-editor">An HCL editor with the variable block above. Graded by iac-rules: a <code>validation</code> block whose condition rejects any value other than <code>dev</code>/<code>prod</code> (tested with "test", "Prod" and "dev") and has an <code>error_message</code>.</div>
+    <details class="solution"><summary>Solution</summary>
+<pre>variable "environment" {
+  type        = string
+  description = "Environment name: dev or prod."
+  validation {
+    condition     = contains(["dev", "prod"], var.environment)
+    error_message = "environment must be \"dev\" or \"prod\"."
+  }
+}</pre></details>
+    <div class="explain">A typo like <code>-var environment=Prod</code> now fails at plan time, before it creates oddly named resources.</div>
+  </div>
+</section>
+
+<section class="step" id="s3">
+  <h2>3. Sensitive variables</h2>
+  <div class="body">
+    <p><code>sensitive = true</code> hides the value in plan and apply output. It does <b>not</b> encrypt it, and the value still ends up in state (lesson 12.7).</p>
+    <p>Never give secrets a <code>default</code>, and never put them in a committed <code>.tfvars</code>. Better still, avoid passing secrets at all: use managed identities and Key Vault references.</p>
+  </div>
+</section>
+
+<section class="step" id="s4">
+  <h2>4. Values per environment</h2>
+  <pre class="code" data-file="dev.tfvars">environment = "dev"
+user_pool = {
+  vm_size   = "Standard_D4ds_v5"
+  min_count = 1
+  max_count = 3
+}</pre>
+  <pre class="code" data-file="prod.tfvars">environment = "prod"
+user_pool = {
+  vm_size   = "Standard_D4ds_v5"
+  min_count = 3
+  max_count = 10
+}</pre>
+  <pre class="code" data-file="terminal">terraform plan -var-file=prod.tfvars -out=tfplan</pre>
+</section>
+
+<section class="step" id="s5">
+  <h2>5. Which value wins?</h2>
+  <div class="body">
+    <p>Highest priority first:</p>
+    <ol>
+      <li><code>-var</code> and <code>-var-file</code> on the command line (in order; the last one wins);</li>
+      <li><code>*.auto.tfvars</code> (alphabetical);</li>
+      <li><code>terraform.tfvars</code>;</li>
+      <li><code>TF_VAR_&lt;name&gt;</code> environment variables;</li>
+      <li>the variable's <code>default</code>.</li>
+    </ol>
+  </div>
+  <div class="check" data-type="predict">
+    <p class="q"><code>location</code> has <code>default = "westeurope"</code>; <code>TF_VAR_location=northeurope</code> is set; <code>terraform.tfvars</code> says <code>location = "swedencentral"</code>; you run <code>terraform plan -var location=uksouth</code>. Which value is used?</p>
+    <ol class="options">
+      <li>westeurope</li>
+      <li>northeurope</li>
+      <li>swedencentral</li>
+      <li class="correct">uksouth</li>
+    </ol>
+    <div class="explain">Command-line <code>-var</code> beats everything. Pipelines usually pass exactly one <code>-var-file</code>, so there's one source of truth per environment.</div>
+  </div>
+</section>
+
+<section class="step" id="s6">
+  <h2>6. Locals for names and tags</h2>
+  <div class="body"><p><code>locals</code> are computed values used in many places: naming conventions, the common tag set, environment-dependent settings. Use them as <code>local.&lt;name&gt;</code>.</p></div>
+  <pre class="code" data-file="main.tf">locals {
+  name_suffix = "orders-${var.environment}"
+  is_prod     = var.environment == "prod"
+  tags = {
+    app         = "orders"
+    environment = var.environment
+    managed_by  = "terraform"
+  }
+}
+
+resource "azurerm_resource_group" "main" {
+  name     = "rg-${local.name_suffix}"
+  location = var.location
+  tags     = local.tags
+}</pre>
+</section>
+
+<section class="step" id="s7">
+  <h2>7. Outputs</h2>
+  <div class="body"><p><code>output</code> blocks expose values after apply: for people (<code>terraform output</code>), for pipelines (<code>terraform output -raw</code>), and for parent modules. Mark them <code>sensitive</code> when needed.</p></div>
+  <pre class="code" data-file="outputs.tf">output "aks_name" {
+  value = azurerm_kubernetes_cluster.main.name
+}
+output "oidc_issuer_url" {
+  value = azurerm_kubernetes_cluster.main.oidc_issuer_url
+}
+output "acr_login_server" {
+  value = azurerm_container_registry.main.login_server
+}</pre>
+</section>
+
+<section class="step" id="s8">
+  <h2>8. Data sources: read what exists</h2>
+  <div class="body"><p>A <code>data</code> block <b>reads</b> something Terraform doesn't manage: the current identity and tenant, a hub VNet owned by another team, a Key Vault created elsewhere. Refer to it as <code>data.&lt;type&gt;.&lt;name&gt;</code>.</p></div>
+  <div class="check" data-type="tapline" data-match="data &quot;azurerm_key_vault&quot; &quot;shared&quot; {">
+    <p class="q">Tap the block that looks up an existing resource instead of creating one.</p>
+    <pre class="code" data-file="main.tf">data "azurerm_client_config" "current" {}
+
+data "azurerm_key_vault" "shared" {
+  name                = "kv-contoso-shared"
+  resource_group_name = "rg-contoso-shared"
+}
+
+resource "azurerm_role_assignment" "kv_reader" {
+  scope                = data.azurerm_key_vault.shared.id
+  role_definition_name = "Key Vault Secrets User"
+  principal_id         = azurerm_user_assigned_identity.orders_api.principal_id
+}</pre>
+    <div class="explain"><code>data "azurerm_key_vault" "shared"</code> reads it. Terraform will never change or delete it. (The first data block, <code>azurerm_client_config</code>, also reads: it returns who Terraform is running as.)</div>
+  </div>
+</section>
+
+<section class="step" id="s9">
+  <h2>9. Environment-dependent settings</h2>
+  <pre class="code" data-file="aks.tf (excerpt)">sku_tier                = local.is_prod ? "Standard" : "Free"
+private_cluster_enabled = local.is_prod</pre>
+  <div class="body"><p>Keep such switches few and obvious, and drive them from <code>var.environment</code> through locals, not scattered conditionals.</p></div>
+</section>
+
+<section class="step" id="s10">
+  <h2>10. Types catch mistakes</h2>
+  <div class="body"><p><code>type = object({...})</code>, <code>list(string)</code>, <code>map(number)</code> and friends reject wrongly shaped values at plan time. Add <code>optional()</code> attributes with defaults for flexible objects. They work like Bicep's user-defined types (Chapter 13).</p></div>
+</section>
+
+<section class="step" id="s11">
+  <h2>11. Don't over-variable</h2>
+  <div class="body"><p>Not everything should be a variable. Security baselines (local accounts disabled, Azure RBAC on, OIDC on) should be <b>hard-coded</b>, so no environment can turn them off by accident. Make variable only what genuinely differs between environments.</p></div>
+</section>
+
+<section class="step summary" id="s12">
+  <h2>Variables &amp; friends, sorted</h2>
+  <ul>
+    <li><code>variable</code> with type, description, <code>validation</code>; <code>sensitive</code> hides output but isn't encryption.</li>
+    <li>One <code>.tfvars</code> per environment; <code>-var</code>/<code>-var-file</code> wins over everything.</li>
+    <li><code>locals</code> for names, tags and switches; <code>output</code> for results; <code>data</code> to read existing resources.</li>
+    <li>Hard-code the security baseline.</li>
+  </ul>
+</section>
+</article>
+</body>
+</html>

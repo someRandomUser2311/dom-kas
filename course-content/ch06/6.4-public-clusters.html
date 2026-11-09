@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>6.4 · Public clusters done right</title>
+<link rel="stylesheet" href="../content.css">
+</head>
+<body>
+<article class="lesson" data-id="6.4" data-chapter="6">
+<nav class="crumbs"><a href="../index.html">Course</a> / <a href="index.html">Chapter 6</a> / 6.4</nav>
+<header>
+  <p class="kicker">Chapter 6 · Lesson 6.4 · ~10 steps · ~12 min</p>
+  <h1>Public clusters done right</h1>
+  <p class="meta">You'll be able to explain what a "public" AKS cluster exposes, protect its API server with identity and authorized IP ranges, and see why hosted build agents complicate that.</p>
+</header>
+
+<section class="step" id="s1">
+  <h2>1. What "public" means</h2>
+  <div class="body">
+    <p>By default an AKS cluster's <b>API server</b> has a public address: <code>aks-orders-dev-dns-1a2b3c.hcp.westeurope.azmk8s.io</code>. Anyone on the internet can open a TLS connection to it.</p>
+    <p>That's about the <b>management API</b> only. Your apps are exposed (or not) separately, through LoadBalancer Services and gateways. And a "public cluster" says nothing about whether nodes have public IPs; they don't.</p>
+  </div>
+  <aside class="coming" data-set="A">
+    <dl>
+      <dt>Windows/IIS admin</dt><dd>It's like exposing a server's remote management port to the internet. It's protected by strong authentication, but still visible.</dd>
+      <dt>Linux admin</dt><dd>Like SSH on a public IP with key-only auth: secure if configured well, but you might still want to firewall it.</dd>
+      <dt>Developer (Compose)</dt><dd>The Docker daemon socket was never public; Kubernetes' API is designed to be remote, so it has real auth.</dd>
+      <dt>Other clouds</dt><dd>Same as the EKS public endpoint or the GKE public control plane, each with an optional CIDR allow-list.</dd>
+    </dl>
+  </aside>
+</section>
+
+<section class="step" id="s2">
+  <h2>2. Layer 1: identity</h2>
+  <div class="body">
+    <p>Reaching the endpoint isn't the same as using it. Every request needs a valid <b>Entra ID token</b> and an <b>Azure RBAC</b> role (lesson 5.5).</p>
+    <p>With local accounts disabled, there is no other credential. For many teams, a public endpoint with strong identity is acceptable.</p>
+  </div>
+</section>
+
+<section class="step" id="s3">
+  <h2>3. Layer 2: authorized IP ranges</h2>
+  <div class="body">
+    <p><b>Authorized IP ranges</b> limit which source IPs may connect to the API server at all. Everyone else gets a connection timeout, before authentication even happens.</p>
+    <p>Typical entries:</p>
+    <ul>
+      <li>the office's egress IPs;</li>
+      <li>the VPN gateway;</li>
+      <li>the build agents' egress IPs;</li>
+      <li>the cluster's own outbound IP, which AKS adds automatically.</li>
+    </ul>
+  </div>
+  <div class="check" data-type="command">
+    <p class="q">Restrict <code>aks-orders-dev</code> (in <code>rg-orders-dev</code>) to the office range <code>203.0.113.0/24</code> and the VPN IP <code>198.51.100.7/32</code>.</p>
+    <p class="answer"><code>az aks update -g rg-orders-dev -n aks-orders-dev --api-server-authorized-ip-ranges 203.0.113.0/24,198.51.100.7/32</code></p>
+    <p class="accept">Also accepted: long forms of <code>-g</code>/<code>-n</code>; ranges in either order.</p>
+    <div class="explain">Ranges are comma-separated with no spaces. Pass an empty string (<code>""</code>) to remove all restrictions.</div>
+  </div>
+</section>
+
+<section class="step" id="s4">
+  <h2>4. Outside the range</h2>
+  <div class="check" data-type="predict">
+    <p class="q">You're working from a café, not on the VPN. The cluster allows only the office and VPN ranges. You run <code>kubectl get pods</code>.</p>
+    <ol class="options">
+      <li>Forbidden (403) <span class="why">You never reach authentication; the connection itself is dropped.</span></li>
+      <li class="correct">The command hangs, then fails with a timeout (<code>dial tcp …:443: i/o timeout</code>)</li>
+      <li>It works, because you have the RBAC role <span class="why">The IP check happens before identity is even looked at.</span></li>
+      <li>kubelogin asks you to sign in again <span class="why">Authentication isn't the problem.</span></li>
+    </ol>
+    <div class="explain">A timeout to the API server from a new location almost always means authorized IP ranges. Connect to the VPN, or use <code>az aks command invoke</code> (lesson 6.5), which goes through Azure's management plane rather than straight to the API server.</div>
+  </div>
+</section>
+
+<section class="step" id="s5">
+  <h2>5. The hosted-agent problem</h2>
+  <div class="body">
+    <p>Microsoft-hosted Azure Pipelines agents run on a huge, shared pool of Azure IPs that changes weekly. Allow-listing "all hosted agents" means allowing large parts of Azure. That's barely better than no restriction, and it's easy to break.</p>
+    <p>The options:</p>
+    <ul>
+      <li>A <b>self-hosted agent</b> or <b>Managed DevOps Pool</b> with a known egress IP (a NAT gateway). Allow just that IP.</li>
+      <li>A step that briefly adds the agent's current IP, then removes it. It's fragile, and the pipeline then needs rights to change the cluster.</li>
+      <li>Moving to a private cluster with agents inside the VNet (next lesson).</li>
+    </ul>
+  </div>
+  <aside class="coming" data-set="B">
+    <dl>
+      <dt>GitHub Actions</dt><dd>GitHub-hosted runners have the same problem. Larger runners with static IPs, or self-hosted runners, solve it.</dd>
+      <dt>GitLab CI</dt><dd>Shared SaaS runners have changing IPs too; use group runners in your own network.</dd>
+      <dt>Jenkins</dt><dd>Your Jenkins agents already have known IPs, so allow-listing them is easy. Here, Managed DevOps Pools give you the same.</dd>
+      <dt>Classic pipelines</dt><dd>Same agents and same problem; nothing differs between classic and YAML here.</dd>
+    </dl>
+  </aside>
+</section>
+
+<section class="step" id="s6">
+  <h2>6. Limits of authorized ranges</h2>
+  <div class="body">
+    <ul>
+      <li>They apply only to <b>public</b> API servers. Private clusters don't use them.</li>
+      <li>They limit who can <i>connect</i>, not who can <i>authenticate</i>. They're a second layer, not a replacement for RBAC.</li>
+      <li>There's a cap on how many ranges you can list. Ranges are usually managed in IaC so changes are reviewed.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="step" id="s7">
+  <h2>7. Deploying to a public cluster</h2>
+  <pre class="code" data-file="azure-pipelines.yml (excerpt, Chapter 7 preview)">- task: KubernetesManifest@1
+  inputs:
+    action: deploy
+    connectionType: azureResourceManager
+    azureSubscriptionConnection: sc-orders-dev      # workload identity federation
+    azureResourceGroup: rg-orders-dev
+    kubernetesCluster: aks-orders-dev
+    namespace: orders
+    manifests: k8s/base/*.yaml</pre>
+  <div class="body"><p>The pipeline's identity needs an AKS RBAC role on the namespace, and the agent's IP must be allowed. If either is missing, you get <code>Forbidden</code> or a timeout.</p></div>
+</section>
+
+<section class="step" id="s8">
+  <h2>8. A public cluster checklist</h2>
+  <div class="body">
+    <ul>
+      <li>Entra ID + Azure RBAC; local accounts disabled.</li>
+      <li>Authorized IP ranges: office, VPN, and the agents' fixed egress IPs.</li>
+      <li>Build agents with a known IP, not the shared hosted pool.</li>
+      <li>API server audit logs sent to Log Analytics (Chapter 14).</li>
+    </ul>
+  </div>
+</section>
+
+<section class="step" id="s9">
+  <h2>9. When public isn't enough</h2>
+  <div class="body">
+    <p>Regulated industries often require that the management API has <b>no public endpoint at all</b>. That's a private cluster, and it changes how everyone, and every pipeline, reaches it. That's next.</p>
+  </div>
+</section>
+
+<section class="step summary" id="s10">
+  <h2>Public clusters, sorted</h2>
+  <ul>
+    <li>"Public" = the API server has a public endpoint; nodes and apps are separate decisions.</li>
+    <li>Layer 1: Entra ID + RBAC. Layer 2: authorized IP ranges.</li>
+    <li>Outside the range → connection timeout, not 403.</li>
+    <li>Hosted agents are hard to allow-list; use agents with a fixed egress IP.</li>
+  </ul>
+</section>
+</article>
+</body>
+</html>

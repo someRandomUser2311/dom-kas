@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>12.8 · Terraform in Azure Pipelines</title>
+<link rel="stylesheet" href="../content.css">
+</head>
+<body>
+<article class="lesson" data-id="12.8" data-chapter="12">
+<nav class="crumbs"><a href="../index.html">Course</a> / <a href="index.html">Chapter 12</a> / 12.8</nav>
+<header>
+  <p class="kicker">Chapter 12 · Lesson 12.8 · ~14 steps · ~18 min</p>
+  <h1>Terraform in Azure Pipelines</h1>
+  <p class="meta">You'll be able to build an infra pipeline that checks every PR, saves a plan, waits for approval, and applies exactly that plan, authenticating with OIDC and no secrets.</p>
+</header>
+
+<section class="step" id="s1">
+  <h2>1. Two pipelines for infra</h2>
+  <div class="body">
+    <ul>
+      <li><b>PR validation</b>: on every PR touching <code>infra/terraform/</code>: <code>fmt -check</code>, <code>validate</code>, <code>tflint</code>, a security scan, and a <b>plan</b> posted for reviewers.</li>
+      <li><b>Main</b>: on merge: <b>plan</b> and save it → <b>approval</b> → <b>apply that saved plan</b>.</li>
+    </ul>
+    <p>They're separate from the app pipeline (Chapters 7–11): different triggers, permissions and pace.</p>
+  </div>
+  <aside class="coming" data-set="B">
+    <dl>
+      <dt>GitHub Actions</dt><dd>The same pattern as <code>terraform plan</code> on <code>pull_request</code> and apply behind an environment protection rule. OIDC is <code>azure/login</code> with federated credentials.</dd>
+      <dt>GitLab CI</dt><dd>Like GitLab's Terraform templates: plan as an artifact, apply as a manual job.</dd>
+      <dt>Jenkins</dt><dd>Plan in one stage, <code>input</code> approval, apply the stashed plan file.</dd>
+      <dt>Classic pipelines</dt><dd>Build pipeline produces the plan artifact; release pipeline applies it after a pre-deployment approval.</dd>
+    </dl>
+  </aside>
+</section>
+
+<section class="step" id="s2">
+  <h2>2. PR checks</h2>
+  <pre class="code" data-file="infra-pr.yml (steps)">- script: terraform fmt -check -recursive
+  displayName: Format
+- script: terraform init -backend=false &amp;&amp; terraform validate
+  displayName: Validate
+- script: tflint --recursive
+  displayName: Lint (tflint with the azurerm ruleset)
+- script: trivy config --exit-code 1 --severity HIGH,CRITICAL .
+  displayName: Security scan (or Checkov)</pre>
+  <div class="body"><p>A plan for the PR (read-only credentials) shows reviewers the real impact. Post its summary to the PR or the run summary.</p></div>
+</section>
+
+<section class="step" id="s3">
+  <h2>3. Authentication with OIDC</h2>
+  <div class="body">
+    <p>Use a <b>workload identity federation</b> service connection (Chapter 7), with no client secret. The azurerm provider and backend accept OIDC through environment variables.</p>
+    <p>The simplest route is <code>AzureCLI@2</code> with <code>addSpnToEnvironment: true</code>. It exposes <code>$servicePrincipalId</code>, <code>$tenantId</code> and a federated <code>$idToken</code> to your script.</p>
+  </div>
+  <pre class="code" data-file="templates/terraform.yml (step)">- task: AzureCLI@2
+  displayName: terraform ${{ parameters.command }}
+  inputs:
+    azureSubscription: sc-orders-infra-prod       # WIF service connection
+    scriptType: bash
+    scriptLocation: inlineScript
+    addSpnToEnvironment: true
+    workingDirectory: infra/terraform/envs/prod
+    inlineScript: |
+      set -euo pipefail
+      export ARM_USE_OIDC=true
+      export ARM_OIDC_TOKEN="$idToken"
+      export ARM_CLIENT_ID="$servicePrincipalId"
+      export ARM_TENANT_ID="$tenantId"
+      export ARM_SUBSCRIPTION_ID="$(az account show --query id -o tsv)"
+      terraform init -input=false
+      ${{ parameters.script }}</pre>
+  <aside class="more"><p>That <code>$idToken</code> is short-lived, so very long applies can outlive it. The providers can instead fetch fresh tokens from Azure DevOps themselves: set <code>ARM_OIDC_AZURE_SERVICE_CONNECTION_ID</code> to the service connection's ID and pass <code>SYSTEM_ACCESSTOKEN: $(System.AccessToken)</code>. Microsoft's Terraform tasks for Azure Pipelines also support WIF connections.</p></aside>
+</section>
+
+<section class="step" id="s4">
+  <h2>4. The plan stage</h2>
+  <pre class="code" data-file="infra-pipeline.yml (Plan)">- stage: Plan
+  jobs:
+    - job: plan
+      pool: { name: mdp-orders-prod }
+      steps:
+        - template: templates/terraform.yml
+          parameters:
+            command: plan
+            script: |
+              terraform plan -input=false -var-file=prod.tfvars -out=tfplan
+              terraform show -no-color tfplan &gt; plan.txt
+        - publish: infra/terraform/envs/prod/tfplan
+          artifact: tfplan
+        - publish: infra/terraform/envs/prod/plan.txt
+          artifact: plan-text</pre>
+</section>
+
+<section class="step" id="s5">
+  <h2>5. The apply stage</h2>
+  <pre class="code" data-file="infra-pipeline.yml (Apply)">- stage: Apply
+  dependsOn: Plan
+  condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+  jobs:
+    - deployment: apply
+      environment: infra-prod             # approval check: platform leads
+      pool: { name: mdp-orders-prod }
+      strategy:
+        runOnce:
+          deploy:
+            steps:
+              - checkout: self
+              - download: current
+                artifact: tfplan
+              - template: templates/terraform.yml
+                parameters:
+                  command: apply
+                  script: terraform apply -input=false $(Pipeline.Workspace)/tfplan/tfplan</pre>
+  <div class="check" data-type="tapline" data-match="script: terraform apply -input=false $(Pipeline.Workspace)/tfplan/tfplan">
+    <p class="q">Tap the line that guarantees the approver approved exactly what gets applied.</p>
+    <div class="explain">Applying the <b>saved plan file</b> applies precisely the reviewed changes. A plain <code>terraform apply</code> would re-plan, possibly including changes that appeared after the approval.</div>
+  </div>
+</section>
+
+<section class="step" id="s6">
+  <h2>6. Why the saved plan matters</h2>
+  <div class="check" data-type="mcq">
+    <p class="q">Why apply <code>tfplan</code> instead of running <code>terraform apply -auto-approve</code> in the apply stage?</p>
+    <ol class="options">
+      <li>It's faster <span class="why">Speed isn't the point.</span></li>
+      <li class="correct">Someone may have merged another change, or Azure drifted, between plan and apply. A re-plan could apply changes nobody reviewed</li>
+      <li><code>-auto-approve</code> is deprecated <span class="why">It isn't.</span></li>
+      <li>Saved plans skip state locking <span class="why">Apply still locks state.</span></li>
+    </ol>
+    <div class="explain">If state changed after the plan was made, Terraform refuses the old plan ("Saved plan is stale"). Re-run the pipeline to plan again.</div>
+  </div>
+</section>
+
+<section class="step" id="s7">
+  <h2>7. Arrange the stages</h2>
+  <div class="check" data-type="custom">
+    <p class="q">Arrange the infra pipeline so apply can never run without an approved, saved plan.</p>
+    <div class="widget" data-widget="stage-sim">Stage cards: "fmt/validate/lint/scan", "plan -out=tfplan + publish artifact", "approval (environment infra-prod)", "apply tfplan", plus decoys "apply -auto-approve" and "plan again in apply stage". Success when the order is checks → plan+publish → approval → apply tfplan, with both decoys discarded. The plan artifact is drawn moving between the stages.</div>
+    <div class="explain">Checks → plan (saved) → human approval of that plan → apply exactly that plan.</div>
+  </div>
+</section>
+
+<section class="step" id="s8">
+  <h2>8. The plan file is sensitive</h2>
+  <div class="body"><p>A plan file contains the planned values, which can include secrets, like state. Keep pipeline artifacts retained only briefly, and restrict who can download them. Never post the raw plan to a public place. <code>plan.txt</code> for reviewers is made with <code>terraform show</code>, which hides sensitive values.</p></div>
+</section>
+
+<section class="step" id="s9">
+  <h2>9. Permissions for the pipeline identity</h2>
+  <ul>
+    <li><b>Contributor</b> on the environment's resource groups.</li>
+    <li><b>Role Based Access Control Administrator</b>, conditioned to the few roles it assigns (lesson 12.5).</li>
+    <li><b>Storage Blob Data Contributor</b> on the state container.</li>
+    <li>A separate, <b>read-only</b> identity for PR plans (Reader + Storage Blob Data Reader), so an unreviewed PR can't change anything.</li>
+  </ul>
+</section>
+
+<section class="step" id="s10">
+  <h2>10. Concurrency</h2>
+  <div class="body"><p>Two runs applying at once would fight over state. State locking stops the second one, but it's better to queue. Add an <b>exclusive lock</b> check on the <code>infra-prod</code> environment, and use <code>lockBehavior: sequential</code> in the pipeline.</p></div>
+</section>
+
+<section class="step" id="s11">
+  <h2>11. Dev first, then prod</h2>
+  <div class="body"><p>The full main pipeline plans and applies dev, then plans prod, waits for approval, and applies prod. Each environment folder has its own backend key and service connection. A module change reaches dev first; prod only after dev applied cleanly.</p></div>
+</section>
+
+<section class="step" id="s12">
+  <h2>12. Scheduled drift detection</h2>
+  <pre class="code" data-file="infra-drift.yml">schedules:
+  - cron: "0 6 * * 1-5"
+    branches: { include: [main] }
+    always: true
+# job: terraform plan -detailed-exitcode -var-file=prod.tfvars
+#   exit 0 = no changes, 2 = drift → fail the run and notify the team</pre>
+</section>
+
+<section class="step" id="s13">
+  <h2>13. Where this fits</h2>
+  <div class="body"><p>Infra pipeline: cluster, network, ACR, identities. App pipeline (Chapters 7–11): manifests. The capstone (Chapter 17) grades both: <code>infra-pipeline.yml</code> for the apply flow, and <code>azure-pipelines.yml</code> for the release.</p></div>
+</section>
+
+<section class="step summary" id="s14">
+  <h2>Terraform pipelines, sorted</h2>
+  <ul>
+    <li>PRs: fmt, validate, tflint, a security scan, and a read-only plan.</li>
+    <li>Main: plan <code>-out=tfplan</code> → publish → approval (deployment job + environment) → <code>apply tfplan</code>.</li>
+    <li>OIDC via a WIF service connection (<code>ARM_USE_OIDC</code> and friends); no secrets.</li>
+    <li>Plans are sensitive; least-privilege identities; exclusive locks; scheduled drift checks.</li>
+  </ul>
+</section>
+</article>
+</body>
+</html>

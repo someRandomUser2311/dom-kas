@@ -1,0 +1,255 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>8.4 · The Gateway API</title>
+<link rel="stylesheet" href="../content.css">
+</head>
+<body>
+<article class="lesson" data-id="8.4" data-chapter="8">
+<nav class="crumbs"><a href="../index.html">Course</a> / <a href="index.html">Chapter 8</a> / 8.4</nav>
+<header>
+  <p class="kicker">Chapter 8 · Lesson 8.4 · ~13 steps · ~18 min</p>
+  <h1>The Gateway API</h1>
+  <p class="meta">You'll be able to write GatewayClass, Gateway and HTTPRoute resources, explain who owns each one, and debug a route that won't attach.</p>
+</header>
+
+<section class="step" id="s1">
+  <h2>1. Why a new API?</h2>
+  <div class="body">
+    <p>Ingress has three problems:</p>
+    <ul>
+      <li>It's a single object mixing infrastructure and app concerns.</li>
+      <li>Every interesting feature is a non-portable annotation.</li>
+      <li>Sharing one entry point between teams is awkward.</li>
+    </ul>
+    <p>The <b>Gateway API</b> (<code>gateway.networking.k8s.io</code>) is the newer standard. Its features, such as header matching, traffic splitting and redirects, are in the spec, so they behave the same across implementations. And it's split into resources owned by different roles.</p>
+    <p>New platforms should start here.</p>
+  </div>
+  <aside class="coming" data-set="A">
+    <dl>
+      <dt>Windows/IIS admin</dt><dd>Think of the network team owning the load balancer and its listeners, while each app team adds its own URL rewrite rules, without touching each other's config.</dd>
+      <dt>Linux admin</dt><dd>It's like nginx's main config owned by ops, with <code>conf.d/</code> snippets owned by app teams, but with permissions enforced.</dd>
+      <dt>Developer (Compose)</dt><dd>You'll mostly write HTTPRoutes: "send <code>/api</code> to my Service".</dd>
+      <dt>Other clouds</dt><dd>EKS (VPC Lattice / AWS LB controller) and GKE (GKE Gateway controller) implement the same API.</dd>
+    </dl>
+  </aside>
+</section>
+
+<section class="step" id="s2">
+  <h2>2. Three resources, three roles</h2>
+  <table>
+    <tr><th>Resource</th><th>Owned by</th><th>Says</th></tr>
+    <tr><td><b>GatewayClass</b></td><td>Infrastructure provider (the controller / Azure)</td><td>"This type of load balancer exists" (like a StorageClass)</td></tr>
+    <tr><td><b>Gateway</b></td><td>Cluster operator / platform team</td><td>"Listen on HTTPS 443 for <code>*.contoso.example</code>, with this certificate, and allow routes from these namespaces"</td></tr>
+    <tr><td><b>HTTPRoute</b></td><td>App developer</td><td>"For host <code>shop.contoso.example</code>, path <code>/api</code>, send traffic to my Service"</td></tr>
+  </table>
+  <div class="body"><p>RBAC can follow this split: app teams may create HTTPRoutes in their namespace, but not Gateways.</p></div>
+</section>
+
+<section class="step" id="s3">
+  <h2>3. The Gateway</h2>
+  <pre class="code" data-file="k8s/gateway/gateway.yaml">apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: shop-gateway
+  namespace: gateway-infra
+spec:
+  gatewayClassName: azure-alb-external      # Application Gateway for Containers
+  listeners:
+    - name: https
+      protocol: HTTPS
+      port: 443
+      hostname: "*.contoso.example"
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - kind: Secret
+            name: wildcard-contoso-tls
+      allowedRoutes:
+        namespaces:
+          from: Selector
+          selector:
+            matchLabels:
+              shop-routes: "allowed"</pre>
+  <div class="body"><p>The Gateway lives in a platform namespace. <code>allowedRoutes</code> decides which namespaces may attach routes to it.</p></div>
+</section>
+
+<section class="step" id="s4">
+  <h2>4. An HTTPRoute</h2>
+  <div class="body">
+    <p>The app team writes a route in <b>its own</b> namespace:</p>
+    <ul>
+      <li><code>parentRefs</code> names the Gateway (and, optionally, the listener) to attach to.</li>
+      <li><code>hostnames</code> and <code>matches</code> select requests.</li>
+      <li><code>backendRefs</code> name Services and ports.</li>
+    </ul>
+  </div>
+  <div class="check" data-type="fill">
+    <p class="q">Attach the route to <code>shop-gateway</code> in <code>gateway-infra</code>.</p>
+    <pre class="code" data-file="k8s/gateway/orders-route.yaml">apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: orders-api
+  namespace: orders
+spec:
+  <span class="blank">?</span>:
+    - name: shop-gateway
+      namespace: gateway-infra
+      sectionName: https
+  hostnames: ["shop.contoso.example"]
+  rules:
+    - matches:
+        - path: { type: PathPrefix, value: /api }
+      backendRefs:
+        - name: orders-api
+          port: 80</pre>
+    <ul class="chips">
+      <li class="correct"><code>parentRefs</code></li>
+      <li><code>gatewayRef</code> <span class="why">Not a field; routes attach through <code>parentRefs</code>.</span></li>
+      <li><code>backendRefs</code> <span class="why">Those point to Services, not to the Gateway.</span></li>
+      <li><code>ingressClassName</code> <span class="why">That's Ingress, not the Gateway API.</span></li>
+    </ul>
+    <div class="explain">"Parent" because a route attaches to a parent (a Gateway, or a Service for mesh traffic). <code>sectionName</code> picks a specific listener.</div>
+  </div>
+</section>
+
+<section class="step" id="s5">
+  <h2>5. Route the shop with two routes</h2>
+  <pre class="code" data-file="k8s/gateway/web-route.yaml">apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: web
+  namespace: web
+spec:
+  parentRefs:
+    - { name: shop-gateway, namespace: gateway-infra, sectionName: https }
+  hostnames: ["shop.contoso.example"]
+  rules:
+    - matches:
+        - path: { type: PathPrefix, value: / }
+      backendRefs:
+        - { name: web, port: 80 }</pre>
+  <div class="widget" data-widget="request-router">The router from lesson 8.3, now driven by the Gateway and two HTTPRoutes from different namespaces. Requests to <code>/api/…</code> match the <code>orders</code> route (longest path prefix), and everything else matches the <code>web</code> route. A status panel shows each route as Accepted or not.</div>
+</section>
+
+<section class="step" id="s6">
+  <h2>6. Why isn't my route attached?</h2>
+  <div class="check" data-type="mcq">
+    <p class="q">The <code>orders</code> team's HTTPRoute shows this status. The namespace <code>orders</code> has no labels except the defaults. Why?</p>
+    <pre class="output">status:
+  parents:
+    - parentRef: { name: shop-gateway, namespace: gateway-infra }
+      conditions:
+        - type: Accepted
+          status: "False"
+          reason: NotAllowedByListeners</pre>
+    <ol class="options">
+      <li>The Service <code>orders-api</code> doesn't exist <span class="why">That gives <code>ResolvedRefs: False</code>, not NotAllowedByListeners.</span></li>
+      <li class="correct">The Gateway's <code>allowedRoutes</code> only accepts namespaces labelled <code>shop-routes: allowed</code></li>
+      <li>HTTPRoutes must be in the Gateway's namespace <span class="why">Cross-namespace attachment is allowed when the Gateway permits it.</span></li>
+      <li>The hostname is wrong <span class="why">A hostname mismatch gives a different reason (NoMatchingListenerHostname).</span></li>
+    </ol>
+    <div class="explain">The platform team labels the namespace (<code>kubectl label ns orders shop-routes=allowed</code>, done in the namespace template). The default for <code>allowedRoutes</code> is <code>from: Same</code>, meaning routes only from the Gateway's own namespace.</div>
+  </div>
+</section>
+
+<section class="step" id="s7">
+  <h2>7. Matching more than paths</h2>
+  <pre class="code" data-file="route rules (excerpt)">rules:
+  - matches:
+      - path: { type: PathPrefix, value: /api }
+        headers:
+          - name: x-canary
+            value: "true"
+    backendRefs:
+      - { name: orders-api-canary, port: 80 }
+  - matches:
+      - path: { type: PathPrefix, value: /api }
+        method: GET
+    backendRefs:
+      - { name: orders-api, port: 80 }</pre>
+  <div class="body"><p>Headers, query parameters and methods are first-class matches, with no annotations needed. <b>Filters</b> add redirects, header changes, URL rewrites and request mirroring.</p></div>
+</section>
+
+<section class="step" id="s8">
+  <h2>8. Weighted backends</h2>
+  <div class="body"><p><code>backendRefs</code> can carry <b>weights</b>, and traffic is split in proportion to them. This is how Chapter 11 does canary releases.</p></div>
+  <pre class="code" data-file="route rules (excerpt)">backendRefs:
+  - { name: orders-api-stable, port: 80, weight: 90 }
+  - { name: orders-api-canary, port: 80, weight: 10 }</pre>
+  <div class="widget" data-widget="request-router">A weights slider (0–100) between stable and canary; sending 100 test requests shows the split as a bar.</div>
+</section>
+
+<section class="step" id="s9">
+  <h2>9. Cross-namespace backends: ReferenceGrant</h2>
+  <div class="body">
+    <p>An HTTPRoute may point at a Service in <b>another</b> namespace only if that namespace <b>allows it</b>, with a <b>ReferenceGrant</b>. The owner of the target has to agree, so one team can't route traffic into another's Services uninvited.</p>
+    <p>The same applies to a Gateway's <code>certificateRefs</code> pointing at a Secret in another namespace.</p>
+  </div>
+  <pre class="code" data-file="k8s/gateway/referencegrant.yaml">apiVersion: gateway.networking.k8s.io/v1beta1
+kind: ReferenceGrant
+metadata:
+  name: allow-web-routes
+  namespace: orders          # the namespace being referenced
+spec:
+  from:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      namespace: web
+  to:
+    - group: ""
+      kind: Service
+      name: orders-api</pre>
+</section>
+
+<section class="step" id="s10">
+  <h2>10. Ingress → Gateway API</h2>
+  <div class="check" data-type="match">
+    <p class="q">Match each Ingress concept to its Gateway API equivalent.</p>
+    <table class="pairs">
+      <tr><td>IngressClass</td><td>GatewayClass</td></tr>
+      <tr><td>The controller's Service and listening ports</td><td>Gateway (listeners)</td></tr>
+      <tr><td>Ingress <code>rules</code> (host + path → Service)</td><td>HTTPRoute</td></tr>
+      <tr><td><code>tls.secretName</code></td><td>Listener <code>tls.certificateRefs</code></td></tr>
+      <tr><td>Controller-specific annotations (rewrites, redirects)</td><td>Route <code>filters</code></td></tr>
+    </table>
+    <div class="explain">The <code>ingress2gateway</code> tool converts many Ingress manifests automatically. Review what it does with annotations.</div>
+  </div>
+</section>
+
+<section class="step" id="s11">
+  <h2>11. Status tells you everything</h2>
+  <pre class="output">$ kubectl get gateway -n gateway-infra
+NAME           CLASS                ADDRESS                               PROGRAMMED   AGE
+shop-gateway   azure-alb-external   a1b2c3d4.fz12.alb.azure.com          True         2d
+$ kubectl get httproute -A
+NAMESPACE   NAME         HOSTNAMES                  AGE
+orders      orders-api   ["shop.contoso.example"]   1h
+web         web          ["shop.contoso.example"]   1h
+$ kubectl describe httproute orders-api -n orders | grep -A3 Conditions
+    Conditions:
+      Type: Accepted        Status: True
+      Type: ResolvedRefs    Status: True</pre>
+  <div class="body"><p><b>Accepted</b> = attached to the Gateway; <b>ResolvedRefs</b> = all backends exist and are allowed. Both must be True.</p></div>
+</section>
+
+<section class="step" id="s12">
+  <h2>12. Versions</h2>
+  <div class="body"><p>GatewayClass, Gateway, HTTPRoute and GRPCRoute are <code>v1</code> (GA). ReferenceGrant is <code>v1beta1</code>. The Gateway API CRDs are installed by your implementation, or by the AKS add-on, not by Kubernetes itself. Keep their version in step with the controller.</p></div>
+</section>
+
+<section class="step summary" id="s13">
+  <h2>Gateway API, sorted</h2>
+  <ul>
+    <li>GatewayClass (provider) → Gateway (platform) → HTTPRoute (app team).</li>
+    <li>Routes attach with <code>parentRefs</code>; Gateways allow them with <code>allowedRoutes</code>.</li>
+    <li>Matches, filters and weighted <code>backendRefs</code> are in the spec, not in annotations.</li>
+    <li>ReferenceGrant permits cross-namespace references.</li>
+    <li>Check route status: Accepted + ResolvedRefs.</li>
+  </ul>
+</section>
+</article>
+</body>
+</html>

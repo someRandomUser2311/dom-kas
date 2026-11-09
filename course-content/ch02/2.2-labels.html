@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>2.2 · Labels &amp; selectors</title>
+<link rel="stylesheet" href="../content.css">
+</head>
+<body>
+<article class="lesson" data-id="2.2" data-chapter="2">
+<nav class="crumbs"><a href="../index.html">Course</a> / <a href="index.html">Chapter 2</a> / 2.2</nav>
+<header>
+  <p class="kicker">Chapter 2 · Lesson 2.2 · ~10 steps · ~12 min</p>
+  <h1>Labels &amp; selectors</h1>
+  <p class="meta">You'll be able to label objects consistently, write equality-based and set-based selectors, and spot the label typo that silently breaks an app.</p>
+</header>
+
+<section class="step" id="s1">
+  <h2>1. Labels are the glue</h2>
+  <div class="body">
+    <p>A <b>label</b> is a <code>key: value</code> pair in an object's <code>metadata.labels</code>. Labels don't do anything on their own; they're tags.</p>
+    <p>But almost every connection in Kubernetes is made by <b>selecting</b> objects by their labels, not by name:</p>
+    <ul>
+      <li>a Deployment finds its pods;</li>
+      <li>a Service finds the pods to send traffic to;</li>
+      <li>a NetworkPolicy finds the pods it protects.</li>
+    </ul>
+  </div>
+  <pre class="code" data-file="pod metadata">metadata:
+  name: orders-api-7d9c5f6b8-2xk9p
+  labels:
+    app: orders-api
+    tier: api
+    env: prod
+    version: "1.4.2"</pre>
+  <aside class="coming" data-set="A">
+    <dl>
+      <dt>Windows/IIS admin</dt><dd>Like Azure resource tags, or AD group membership: a Service "targets everything tagged <code>app=orders-api</code>", whoever those happen to be right now.</dd>
+      <dt>Linux admin</dt><dd>Like Ansible inventory groups, but evaluated live, every time.</dd>
+      <dt>Developer (Compose)</dt><dd>Compose links by service name. Kubernetes links by labels, so pods can come and go without anything being re-pointed.</dd>
+      <dt>Other clouds</dt><dd>Same as EKS and GKE. Don't confuse them with AWS tags or GCP labels on cloud resources; these live inside the cluster.</dd>
+    </dl>
+  </aside>
+</section>
+
+<section class="step" id="s2">
+  <h2>2. Label rules and conventions</h2>
+  <div class="body">
+    <ul>
+      <li>Keys can have a prefix: <code>app.kubernetes.io/name</code>. Values are short strings (63 characters max); quote numbers such as <code>"1.4.2"</code>.</li>
+      <li>Use a consistent set. The recommended labels are <code>app.kubernetes.io/name</code>, <code>/instance</code>, <code>/version</code>, <code>/component</code>, <code>/part-of</code> and <code>/managed-by</code>. Helm adds them automatically (Chapter 10).</li>
+      <li>This course uses the short <code>app</code>, <code>tier</code> and <code>env</code> labels to keep examples readable.</li>
+    </ul>
+    <p><b>Annotations</b> look similar, but they're for non-identifying information, such as a build URL or a tool setting. You can't select on them.</p>
+  </div>
+</section>
+
+<section class="step" id="s3">
+  <h2>3. Equality-based selectors</h2>
+  <div class="body">
+    <p>The simplest selector lists labels that must <b>all</b> match. Extra labels on the pod don't matter.</p>
+    <p>In YAML that's <code>matchLabels</code>. On the command line it's <code>-l app=orders-api,tier=api</code>, where a comma means AND.</p>
+    <p><code>!=</code> means "not equal".</p>
+  </div>
+  <pre class="code" data-file="selector">selector:
+  matchLabels:
+    app: orders-api
+    tier: api</pre>
+  <div class="widget" data-widget="selector-matcher">A grid of 8 pods with label chips: <code>orders-api</code> api pods in dev and prod, <code>web</code> frontend pods in dev and prod, an <code>orders-worker</code>, and one pod labelled <code>app: order-api</code> (typo). Above the grid is an editable selector (YAML or <code>-l</code> syntax). Pods that match light up live, and a counter shows "selected: N".</div>
+</section>
+
+<section class="step" id="s4">
+  <h2>4. Pick exactly the right pods</h2>
+  <div class="check" data-type="custom">
+    <p class="q">Write a selector that picks <b>only</b> the <code>orders-api</code> pods running in <code>prod</code>.</p>
+    <div class="widget" data-widget="selector-matcher">Success when exactly the two pods labelled <code>app=orders-api, env=prod</code> are selected. Hints: selecting all orders-api pods → "Narrow it to prod"; selecting the web prod pods too → "Every listed label must match: add app".</div>
+    <details class="solution"><summary>Solution</summary><pre>matchLabels:
+  app: orders-api
+  env: prod</pre><p>Or on the command line: <code>-l app=orders-api,env=prod</code></p></details>
+    <div class="explain">A selector is an AND of all its labels. Add labels to narrow it.</div>
+  </div>
+</section>
+
+<section class="step" id="s5">
+  <h2>5. Set-based selectors</h2>
+  <div class="body">
+    <p>For "one of several values", use <b>set-based</b> selectors:</p>
+    <ul>
+      <li><code>In</code> and <code>NotIn</code>: the value is in, or not in, a list.</li>
+      <li><code>Exists</code> and <code>DoesNotExist</code>: the key is present or absent.</li>
+    </ul>
+    <p>In YAML that's <code>matchExpressions</code>. On the command line: <code>-l 'env in (dev,staging)'</code>, or <code>-l '!canary'</code> for "no canary label".</p>
+    <p>Deployments and most newer objects accept both forms. A Service's <code>selector</code> accepts <b>only</b> plain equality.</p>
+  </div>
+  <pre class="code" data-file="selector">selector:
+  matchLabels:
+    app: orders-api
+  matchExpressions:
+    - key: env
+      operator: In
+      values: [dev, staging]
+    - key: canary
+      operator: DoesNotExist</pre>
+</section>
+
+<section class="step" id="s6">
+  <h2>6. Labels on the command line</h2>
+  <pre class="code" data-file="terminal">kubectl get pods -n orders -l app=orders-api --show-labels
+kubectl get pods -n orders -l 'env in (dev,staging)'
+kubectl get pods -n orders -L env,version         # labels as columns
+kubectl label pod orders-api-7d9c5f6b8-2xk9p -n orders debug=true</pre>
+  <div class="body"><p>Adding a label by hand, as in the last line, is fine for a quick experiment. Labels that matter belong in the manifest.</p></div>
+</section>
+
+<section class="step" id="s7">
+  <h2>7. The silent typo</h2>
+  <div class="body">
+    <p>A selector that matches nothing is not an error. Kubernetes happily keeps an empty set. Nobody warns you; things just quietly don't work.</p>
+  </div>
+  <pre class="code" data-file="k8s/base">--- Service selector
+selector:
+  app: order-api       # missing "s"
+--- Pod template labels
+labels:
+  app: orders-api</pre>
+  <div class="check" data-type="mcq">
+    <p class="q">The Service's selector has a typo (<code>order-api</code>). What happens when you apply both files?</p>
+    <ol class="options">
+      <li><code>kubectl apply</code> rejects the Service <span class="why">The YAML is valid, so the API server accepts it.</span></li>
+      <li class="correct">Both are created, but the Service has no endpoints, so requests to it fail</li>
+      <li>The Service finds the pods anyway because the names are close <span class="why">Matching is exact: no fuzzy matching.</span></li>
+      <li>The pods crash <span class="why">The pods are fine; nothing is sending them traffic.</span></li>
+    </ol>
+    <div class="explain">This is one of the most common Kubernetes bugs. The tell-tale sign is an empty endpoints list (lesson 2.4). The write labs make this a critical rule.</div>
+  </div>
+</section>
+
+<section class="step" id="s8">
+  <h2>8. Don't let selectors overlap</h2>
+  <div class="body">
+    <p>If two Deployments' selectors match the same pods, the controllers fight over them, scaling each other's pods up and down.</p>
+    <p>Always include a label unique to that workload, typically <code>app</code>, in both the selector and the pod template.</p>
+  </div>
+</section>
+
+<section class="step" id="s9">
+  <h2>9. Labels you'll meet on AKS</h2>
+  <div class="body">
+    <p>Nodes carry labels too, and later chapters select on them:</p>
+    <ul>
+      <li><code>kubernetes.io/os=linux</code></li>
+      <li><code>topology.kubernetes.io/zone=westeurope-1</code></li>
+      <li><code>kubernetes.azure.com/agentpool=user</code></li>
+      <li><code>kubernetes.azure.com/mode=system</code></li>
+    </ul>
+    <p>Chapter 3 uses them to place pods in zones and on the right node pool.</p>
+  </div>
+</section>
+
+<section class="step summary" id="s10">
+  <h2>Labels, sorted</h2>
+  <ul>
+    <li>Labels are tags; selectors connect objects by matching them.</li>
+    <li><code>matchLabels</code> = all must match; <code>matchExpressions</code> adds In/NotIn/Exists/DoesNotExist.</li>
+    <li>Service selectors are equality-only.</li>
+    <li>A selector that matches nothing fails silently; check labels exactly.</li>
+    <li>Use a unique <code>app</code> label so selectors never overlap.</li>
+  </ul>
+</section>
+</article>
+</body>
+</html>

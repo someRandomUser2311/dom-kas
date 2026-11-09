@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chapter 5 · Practice</title>
+<link rel="stylesheet" href="../content.css">
+</head>
+<body>
+<main>
+<nav class="crumbs"><a href="../index.html">Course</a> / <a href="index.html">Chapter 5</a> / Practice</nav>
+<p class="kicker">Chapter 5 · Practice</p>
+<h1>Practice: quiz, predict, lab, try it locally</h1>
+
+<h2 id="quiz">Checkpoint quiz (10 drawn from 20)</h2>
+<div class="check" data-type="mcq"><p class="q">With Azure CNI Overlay, where do pod IPs come from?</p><ol class="options"><li>The node subnet</li><li class="correct">A separate private pod CIDR outside the VNet</li><li>The Service CIDR</li><li>Public IPs</li></ol><div class="explain">The subnet only holds node IPs.</div></div>
+<div class="check" data-type="mcq"><p class="q">Which network model lets VNet resources reach pods directly by pod IP?</p><ol class="options"><li>Overlay</li><li class="correct">Azure CNI with VNet-routed pod IPs</li><li>kubenet</li><li>Cilium overlay only</li></ol><div class="explain">At the cost of many VNet IPs.</div></div>
+<div class="check" data-type="mcq"><p class="q">What happens to kubenet?</p><ol class="options"><li>It's the new default</li><li class="correct">It's retiring; migrate to Azure CNI Overlay</li><li>It's required for Cilium</li><li>It replaces overlay</li></ol><div class="explain">In-place upgrade to overlay is supported.</div></div>
+<div class="check" data-type="mcq"><p class="q">What must not overlap?</p><ol class="options"><li>Only the VNet and pod CIDR</li><li class="correct">The VNet (and connected networks), pod CIDR and Service CIDR</li><li>Nothing; they're isolated</li><li>Only the Service CIDR and DNS IP</li></ol><div class="explain">Plan all ranges together.</div></div>
+<div class="check" data-type="mcq"><p class="q">What does <code>--network-dataplane cilium</code> add?</p><ol class="options"><li>Public IPs for pods</li><li class="correct">eBPF forwarding and NetworkPolicy enforcement</li><li>A service mesh by default</li><li>Windows support</li></ol><div class="explain">It works with overlay or VNet-routed IPs.</div></div>
+<div class="check" data-type="mcq"><p class="q">Who creates the Azure LB rule for a LoadBalancer Service?</p><ol class="options"><li>kube-proxy</li><li class="correct">The cloud-controller-manager, using the cluster identity</li><li>The kubelet</li><li>Your pipeline</li></ol><div class="explain">It's an Azure-side controller.</div></div>
+<div class="check" data-type="mcq"><p class="q">A typo in the internal-LB annotation results in…</p><ol class="options"><li>An error on apply</li><li class="correct">A public IP, silently</li><li>No IP at all</li><li>A private IP anyway</li></ol><div class="explain">Unknown annotations are ignored. Check EXTERNAL-IP.</div></div>
+<div class="check" data-type="mcq"><p class="q">Why use a pre-created public IP with <code>azure-pip-name</code>?</p><ol class="options"><li>It's cheaper</li><li class="correct">The address survives Service deletion and recreation</li><li>It's required for HTTPS</li><li>It's faster</li></ol><div class="explain">Grant the cluster identity Network Contributor on its RG.</div></div>
+<div class="check" data-type="mcq"><p class="q">Intermittent outbound timeouts under load, fine at night. Likely cause?</p><ol class="options"><li>DNS</li><li class="correct">SNAT port exhaustion</li><li>NetworkPolicy</li><li>Pod CIDR overlap</li></ol><div class="explain">Reuse connections; use a NAT gateway.</div></div>
+<div class="check" data-type="mcq"><p class="q">Which outbound type sends all egress through Azure Firewall?</p><ol class="options"><li>loadBalancer</li><li>managedNATGateway</li><li class="correct">userDefinedRouting</li><li>none of them</li></ol><div class="explain">A route table points 0.0.0.0/0 at the firewall.</div></div>
+<div class="check" data-type="mcq"><p class="q">Which identity pulls images from ACR?</p><ol class="options"><li>Cluster identity</li><li class="correct">Kubelet identity</li><li>Workload identity</li><li>The pipeline</li></ol><div class="explain">Grant it AcrPull.</div></div>
+<div class="check" data-type="mcq"><p class="q">Why not give the kubelet identity Key Vault access for apps?</p><ol class="options"><li>It's not allowed</li><li class="correct">Every pod on every node could then use it</li><li>Kubelet tokens expire too fast</li><li>Key Vault rejects managed identities</li></ol><div class="explain">Use one workload identity per app.</div></div>
+<div class="check" data-type="mcq"><p class="q">Which role do developers need to download the kubeconfig with Azure RBAC?</p><ol class="options"><li>Contributor</li><li class="correct">Azure Kubernetes Service Cluster User Role</li><li>AKS RBAC Cluster Admin</li><li>Reader</li></ol><div class="explain">It grants nothing inside the cluster.</div></div>
+<div class="check" data-type="mcq"><p class="q">How do you scope an AKS RBAC role to namespace <code>orders</code>?</p><ol class="options"><li><code>--namespace orders</code></li><li class="correct"><code>--scope $AKS_ID/namespaces/orders</code></li><li>A RoleBinding</li><li>You can't</li></ol><div class="explain">Append /namespaces/&lt;ns&gt; to the cluster ID.</div></div>
+<div class="check" data-type="mcq"><p class="q">A Contributor on the cluster's resource group runs <code>kubectl get pods</code> (Azure RBAC enabled, no AKS RBAC role). Result?</p><ol class="options"><li>Works</li><li class="correct">Forbidden</li><li>Read-only access</li><li>Prompts for admin</li></ol><div class="explain">The Azure resource plane and the Kubernetes plane are separate.</div></div>
+<div class="check" data-type="mcq"><p class="q">What does <code>--disable-local-accounts</code> remove?</p><ol class="options"><li>Entra ID users</li><li class="correct">The static cluster-admin credential behind <code>get-credentials --admin</code></li><li>ServiceAccounts</li><li>Node SSH keys</li></ol><div class="explain">Every access becomes a named Entra ID identity.</div></div>
+<div class="check" data-type="mcq"><p class="q">The federated credential subject format is…</p><ol class="options"><li><code>serviceaccount:orders-api</code></li><li class="correct"><code>system:serviceaccount:&lt;namespace&gt;:&lt;serviceaccount&gt;</code></li><li><code>&lt;namespace&gt;/&lt;pod&gt;</code></li><li>The client ID</li></ol><div class="explain">The namespace is part of it.</div></div>
+<div class="check" data-type="mcq"><p class="q">Which pod label enables workload identity injection?</p><ol class="options"><li><code>azure.workload.identity/client-id</code></li><li class="correct"><code>azure.workload.identity/use: "true"</code></li><li><code>aadpodidbinding</code></li><li><code>identity: azure</code></li></ol><div class="explain">The client ID goes on the ServiceAccount as an annotation.</div></div>
+<div class="check" data-type="mcq"><p class="q">The pod gets a token but Key Vault returns 403. Most likely?</p><ol class="options"><li>Wrong subject</li><li class="correct">The managed identity lacks a role (e.g. Key Vault Secrets User) on the vault</li><li>Missing pod label</li><li>Wrong issuer</li></ol><div class="explain">Authentication worked; authorisation didn't.</div></div>
+<div class="check" data-type="mcq"><p class="q">Which belongs in the Chapter 5 baseline?</p><ol class="options"><li>kubenet</li><li>Client secrets in Kubernetes Secrets</li><li class="correct">Workload identity with one managed identity per app</li><li>Local admin accounts for emergencies</li></ol><div class="explain">Use PIM for emergency access instead.</div></div>
+
+<h2 id="predict">Predict the outcome (3)</h2>
+<div class="check" data-type="predict"><p class="q">1 · Classic VNet-routed pod IPs, node subnet <code>/24</code>, max pods 30. The autoscaler tries to grow the pool from 6 to 9 nodes.</p><ol class="options"><li>All 9 nodes join</li><li class="correct">Scale-up fails around node 8: the subnet runs out of IPs (6 × 31 = 186 used; each new node needs 31 more)</li><li>Pods share IPs</li><li>Azure grows the subnet</li></ol><div class="explain">251 usable ÷ 31 per node ≈ 8 nodes.</div></div>
+<div class="check" data-type="predict"><p class="q">2 · A new cluster pulls <code>contosoacr.azurecr.io/orders-api:1.4.2</code>; nobody granted AcrPull.</p><ol class="options"><li>Pulls fine</li><li class="correct"><code>ErrImagePull</code> → <code>ImagePullBackOff</code> with 401/unauthorized</li><li>Pending</li><li>CrashLoopBackOff</li></ol><div class="explain">The kubelet identity needs AcrPull (Chapter 6: <code>--attach-acr</code>).</div></div>
+<div class="check" data-type="predict"><p class="q">3 · The federated credential is for <code>system:serviceaccount:orders:orders-api</code>; the Deployment forgets <code>serviceAccountName</code> but has the label.</p><ol class="options"><li>Works</li><li class="correct">Token exchange fails: the pod presents <code>…:orders:default</code>, and there's no matching federated record</li><li>No AZURE_ variables are injected</li><li>Key Vault returns 403</li></ol><div class="explain">The webhook injects the variables, but Entra ID rejects the subject.</div></div>
+
+<h2 id="lab">Write lab: workload identity manifests</h2>
+<div class="lab">
+  <p><b>Task values:</b> managed identity client ID <code>6c1f2a9e-0000-4b1d-9c55-1a2b3c4d5e6f</code>; federated credential subject <code>system:serviceaccount:orders:orders-api</code>. Write <code>serviceaccount.yaml</code> and update <code>deployment.yaml</code> so <code>orders-api</code> can read Key Vault. Graded by <b>manifest-lint</b> and <b>cross-ref</b>.</p>
+  <ul class="rules">
+    <li>A ServiceAccount exists with the <code>azure.workload.identity/client-id</code> annotation set to the given client ID.</li>
+    <li>The Deployment's <code>serviceAccountName</code> references that ServiceAccount.</li>
+    <li>The pod template has the label <code>azure.workload.identity/use: "true"</code> (a quoted string).</li>
+    <li class="critical">The ServiceAccount's namespace and name match the federated credential subject.</li>
+    <li class="critical">No client secret or credentials anywhere (no <code>AZURE_CLIENT_SECRET</code>, no Secret holding credentials).</li>
+    <li><code>AZURE_CLIENT_ID</code> isn't hard-coded in env (the webhook injects it).</li>
+  </ul>
+  <details class="solution"><summary>Reference solution</summary>
+<pre>apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: orders-api
+  namespace: orders
+  annotations:
+    azure.workload.identity/client-id: "6c1f2a9e-0000-4b1d-9c55-1a2b3c4d5e6f"
+---
+# deployment.yaml (template excerpt)
+  template:
+    metadata:
+      labels:
+        app: orders-api
+        azure.workload.identity/use: "true"
+    spec:
+      serviceAccountName: orders-api</pre></details>
+</div>
+
+<h2 id="walkthrough">Walkthrough: from identity to a Key Vault secret</h2>
+<ol>
+  <li><code>az identity create</code>; role assignment Key Vault Secrets User on <code>kv-orders-dev</code>.</li>
+  <li><code>az identity federated-credential create</code> with the cluster's issuer and subject.</li>
+  <li>Apply the ServiceAccount and Deployment; <code>kubectl exec … env | grep AZURE_</code>.</li>
+  <li>The app logs "loaded secret payments-api-key". Then break the subject on purpose and read the AADSTS700213 error.</li>
+</ol>
+
+<h2 id="try">Try it locally</h2>
+<div class="try" data-lesson="5.2"><p><b>5.2 LoadBalancer without a cloud.</b></p>
+<pre>kubectl create deployment web --image=localhost:5001/orders-api:1.0.0
+kubectl expose deployment web --type=LoadBalancer --port=80 --target-port=8080
+kubectl get svc web</pre>
+<p>Expected: <code>EXTERNAL-IP &lt;pending&gt;</code>, forever. kind has no cloud-controller-manager to create a load balancer. On AKS, this is exactly the step Azure performs.</p>
+<p><b>Cleanup:</b> <code>kubectl delete deploy,svc web</code></p></div>
+<div class="try" data-lesson="5.6"><p><b>5.6 Look inside a ServiceAccount token.</b></p>
+<pre>kubectl create ns orders; kubectl create sa orders-api -n orders
+TOKEN=$(kubectl create token orders-api -n orders --audience api://AzureADTokenExchange)
+echo "$TOKEN" | cut -d. -f2 | tr '_-' '/+' | base64 -d 2&gt;/dev/null; echo</pre>
+<p>Expected: JSON with <code>"aud":["api://AzureADTokenExchange"]</code>, <code>"iss":"https://kubernetes.default.svc.cluster.local"</code> and <code>"sub":"system:serviceaccount:orders:orders-api"</code>. On AKS, <code>iss</code> is the public OIDC issuer URL, and Entra ID checks <code>iss</code> + <code>sub</code> against the federated credential.</p>
+<p><b>Cleanup:</b> <code>kubectl delete ns orders</code></p></div>
+</main>
+</body>
+</html>

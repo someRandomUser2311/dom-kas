@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>1.4 · Desired state &amp; reconciliation</title>
+<link rel="stylesheet" href="../content.css">
+</head>
+<body>
+<article class="lesson" data-id="1.4" data-chapter="1">
+<nav class="crumbs"><a href="../index.html">Course</a> / <a href="index.html">Chapter 1</a> / 1.4</nav>
+<header>
+  <p class="kicker">Chapter 1 · Lesson 1.4 · ~10 steps · ~12 min</p>
+  <h1>Desired state &amp; reconciliation</h1>
+  <p class="meta">You'll be able to explain the idea everything in Kubernetes is built on: you declare what you want, and controllers keep making it true.</p>
+</header>
+
+<section class="step" id="s1">
+  <h2>1. Two ways to give instructions</h2>
+  <div class="body">
+    <p><b>Imperative:</b> you say <i>what to do</i>. "Start a container. Start another. Now stop that one." If something breaks later, nobody remembers what the end result was supposed to be.</p>
+    <p><b>Declarative:</b> you say <i>what you want</i>. "There should be 3 copies of <code>orders-api</code> 1.4.2." The system works out the steps, and keeps working on them.</p>
+    <p>Kubernetes is declarative at its core. You write the desired result in YAML; the cluster's job is to make it so and keep it so.</p>
+  </div>
+  <aside class="coming" data-set="A">
+    <dl>
+      <dt>Windows/IIS admin</dt><dd>Like PowerShell DSC or Group Policy: you describe the configuration, and an agent keeps re-applying it. Kubernetes checks far more often, usually within seconds.</dd>
+      <dt>Linux admin</dt><dd>Like Ansible or Puppet, but with a loop that never stops instead of a run you trigger.</dd>
+      <dt>Developer (Compose)</dt><dd><code>docker compose up</code> is declarative once: it creates what the file says, then stops caring. Kubernetes never stops caring.</dd>
+      <dt>Other clouds</dt><dd>Like an auto-scaling group's "desired capacity", applied to every kind of object.</dd>
+    </dl>
+  </aside>
+</section>
+
+<section class="step" id="s2">
+  <h2>2. Every object has a spec and a status</h2>
+  <div class="body">
+    <p>Almost every Kubernetes object has two halves:</p>
+    <ul>
+      <li><b><code>spec</code></b>: what you <b>want</b>. You write it.</li>
+      <li><b><code>status</code></b>: what <b>is</b>. Kubernetes writes it, and you only read it.</li>
+    </ul>
+    <p>If <code>spec</code> and <code>status</code> differ, a controller is (or should be) working to close the gap.</p>
+  </div>
+  <pre class="code" data-file="kubectl get deployment orders-api -o yaml (trimmed)">apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: orders-api
+spec:
+  replicas: 3
+  template:
+    spec:
+      containers:
+        - name: api
+          image: contosoacr.azurecr.io/orders-api:1.4.2
+status:
+  replicas: 3
+  readyReplicas: 2
+  availableReplicas: 2</pre>
+</section>
+
+<section class="step" id="s3">
+  <h2>3. Which half is yours?</h2>
+  <div class="check" data-type="tapline" data-match="readyReplicas: 2">
+    <p class="q">In the file above, tap a line that Kubernetes writes and you should never edit.</p>
+    <div class="explain"><code>readyReplicas</code> is under <code>status</code>, so it's reported by the controller. Here it says only 2 of the 3 desired pods are ready; something is still being fixed. (Any line under <code>status:</code> is accepted.)</div>
+  </div>
+</section>
+
+<section class="step" id="s4">
+  <h2>4. The reconciliation loop</h2>
+  <div class="body">
+    <p>Every controller runs the same loop, forever:</p>
+    <ol>
+      <li><b>Observe</b>: what does the cluster look like right now?</li>
+      <li><b>Compare</b>: how is that different from the spec?</li>
+      <li><b>Act</b>: take one step to close the gap.</li>
+      <li>Repeat.</li>
+    </ol>
+    <p>Controllers don't run a script once. They react to <i>any</i> difference, whatever caused it: a crash, a deleted pod, a lost node, or you changing the spec.</p>
+  </div>
+  <div class="widget" data-widget="reconcile">A live loop. The left side shows the spec (a replicas slider, 0–6, and an image dropdown); the right side shows the actual pods as tiles. The controller's observe → compare → act cycle is drawn as a ring that pulses each time it runs. Actions: delete a pod, kill a node, change replicas, change the image. A log line explains each act ("observed 2, want 3 → create 1 pod").</div>
+</section>
+
+<section class="step" id="s5">
+  <h2>5. Try it: break things</h2>
+  <div class="check" data-type="custom">
+    <p class="q">In the reconcile widget, set replicas to 3, then delete one of the running pods.</p>
+    <div class="widget" data-widget="reconcile">Success when the learner has deleted a pod and watched the controller create a replacement, so the count is back at 3. The pod's name changes; the count doesn't.</div>
+    <div class="explain">The controller saw 2 pods where the spec says 3, and created one. The new pod has a new name and a new IP. Nothing about the old pod is "restored".</div>
+  </div>
+</section>
+
+<section class="step" id="s6">
+  <h2>6. Deleting a pod doesn't delete the app</h2>
+  <div class="check" data-type="mcq">
+    <p class="q">You run <code>kubectl delete pod orders-api-7d9c5-abcde</code>. The pod belongs to a Deployment with <code>replicas: 3</code>. What happens?</p>
+    <ol class="options">
+      <li>The app now has 2 pods until someone redeploys <span class="why">The ReplicaSet controller notices within seconds.</span></li>
+      <li class="correct">A new pod with a different name is created to get back to 3</li>
+      <li>The same pod restarts with the same name <span class="why">Deleted pods are gone; the replacement is a brand-new pod.</span></li>
+      <li>The Deployment is deleted too <span class="why">Deleting a child never deletes its owner.</span></li>
+    </ol>
+    <div class="explain">To really remove the app, delete (or scale down) the <b>Deployment</b>. Deleting a pod is a common way to force a fresh start.</div>
+  </div>
+</section>
+
+<section class="step" id="s7">
+  <h2>7. Change the spec, not the pods</h2>
+  <div class="body">
+    <p>To change anything, edit the spec and re-apply it. To ship version 1.5.0, change the <code>image</code> line and run <code>kubectl apply</code>. The Deployment controller notices the difference and rolls pods over to the new image.</p>
+    <p>If you change a pod directly, the controller will undo or replace your change the next time it compares. So the YAML in Git is the real definition of the app. That's the idea behind <b>GitOps</b>, and behind the pipelines in Chapter 7.</p>
+  </div>
+  <pre class="code" data-file="deployment.yaml" data-diff>spec:
+  replicas: 3
+  template:
+    spec:
+      containers:
+        - name: api
+-         image: contosoacr.azurecr.io/orders-api:1.4.2
++         image: contosoacr.azurecr.io/orders-api:1.5.0</pre>
+</section>
+
+<section class="step" id="s8">
+  <h2>8. Owners and garbage collection</h2>
+  <div class="body">
+    <p>Objects created by controllers record their <b>owner</b> in <code>metadata.ownerReferences</code>: a Pod is owned by a ReplicaSet, which is owned by a Deployment.</p>
+    <p>When an owner is deleted, Kubernetes deletes its children automatically. That's why <code>kubectl delete deployment orders-api</code> removes everything in one go.</p>
+  </div>
+  <pre class="code" data-file="kubectl get pod orders-api-7d9c5-abcde -o yaml (trimmed)">metadata:
+  name: orders-api-7d9c5-abcde
+  ownerReferences:
+    - kind: ReplicaSet
+      name: orders-api-7d9c5
+      controller: true</pre>
+</section>
+
+<section class="step" id="s9">
+  <h2>9. Status tells you why</h2>
+  <div class="body">
+    <p>When spec and status don't match for a long time, something is blocking the controller. Status, events and <code>kubectl describe</code> tell you what:</p>
+    <ul>
+      <li>a pod stuck in <code>Pending</code> (no node has room);</li>
+      <li><code>ImagePullBackOff</code> (wrong image name or no permission to pull);</li>
+      <li><code>CrashLoopBackOff</code> (the app keeps exiting).</li>
+    </ul>
+    <p>Reading these is a core skill. Chapter 14 is built around it.</p>
+  </div>
+</section>
+
+<section class="step summary" id="s10">
+  <h2>Desired state, sorted</h2>
+  <ul>
+    <li>Declarative: you write the result you want, not the steps.</li>
+    <li><code>spec</code> is yours; <code>status</code> is Kubernetes'.</li>
+    <li>Controllers loop forever: observe, compare, act.</li>
+    <li>Deleting a pod just makes the controller create a new one; change the spec to change the app.</li>
+    <li>Owners clean up their children; status and events explain any gap.</li>
+  </ul>
+</section>
+</article>
+</body>
+</html>

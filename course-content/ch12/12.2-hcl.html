@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>12.2 · HCL basics</title>
+<link rel="stylesheet" href="../content.css">
+</head>
+<body>
+<article class="lesson" data-id="12.2" data-chapter="12">
+<nav class="crumbs"><a href="../index.html">Course</a> / <a href="index.html">Chapter 12</a> / 12.2</nav>
+<header>
+  <p class="kicker">Chapter 12 · Lesson 12.2 · ~13 steps · ~16 min</p>
+  <h1>HCL basics</h1>
+  <p class="meta">You'll be able to write Terraform's configuration language: blocks, arguments, references and version constraints, and build Contoso's resource group and network.</p>
+</header>
+
+<section class="step" id="s1">
+  <h2>1. Blocks and arguments</h2>
+  <div class="body">
+    <p>HCL (HashiCorp Configuration Language) is made of <b>blocks</b>: a type, zero or more labels, and a body in braces. Inside the body are <b>arguments</b> (<code>name = value</code>) and nested blocks.</p>
+    <p>A <code>resource</code> block has two labels: the <b>resource type</b> (from the provider) and a <b>local name</b> you choose.</p>
+  </div>
+  <pre class="code" data-file="main.tf">resource "azurerm_resource_group" "main" {
+  name     = "rg-orders-dev"
+  location = "westeurope"
+}</pre>
+  <aside class="coming" data-set="C">
+    <dl>
+      <dt>Portal/ARM</dt><dd>Each <code>resource</code> block is one item in an ARM template's <code>resources</code> array, without the JSON noise.</dd>
+      <dt>az CLI scripts</dt><dd><code>az group create -n rg-orders-dev -l westeurope</code> becomes a block you can re-run safely.</dd>
+      <dt>CloudFormation</dt><dd>Like a <code>Resources:</code> entry: the logical ID is the local name, and Type is the resource type.</dd>
+      <dt>Pulumi</dt><dd>Like <code>new azure.resources.ResourceGroup("main", {...})</code>, but declarative HCL.</dd>
+    </dl>
+  </aside>
+</section>
+
+<section class="step" id="s2">
+  <h2>2. The <code>terraform</code> block</h2>
+  <div class="body"><p>The <code>terraform</code> block pins the Terraform version and declares which providers to download, with <b>version constraints</b>. <code>~&gt; 4.0</code> means "4.x, at least 4.0, below 5.0", so you get fixes but no breaking major upgrade.</p></div>
+  <pre class="code" data-file="versions.tf">terraform {
+  required_version = "&gt;= 1.9"
+  required_providers {
+    azurerm = {
+      source  = "hashicorp/azurerm"
+      version = "~&gt; 4.0"
+    }
+  }
+}</pre>
+</section>
+
+<section class="step" id="s3">
+  <h2>3. The provider block</h2>
+  <div class="body"><p><code>provider "azurerm"</code> configures how to talk to Azure. The <code>features {}</code> block is required, even when empty. The 4.x provider also needs a subscription ID, from the block or the <code>ARM_SUBSCRIPTION_ID</code> environment variable. Credentials come from the environment (your <code>az login</code>, or the pipeline's OIDC), <b>never</b> from the file.</p></div>
+  <pre class="code" data-file="versions.tf" data-diff>+provider "azurerm" {
++  features {}
++  subscription_id = var.subscription_id
++}</pre>
+</section>
+
+<section class="step" id="s4">
+  <h2>4. Spot the constraint</h2>
+  <div class="check" data-type="tapline" data-match="version = &quot;~&gt; 4.0&quot;">
+    <p class="q">Tap the line that stops a future <code>terraform init</code> from silently pulling azurerm 5.0.</p>
+    <pre class="code" data-file="versions.tf">terraform {
+  required_version = "&gt;= 1.9"
+  required_providers {
+    azurerm = {
+      source  = "hashicorp/azurerm"
+      version = "~&gt; 4.0"
+    }
+  }
+}</pre>
+    <div class="explain"><code>~&gt; 4.0</code> allows 4.x only. Together with the committed lock file, provider upgrades only happen when someone runs <code>terraform init -upgrade</code> and commits the result.</div>
+  </div>
+</section>
+
+<section class="step" id="s5">
+  <h2>5. References</h2>
+  <div class="body"><p>Refer to another resource's attributes with <code>&lt;type&gt;.&lt;name&gt;.&lt;attribute&gt;</code>. Terraform reads these references to work out the order: the resource group first, then anything that refers to it.</p></div>
+  <div class="check" data-type="fill">
+    <p class="q">Put the VNet in the same resource group, using a reference rather than a hard-coded string.</p>
+    <pre class="code" data-file="main.tf">resource "azurerm_virtual_network" "main" {
+  name                = "vnet-orders-dev"
+  resource_group_name = <span class="blank">?</span>
+  location            = azurerm_resource_group.main.location
+  address_space       = ["10.20.0.0/16"]
+}</pre>
+    <ul class="chips">
+      <li class="correct"><code>azurerm_resource_group.main.name</code></li>
+      <li><code>"rg-orders-dev"</code> <span class="why">It works, but there's no dependency, so Terraform may try to create the VNet before the group exists.</span></li>
+      <li><code>main.name</code> <span class="why">The resource type is part of the address.</span></li>
+      <li><code>${resource_group}</code> <span class="why">Not HCL reference syntax.</span></li>
+    </ul>
+    <div class="explain">References create <b>implicit dependencies</b>: Terraform creates the group first, and destroys it last.</div>
+  </div>
+</section>
+
+<section class="step" id="s6">
+  <h2>6. Subnets</h2>
+  <pre class="code" data-file="main.tf" data-diff>+resource "azurerm_subnet" "aks_nodes" {
++  name                 = "snet-aks-nodes"
++  resource_group_name  = azurerm_resource_group.main.name
++  virtual_network_name = azurerm_virtual_network.main.name
++  address_prefixes     = ["10.20.0.0/22"]
++}
++
++resource "azurerm_subnet" "private_links" {
++  name                 = "snet-private-links"
++  resource_group_name  = azurerm_resource_group.main.name
++  virtual_network_name = azurerm_virtual_network.main.name
++  address_prefixes     = ["10.20.5.0/27"]
++}</pre>
+  <div class="body"><p>That's the address plan from lesson 0.3, now as code.</p></div>
+</section>
+
+<section class="step" id="s7">
+  <h2>7. Types and expressions</h2>
+  <div class="body">
+    <ul>
+      <li>Strings <code>"…"</code>; numbers; booleans <code>true</code>/<code>false</code>.</li>
+      <li>Lists <code>["1", "2", "3"]</code>; maps <code>{ env = "dev" }</code>.</li>
+      <li>Interpolation: <code>"aks-${var.app}-${var.environment}"</code>.</li>
+      <li>Conditionals: <code>var.environment == "prod" ? "Standard" : "Free"</code>.</li>
+      <li>Functions: <code>lower()</code>, <code>merge()</code>, <code>cidrsubnet("10.20.0.0/16", 6, 0)</code>, and many more.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="step" id="s8">
+  <h2>8. When you need <code>depends_on</code></h2>
+  <div class="body"><p>Explicit <code>depends_on</code> is only for <b>hidden</b> dependencies, where one resource needs another but doesn't reference any of its attributes. A typical example: a resource that only works after a role assignment has been created.</p></div>
+  <div class="check" data-type="mcq">
+    <p class="q">The subnet uses <code>virtual_network_name = azurerm_virtual_network.main.name</code>. Do you need <code>depends_on = [azurerm_virtual_network.main]</code>?</p>
+    <ol class="options">
+      <li>Yes, always list dependencies <span class="why">That's noise; the reference already creates the dependency.</span></li>
+      <li class="correct">No: the reference is already an implicit dependency</li>
+      <li>Only for destroy <span class="why">Implicit dependencies apply to destroy order as well.</span></li>
+      <li>Only in modules <span class="why">Same rule everywhere.</span></li>
+    </ol>
+    <div class="explain">Prefer references. Use <code>depends_on</code> sparingly, with a comment saying why.</div>
+  </div>
+</section>
+
+<section class="step" id="s9">
+  <h2>9. Files and formatting</h2>
+  <div class="body"><p>Terraform reads every <code>.tf</code> file in the folder as one configuration; file names are just for humans. <code>terraform fmt</code> rewrites files in the canonical style; <code>terraform fmt -check</code> fails CI when someone forgot.</p></div>
+</section>
+
+<section class="step" id="s10">
+  <h2>10. Validate</h2>
+  <pre class="output">$ terraform validate
+╷
+│ Error: Reference to undeclared resource
+│
+│   on main.tf line 12, in resource "azurerm_subnet" "aks_nodes":
+│   12:   virtual_network_name = azurerm_virtual_network.mian.name
+│
+│ A managed resource "azurerm_virtual_network" "mian" has not been declared in the root module.
+╵</pre>
+  <div class="body"><p><code>validate</code> checks syntax and references without touching Azure. It's quick enough for every save and every PR.</p></div>
+</section>
+
+<section class="step" id="s11">
+  <h2>11. Tags everywhere</h2>
+  <pre class="code" data-file="main.tf" data-diff>resource "azurerm_resource_group" "main" {
+  name     = "rg-orders-dev"
+  location = "westeurope"
++ tags = {
++   app         = "orders"
++   environment = "dev"
++   owner       = "platform-team"
++ }
+}</pre>
+  <div class="body"><p>Lesson 12.3 moves tags into a <code>local</code> so every resource gets the same set.</p></div>
+</section>
+
+<section class="step" id="s12">
+  <h2>12. Comments</h2>
+  <div class="body"><p><code>#</code> or <code>//</code> for single lines, <code>/* … */</code> for blocks. Explain <i>why</i> (a <code>depends_on</code>, an <code>ignore_changes</code>), not what.</p></div>
+</section>
+
+<section class="step summary" id="s13">
+  <h2>HCL, sorted</h2>
+  <ul>
+    <li>Blocks with labels; arguments <code>name = value</code>.</li>
+    <li><code>terraform { required_providers }</code> with <code>~&gt;</code> constraints; <code>provider "azurerm" { features {} }</code>.</li>
+    <li>References (<code>type.name.attr</code>) create implicit dependencies; <code>depends_on</code> only for hidden ones.</li>
+    <li><code>fmt</code> and <code>validate</code> on every change.</li>
+  </ul>
+</section>
+</article>
+</body>
+</html>

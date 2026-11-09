@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>15.4 · Secrets from Key Vault</title>
+<link rel="stylesheet" href="../content.css">
+</head>
+<body>
+<article class="lesson" data-id="15.4" data-chapter="15">
+<nav class="crumbs"><a href="../index.html">Course</a> / <a href="index.html">Chapter 15</a> / 15.4</nav>
+<header>
+  <p class="kicker">Chapter 15 · Lesson 15.4 · ~12 steps · ~15 min</p>
+  <h1>Secrets from Key Vault</h1>
+  <p class="meta">You'll be able to deliver Key Vault secrets to pods with the Secrets Store CSI driver and workload identity, keep them out of Git entirely, and handle rotation.</p>
+</header>
+
+<section class="step" id="s1">
+  <h2>1. The problem with hand-made Secrets</h2>
+  <div class="body">
+    <p>Lesson 2.7 showed that Kubernetes Secrets are only base64. The bigger problem is the <b>workflow</b>: someone must create them, and the value has to come from somewhere, often a laptop or a pipeline variable.</p>
+    <p>Rotation is manual, and there's no central audit of who read what.</p>
+    <p><b>Azure Key Vault</b> fixes the source: one place, access by identity, audit logs, rotation, and versioning.</p>
+  </div>
+  <aside class="coming" data-set="A">
+    <dl>
+      <dt>Windows/IIS admin</dt><dd>Like moving connection strings out of <code>web.config</code> into a central vault the app reads at start-up, with its own identity.</dd>
+      <dt>Linux admin</dt><dd>Like HashiCorp Vault Agent writing secrets to a tmpfs file for the service.</dd>
+      <dt>Developer (Compose)</dt><dd>Instead of a <code>.env</code> file, secrets appear as files in <code>/mnt/secrets</code> at runtime.</dd>
+      <dt>Other clouds</dt><dd>The same Secrets Store CSI driver works with AWS Secrets Manager and GCP Secret Manager providers.</dd>
+    </dl>
+  </aside>
+</section>
+
+<section class="step" id="s2">
+  <h2>2. How it fits together</h2>
+  <ol>
+    <li>The <b>Key Vault secrets provider</b> add-on installs the Secrets Store CSI driver and the Azure provider on every node.</li>
+    <li>A <b>SecretProviderClass</b> says which vault, which objects, and which identity.</li>
+    <li>The pod mounts a <b>CSI volume</b> referencing that class.</li>
+    <li>When the pod starts, the driver authenticates as the pod's <b>workload identity</b> (lesson 5.6), fetches the secrets, and writes them to a tmpfs mount.</li>
+  </ol>
+  <pre class="code" data-file="terminal">az aks enable-addons -g rg-orders-prod -n aks-orders-prod -a azure-keyvault-secrets-provider \
+  --enable-secret-rotation</pre>
+</section>
+
+<section class="step" id="s3">
+  <h2>3. The SecretProviderClass</h2>
+  <div class="check" data-type="fill">
+    <p class="q">Complete the class so it uses the <code>orders-api</code> workload identity.</p>
+    <pre class="code" data-file="k8s/secrets/secretproviderclass.yaml">apiVersion: secrets-store.csi.x-k8s.io/v1
+kind: SecretProviderClass
+metadata:
+  name: orders-api-kv
+  namespace: orders
+spec:
+  provider: azure
+  parameters:
+    <span class="blank">?</span>: "6c1f2a9e-0000-4b1d-9c55-1a2b3c4d5e6f"
+    keyvaultName: kv-orders-prod
+    tenantId: "72f988bf-0000-41af-91ab-2d7cd011db47"
+    objects: |
+      array:
+        - |
+          objectName: payments-api-key
+          objectType: secret
+        - |
+          objectName: orders-db-password
+          objectType: secret</pre>
+    <ul class="chips">
+      <li class="correct"><code>clientID</code></li>
+      <li><code>userAssignedIdentityID</code> <span class="why">That's for the kubelet or add-on identity mode, not workload identity.</span></li>
+      <li><code>serviceAccount</code> <span class="why">The SA comes from the pod, not the class.</span></li>
+      <li><code>clientSecret</code> <span class="why">The whole point is no secret.</span></li>
+    </ul>
+    <div class="explain">With workload identity, <code>clientID</code> is the managed identity's client ID, the same one annotated on the pod's ServiceAccount.</div>
+  </div>
+</section>
+
+<section class="step" id="s4">
+  <h2>4. Mount it</h2>
+  <pre class="code" data-file="k8s/base/deployment.yaml (pod spec)">serviceAccountName: orders-api            # annotated with the client ID (lesson 5.6)
+containers:
+  - name: api
+    volumeMounts:
+      - name: kv
+        mountPath: /mnt/secrets
+        readOnly: true
+volumes:
+  - name: kv
+    csi:
+      driver: secrets-store.csi.k8s.io
+      readOnly: true
+      volumeAttributes:
+        secretProviderClass: orders-api-kv</pre>
+  <div class="check" data-type="tapline" data-match="secretProviderClass: orders-api-kv">
+    <p class="q">Tap the line that links this volume to the Key Vault configuration.</p>
+    <div class="explain">The <code>secretProviderClass</code> volume attribute must match the class name in the same namespace. The app then reads <code>/mnt/secrets/payments-api-key</code>.</div>
+  </div>
+</section>
+
+<section class="step" id="s5">
+  <h2>5. Diagnose a mount failure</h2>
+  <div class="check" data-type="diagnose">
+    <p class="q">The pod is stuck in ContainerCreating. Why?</p>
+    <pre class="output">Events:
+  Warning  FailedMount  kubelet  MountVolume.SetUp failed for volume "kv" : rpc error: code = Unknown desc = failed to
+  mount secrets store objects for pod orders/orders-api-7d9c5f6b8-2xk9p, err: rpc error: code = Unknown desc = failed
+  to mount objects, error: failed to get objectType:secret, objectName:payments-api-key, objectVersion:: GET
+  https://kv-orders-prod.vault.azure.net/secrets/payments-api-key/: StatusCode=403 -- Original Error:
+  {"error":{"code":"Forbidden","message":"Caller is not authorized to perform action on resource. …
+  Action: 'Microsoft.KeyVault/vaults/secrets/getSecret/action'","innererror":{"code":"ForbiddenByRbac"}}}</pre>
+    <ol class="options">
+      <li>The SecretProviderClass name is wrong <span class="why">The driver found the class and called Key Vault.</span></li>
+      <li class="correct">The managed identity has no Key Vault data-plane role: grant "Key Vault Secrets User" on the vault</li>
+      <li>The secret doesn't exist <span class="why">That would be 404 SecretNotFound.</span></li>
+      <li>Workload identity isn't set up <span class="why">The token exchange worked; the caller is authenticated but not authorised.</span></li>
+    </ol>
+    <div class="explain"><code>ForbiddenByRbac</code> = authentication worked, authorisation didn't. Add the role assignment in IaC (lessons 12.5 and 13.4). An AADSTS error instead would mean the federated credential is wrong.</div>
+  </div>
+</section>
+
+<section class="step" id="s6">
+  <h2>6. Files vs synced Kubernetes Secrets</h2>
+  <div class="body">
+    <p>Mounted files are the default, and the best option: the secret exists only in the pod's tmpfs.</p>
+    <p>If an app needs an <b>env var</b>, or an Ingress needs a TLS Secret, add <code>secretObjects</code> to the class. The driver then also creates a Kubernetes Secret, while at least one pod mounts the volume.</p>
+    <p>That means "Key Vault means no Kubernetes Secret ever exists" is false once you use sync, so RBAC on Secrets still matters.</p>
+  </div>
+  <pre class="code" data-file="(SecretProviderClass spec excerpt)">secretObjects:
+  - secretName: orders-db
+    type: Opaque
+    data:
+      - objectName: orders-db-password
+        key: password</pre>
+</section>
+
+<section class="step" id="s7">
+  <h2>7. Rotation</h2>
+  <div class="body">
+    <p>With <code>--enable-secret-rotation</code>, the driver re-reads Key Vault periodically (every 2 minutes by default) and updates the mounted files, and synced Secrets.</p>
+    <ul>
+      <li>Apps must <b>re-read the file</b> to see the new value.</li>
+      <li>Env vars from a synced Secret only change after a restart (lesson 2.6).</li>
+    </ul>
+  </div>
+</section>
+
+<section class="step" id="s8">
+  <h2>8. Even better: no secret at all</h2>
+  <div class="body">
+    <p>Many "secrets" are only there to authenticate to Azure services. With workload identity, the app can use <b>Entra ID auth</b> directly, so there's no password to store or rotate:</p>
+    <ul>
+      <li>Azure SQL and PostgreSQL with Entra ID users;</li>
+      <li>Storage, Service Bus and Cosmos DB with RBAC.</li>
+    </ul>
+    <p>Keep Key Vault for the secrets you can't remove, such as third-party API keys.</p>
+  </div>
+</section>
+
+<section class="step" id="s9">
+  <h2>9. Alternatives</h2>
+  <ul>
+    <li>The <b>SDK directly</b> (<code>SecretClient</code> + <code>DefaultAzureCredential</code>, lesson 5.6): no driver; the app fetches what it needs.</li>
+    <li><b>Azure App Configuration</b> with Key Vault references, for config and feature flags in one place.</li>
+    <li><b>External Secrets Operator</b> (community): syncs Key Vault to Kubernetes Secrets.</li>
+  </ul>
+</section>
+
+<section class="step" id="s10">
+  <h2>10. Lock the vault down</h2>
+  <ul>
+    <li>RBAC permission model; one vault per app and environment (or tightly scoped roles).</li>
+    <li>A private endpoint and public access disabled, so the AKS VNet reaches it privately.</li>
+    <li>Soft delete and purge protection on; diagnostic logs to Log Analytics.</li>
+  </ul>
+</section>
+
+<section class="step" id="s11">
+  <h2>11. The full Contoso chain</h2>
+  <div class="body"><p>Key Vault secret ← "Key Vault Secrets User" ← <code>id-orders-api</code> ← federated credential (<code>system:serviceaccount:orders:orders-api</code>) ← ServiceAccount annotation ← pod label → CSI volume → <code>/mnt/secrets</code>. No secret value in Git, in pipeline variables, or in any manifest.</p></div>
+</section>
+
+<section class="step summary" id="s12">
+  <h2>Key Vault secrets, sorted</h2>
+  <ul>
+    <li>Add-on + SecretProviderClass (<code>clientID</code>, <code>keyvaultName</code>, <code>tenantId</code>, <code>objects</code>) + CSI volume.</li>
+    <li>Authenticated by workload identity; 403 ForbiddenByRbac = a missing Key Vault role.</li>
+    <li>Prefer mounted files; <code>secretObjects</code> sync creates a real Kubernetes Secret.</li>
+    <li>Rotation updates files; best of all, remove secrets with Entra ID auth.</li>
+  </ul>
+</section>
+</article>
+</body>
+</html>

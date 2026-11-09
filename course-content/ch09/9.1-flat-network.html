@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>9.1 · The flat network &amp; isolation</title>
+<link rel="stylesheet" href="../content.css">
+</head>
+<body>
+<article class="lesson" data-id="9.1" data-chapter="9">
+<nav class="crumbs"><a href="../index.html">Course</a> / <a href="index.html">Chapter 9</a> / 9.1</nav>
+<header>
+  <p class="kicker">Chapter 9 · Lesson 9.1 · ~10 steps · ~12 min</p>
+  <h1>The flat network &amp; isolation</h1>
+  <p class="meta">You'll be able to explain Kubernetes' default "anything can talk to anything" network, and exactly when a pod becomes isolated by a NetworkPolicy.</p>
+</header>
+
+<section class="step" id="s1">
+  <h2>1. Everything can reach everything</h2>
+  <div class="body">
+    <p>Kubernetes' network model says every pod can reach every other pod, across nodes and namespaces, without NAT. That makes things easy to get working.</p>
+    <p>It also means a compromised <code>web</code> pod can connect straight to the database, the payments service, or anything else. Namespaces don't change that (lesson 8.1).</p>
+  </div>
+  <div class="widget" data-widget="netpol-eval">A connectivity matrix for three namespaces:
+    <ul>
+      <li><code>web</code> (pod <code>web</code>)</li>
+      <li><code>orders</code> (pods <code>orders-api</code>, <code>orders-worker</code>)</li>
+      <li><code>db</code> (pod <code>postgres</code>)</li>
+    </ul>
+    Every source → destination cell shows ✓ (allowed) or ✗ (denied) for a chosen port, plus a DNS column. It starts all green. A policy editor beside it updates the matrix live as YAML is added. The same widget is used throughout this chapter.</div>
+  <aside class="coming" data-set="A">
+    <dl>
+      <dt>Windows/IIS admin</dt><dd>It's like every server being on one flat VLAN with Windows Firewall turned off. NetworkPolicies are the firewall rules you add back.</dd>
+      <dt>Linux admin</dt><dd>It's like iptables with a default ACCEPT policy; NetworkPolicies are the rules that switch a pod to "default DROP plus allows".</dd>
+      <dt>Developer (Compose)</dt><dd>Compose services on one network can all reach each other too. Same problem, but at cluster scale.</dd>
+      <dt>Other clouds</dt><dd>Like security groups on every instance, except they're declared per pod label, and only allow.</dd>
+    </dl>
+  </aside>
+</section>
+
+<section class="step" id="s2">
+  <h2>2. A NetworkPolicy, in one sentence</h2>
+  <div class="body">
+    <p>A <b>NetworkPolicy</b> selects some pods (with <code>podSelector</code>, in its namespace) and lists traffic that's <b>allowed</b> to or from them. It has no "deny" rules at all.</p>
+    <p>It needs a policy engine to enforce it (lesson 9.5). Without one, policies are accepted and silently ignored.</p>
+  </div>
+  <pre class="code" data-file="allow-web-to-orders.yaml">apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-web
+  namespace: orders
+spec:
+  podSelector:
+    matchLabels:
+      app: orders-api
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: web
+      ports:
+        - port: 8080</pre>
+</section>
+
+<section class="step" id="s3">
+  <h2>3. Isolation: the key idea</h2>
+  <div class="body">
+    <p>A pod starts <b>non-isolated</b>: all traffic is allowed.</p>
+    <p>The moment <b>any</b> policy selects it with <code>Ingress</code> in <code>policyTypes</code>, the pod becomes <b>isolated for ingress</b>. From then on, only traffic that some policy explicitly allows can reach it. Everything else is dropped.</p>
+    <p>Egress works the same way, independently.</p>
+  </div>
+</section>
+
+<section class="step" id="s4">
+  <h2>4. Predict the side effect</h2>
+  <div class="check" data-type="mcq">
+    <p class="q">Starting from the open cluster, you apply only the <code>allow-web</code> policy above. Can <code>orders-worker</code> or a <code>db</code> pod still connect to <code>orders-api:8080</code>?</p>
+    <ol class="options">
+      <li>Yes; the policy only <i>adds</i> an allow for web <span class="why">It adds an allow, <i>and</i> it makes orders-api isolated, so everything not allowed is now denied.</span></li>
+      <li class="correct">No. <code>orders-api</code> is now isolated for ingress; only traffic from namespace <code>web</code> on port 8080 is allowed</li>
+      <li>Only <code>orders-worker</code>, because it's in the same namespace <span class="why">Same-namespace traffic gets no special treatment.</span></li>
+      <li>The policy fails to apply <span class="why">It's valid.</span></li>
+    </ol>
+    <div class="explain">A single allow policy is also an implicit deny for everything else to the selected pods. That surprises many people the first time.</div>
+  </div>
+</section>
+
+<section class="step" id="s5">
+  <h2>5. Policies are additive</h2>
+  <div class="body">
+    <p>If several policies select the same pod, their allows are <b>added together</b> (a union). There's no order and no priority, and no policy can ever block something another allows.</p>
+    <p>So the safe pattern is: deny everything (lesson 9.2), then add small, focused allow policies, one per flow.</p>
+  </div>
+</section>
+
+<section class="step" id="s6">
+  <h2>6. Both ends matter</h2>
+  <div class="body">
+    <p>A connection from A to B must be allowed by:</p>
+    <ul>
+      <li>A's <b>egress</b> rules, if A is isolated for egress;</li>
+      <li>B's <b>ingress</b> rules, if B is isolated for ingress.</li>
+    </ul>
+    <p>With default-deny everywhere, every flow needs <b>two</b> allows: one egress on the client side and one ingress on the server side.</p>
+    <p>Reply traffic for an allowed connection is handled automatically. Policies are stateful.</p>
+  </div>
+</section>
+
+<section class="step" id="s7">
+  <h2>7. What policies select</h2>
+  <div class="body">
+    <ul>
+      <li>Policies apply to <b>pods</b> (by labels) in their own namespace. Services don't matter; traffic is matched after Service translation to pod IPs and ports.</li>
+      <li>So <code>ports</code> means the <b>pod's</b> port (8080), not the Service port (80).</li>
+      <li>Node and host-network traffic, and traffic from outside the cluster, are handled per engine. Use <code>ipBlock</code> for external ranges.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="step" id="s8">
+  <h2>8. The target for Contoso</h2>
+  <table>
+    <tr><th>From → To</th><th>Allowed?</th></tr>
+    <tr><td><code>web</code> → <code>orders-api:8080</code></td><td>✓</td></tr>
+    <tr><td><code>orders-api</code> → <code>postgres:5432</code></td><td>✓</td></tr>
+    <tr><td><code>orders-worker</code> → <code>postgres:5432</code></td><td>✓</td></tr>
+    <tr><td>Every pod → DNS (<code>kube-dns</code> 53)</td><td>✓</td></tr>
+    <tr><td>The gateway → <code>web:8080</code>, <code>orders-api:8080</code></td><td>✓</td></tr>
+    <tr><td>Everything else (e.g. <code>web</code> → <code>postgres</code>)</td><td>✗</td></tr>
+  </table>
+  <div class="body"><p>That's the matrix you'll build in this chapter, and the one the lab grades you against.</p></div>
+</section>
+
+<section class="step" id="s9">
+  <h2>9. Zero trust, briefly</h2>
+  <div class="body">
+    <p>"Zero trust" means not trusting traffic because of where it comes from (inside the cluster) and allowing only what's needed, verified every time.</p>
+    <p>NetworkPolicies are the network layer of that. Identity-based controls, such as a service mesh's mTLS, and app-level auth complete it.</p>
+  </div>
+</section>
+
+<section class="step summary" id="s10">
+  <h2>Isolation, sorted</h2>
+  <ul>
+    <li>By default every pod can reach every pod.</li>
+    <li>A pod selected by a policy with <code>Ingress</code> (or <code>Egress</code>) becomes isolated in that direction: only listed allows pass.</li>
+    <li>Policies only allow, and they add up; there are no deny rules and no ordering.</li>
+    <li>Both ends must allow a flow; ports are pod ports.</li>
+  </ul>
+</section>
+</article>
+</body>
+</html>

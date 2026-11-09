@@ -1,0 +1,231 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>9.3 · Allow rules &amp; selector semantics</title>
+<link rel="stylesheet" href="../content.css">
+</head>
+<body>
+<article class="lesson" data-id="9.3" data-chapter="9">
+<nav class="crumbs"><a href="../index.html">Course</a> / <a href="index.html">Chapter 9</a> / 9.3</nav>
+<header>
+  <p class="kicker">Chapter 9 · Lesson 9.3 · ~13 steps · ~16 min</p>
+  <h1>Allow rules &amp; selector semantics</h1>
+  <p class="meta">You'll be able to write precise allow rules with pod and namespace selectors and ports, and avoid the single-dash mistake that opens far more than you meant.</p>
+</header>
+
+<section class="step" id="s1">
+  <h2>1. Anatomy of an ingress rule</h2>
+  <div class="body">
+    <p>Each item in <code>ingress</code> is one allow rule. It has two parts:</p>
+    <ul>
+      <li><code>from</code>: a list of <b>peers</b>, each a <code>podSelector</code>, a <code>namespaceSelector</code>, both, or an <code>ipBlock</code>.</li>
+      <li><code>ports</code>: a list of ports and protocols on the <b>destination pod</b>.</li>
+    </ul>
+    <p>Traffic is allowed if it matches <b>any</b> peer in <code>from</code> <b>and</b> any entry in <code>ports</code>.</p>
+  </div>
+  <aside class="coming" data-set="A">
+    <dl>
+      <dt>Windows/IIS admin</dt><dd>Like a firewall rule with a "remote addresses" list and a "local ports" list, except remotes are chosen by labels, not IPs.</dd>
+      <dt>Linux admin</dt><dd>Each rule is like <code>-s &lt;set&gt; --dport &lt;port&gt; -j ACCEPT</code>, where the set is computed from labels.</dd>
+      <dt>Developer (Compose)</dt><dd>Think "who may call my service, on which port", declared next to your Deployment.</dd>
+      <dt>Other clouds</dt><dd>Like security-group rules that reference other security groups instead of CIDRs.</dd>
+    </dl>
+  </aside>
+</section>
+
+<section class="step" id="s2">
+  <h2>2. Pods in the same namespace</h2>
+  <div class="body"><p>A <code>podSelector</code> on its own, inside <code>from</code>, matches pods in the <b>policy's own namespace</b>.</p></div>
+  <pre class="code" data-file="allow-worker-to-api.yaml (spec)">podSelector:
+  matchLabels: { app: orders-api }
+policyTypes: [Ingress]
+ingress:
+  - from:
+      - podSelector:
+          matchLabels: { app: orders-worker }
+    ports:
+      - protocol: TCP
+        port: 8080</pre>
+</section>
+
+<section class="step" id="s3">
+  <h2>3. Pods in another namespace</h2>
+  <div class="body">
+    <p>A <code>namespaceSelector</code> on its own matches <b>all pods</b> in the matching namespaces.</p>
+    <p>Every namespace automatically carries the label <code>kubernetes.io/metadata.name: &lt;name&gt;</code>, so you can select a namespace by name reliably.</p>
+  </div>
+  <pre class="code" data-file="(from)">from:
+  - namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: web</pre>
+</section>
+
+<section class="step" id="s4">
+  <h2>4. AND vs OR: the most important detail</h2>
+  <div class="body">
+    <p>Inside <code>from</code>, the YAML dashes decide the meaning:</p>
+    <ul>
+      <li><b>One list item</b> containing both <code>namespaceSelector</code> and <code>podSelector</code> = <b>AND</b>: pods with this label <i>in</i> namespaces with that label.</li>
+      <li><b>Two list items</b>, one for each = <b>OR</b>: <i>any</i> pod in those namespaces, <i>or</i> pods with that label in the policy's own namespace.</li>
+    </ul>
+    <p>One extra dash changes "only the web pods in namespace web" into "everything in namespace web, plus some local pods".</p>
+  </div>
+  <table>
+    <tr><th>AND (one item)</th><th>OR (two items)</th></tr>
+    <tr><td><pre>from:
+  - namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: web
+    podSelector:
+      matchLabels:
+        app: web</pre></td><td><pre>from:
+  - namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: web
+  - podSelector:
+      matchLabels:
+        app: web</pre></td></tr>
+  </table>
+</section>
+
+<section class="step" id="s5">
+  <h2>5. Find the dash</h2>
+  <div class="check" data-type="tapline" data-match="      - podSelector:">
+    <p class="q">This policy was meant to allow only <code>app=web</code> pods from namespace <code>web</code>. Tap the line that turned it into an OR.</p>
+    <pre class="code" data-file="allow-web.yaml (ingress)">ingress:
+  - from:
+      - namespaceSelector:
+          matchLabels:
+            kubernetes.io/metadata.name: web
+      - podSelector:
+          matchLabels:
+            app: web
+    ports:
+      - port: 8080</pre>
+    <div class="explain">The <code>- </code> before <code>podSelector</code> starts a second peer. Remove the dash and indent <code>podSelector</code> to line up with <code>namespaceSelector</code>, making one peer with both selectors (AND).</div>
+  </div>
+</section>
+
+<section class="step" id="s6">
+  <h2>6. Write the precise rule</h2>
+  <div class="check" data-type="custom">
+    <p class="q">With default-deny already in <code>orders</code>, allow <b>only</b> <code>app=web</code> pods in namespace <code>web</code> to reach <code>orders-api</code> on TCP 8080.</p>
+    <div class="widget" data-widget="netpol-eval">Live matrix. Success when <code>web/web → orders/orders-api:8080</code> is ✓, while a test pod <code>web/debug</code> (no <code>app=web</code> label), <code>orders/orders-worker</code> and <code>db/postgres</code> → <code>orders-api</code> are all ✗, and <code>web → orders-api:9090</code> is ✗.</div>
+    <details class="solution"><summary>Solution</summary>
+<pre>apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-web-to-orders-api
+  namespace: orders
+spec:
+  podSelector:
+    matchLabels: { app: orders-api }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: web }
+          podSelector:
+            matchLabels: { app: web }
+      ports:
+        - protocol: TCP
+          port: 8080</pre></details>
+    <div class="explain">The AND form plus a port gives exactly one flow. Remember that <code>web</code>'s namespace also has default-deny egress, so it needs a matching egress allow (next lesson).</div>
+  </div>
+</section>
+
+<section class="step" id="s7">
+  <h2>7. Ports</h2>
+  <div class="body">
+    <ul>
+      <li><code>port</code> can be a number or a <b>named</b> container port (<code>http</code>).</li>
+      <li><code>protocol</code> defaults to TCP; add UDP explicitly when needed (DNS uses both).</li>
+      <li><code>endPort</code> allows a range (<code>port: 30000</code>, <code>endPort: 30100</code>).</li>
+      <li>No <code>ports</code> at all means all ports.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="step" id="s8">
+  <h2>8. ipBlock for things outside the cluster</h2>
+  <div class="body">
+    <p><code>ipBlock</code> matches IP ranges, with optional <code>except</code> holes. Use it for traffic to or from things that aren't pods: a VNet subnet, a database's private endpoint, an on-premises range.</p>
+    <p>Don't use it for pod IPs; they change. Use selectors.</p>
+  </div>
+  <pre class="code" data-file="(egress to the database private endpoint subnet)">egress:
+  - to:
+      - ipBlock:
+          cidr: 10.20.5.0/27
+    ports:
+      - port: 5432</pre>
+</section>
+
+<section class="step" id="s9">
+  <h2>9. Which flows are open?</h2>
+  <div class="check" data-type="multi">
+    <p class="q">Namespace <code>orders</code> has default-deny <b>Ingress only</b> (egress is open everywhere), plus this policy. Which connections to <code>orders-api:8080</code> succeed?</p>
+    <pre class="code" data-file="policy (spec)">podSelector:
+  matchLabels: { app: orders-api }
+policyTypes: [Ingress]
+ingress:
+  - from:
+      - namespaceSelector:
+          matchLabels: { kubernetes.io/metadata.name: web }
+      - podSelector:
+          matchLabels: { app: orders-worker }
+    ports:
+      - port: 8080</pre>
+    <ol class="options">
+      <li class="correct"><code>web/web</code> → orders-api</li>
+      <li class="correct"><code>web/debug</code> (any pod in web) → orders-api</li>
+      <li class="correct"><code>orders/orders-worker</code> → orders-api</li>
+      <li><code>db/postgres</code> → orders-api <span class="why">Neither peer matches.</span></li>
+      <li><code>payments/orders-worker</code> → orders-api <span class="why">A podSelector alone only matches pods in the policy's own namespace (orders).</span></li>
+    </ol>
+    <div class="explain">Two peers = OR: anything in namespace <code>web</code>, or <code>orders-worker</code> in <code>orders</code>.</div>
+  </div>
+</section>
+
+<section class="step" id="s10">
+  <h2>10. Label your namespaces deliberately</h2>
+  <div class="body">
+    <p>Selecting by <code>kubernetes.io/metadata.name</code> is precise. Selecting by your own labels (<code>team: shop</code>) is flexible, but anyone who can label namespaces can join the group.</p>
+    <p>Keep namespace labels under platform-team control; that's another reason the platform team creates namespaces.</p>
+  </div>
+</section>
+
+<section class="step" id="s11">
+  <h2>11. Let the gateway in</h2>
+  <div class="body"><p>Traffic from the gateway (Chapter 8) must be allowed too. For in-cluster gateways, select the gateway's namespace and pods. For Application Gateway for Containers, allow its subnet with <code>ipBlock</code>.</p></div>
+  <pre class="code" data-file="(from)">from:
+  - namespaceSelector:
+      matchLabels: { kubernetes.io/metadata.name: gateway-infra }</pre>
+</section>
+
+<section class="step" id="s12">
+  <h2>12. One policy per flow</h2>
+  <div class="body">
+    <p>Contoso writes one small policy per allowed flow, named after it:</p>
+    <ul>
+      <li><code>allow-web-to-orders-api</code></li>
+      <li><code>allow-orders-api-to-postgres</code></li>
+      <li><code>allow-dns</code></li>
+    </ul>
+    <p>Each is easy to review, and policies being additive means they combine cleanly.</p>
+  </div>
+</section>
+
+<section class="step summary" id="s13">
+  <h2>Allow rules, sorted</h2>
+  <ul>
+    <li><code>from</code> peers OR together; <code>ports</code> restrict the destination pod's ports.</li>
+    <li>One peer with namespaceSelector + podSelector = AND; separate peers = OR.</li>
+    <li>A podSelector alone means the policy's own namespace; use <code>kubernetes.io/metadata.name</code> for exact namespaces.</li>
+    <li><code>ipBlock</code> for non-pod ranges; one small policy per flow.</li>
+  </ul>
+</section>
+</article>
+</body>
+</html>

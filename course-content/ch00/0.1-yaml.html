@@ -1,0 +1,208 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>0.1 · YAML in 10 minutes</title>
+<link rel="stylesheet" href="../content.css">
+</head>
+<body>
+<article class="lesson" data-id="0.1" data-chapter="0">
+<nav class="crumbs"><a href="../index.html">Course</a> / <a href="index.html">Chapter 0</a> / 0.1</nav>
+<header>
+  <p class="kicker">Chapter 0 · Lesson 0.1 · ~8 steps · ~10 min</p>
+  <h1>YAML in 10 minutes</h1>
+  <p class="meta">You'll be able to read and write the YAML used by Kubernetes manifests and Azure Pipelines, and avoid the four mistakes that break most files.</p>
+</header>
+
+<section class="step" id="s1">
+  <h2>1. Why YAML is everywhere in this course</h2>
+  <div class="body">
+    <p>Almost every file you'll touch in this course is YAML:</p>
+    <ul>
+      <li>Kubernetes manifests</li>
+      <li>Azure Pipelines definitions</li>
+      <li>Helm values</li>
+      <li>Kustomize overlays</li>
+    </ul>
+    <p>YAML is a way of writing <b>data</b>: names, numbers, lists and nested settings. It doesn't run anything.</p>
+    <p>A tool reads the file and turns it into a structure. Kubernetes turns it into an object, and Azure Pipelines turns it into a run plan. Learning YAML is really learning to see that structure.</p>
+  </div>
+  <pre class="code" data-file="hello.yaml"># a comment starts with #
+name: orders-api
+replicas: 3
+public: false</pre>
+  <aside class="coming" data-set="A">
+    <dl>
+      <dt>Windows/IIS admin</dt><dd>Think of it as a <code>web.config</code> or <code>.ini</code> file, without the angle brackets. Indentation replaces the closing tags.</dd>
+      <dt>Linux admin</dt><dd>It's like a config file in <code>/etc</code>, but with real nesting and lists. Netplan and Ansible use the same format.</dd>
+      <dt>Developer (Compose)</dt><dd>You already write YAML: <code>docker-compose.yml</code> is YAML. Everything here applies to it too.</dd>
+      <dt>Other clouds</dt><dd>CloudFormation and GitHub Actions use YAML. Same rules, different keys.</dd>
+    </dl>
+  </aside>
+</section>
+
+<section class="step" id="s2">
+  <h2>2. Maps: key, colon, space, value</h2>
+  <div class="body">
+    <p>The basic unit is a <b>map</b>: a set of <code>key: value</code> pairs. The space after the colon is required.</p>
+    <p>To nest a map inside a key, put nothing after the colon and indent the children underneath. Indent with <b>spaces only, never tabs</b>; two spaces per level is the convention.</p>
+    <p>Every line at the same indentation belongs to the same parent.</p>
+  </div>
+  <pre class="code" data-file="pod.yaml">metadata:
+  name: orders-api
+  labels:
+    app: orders
+    tier: backend</pre>
+  <div class="widget" data-widget="yaml-tree">A live YAML → tree view. The left pane is editable YAML; the right pane draws the parsed structure (maps as boxes, lists as numbered items, scalars with their type: string, number, boolean, null). Parse errors are flagged inline on the offending line. Starts with the file above.</div>
+  <aside class="more">
+    <p>Indentation amount doesn't matter to the parser, as long as siblings line up exactly. Two spaces is what <code>kubectl</code>, Helm and Azure DevOps all generate, so stick with it.</p>
+  </aside>
+</section>
+
+<section class="step" id="s3">
+  <h2>3. Spot the broken indentation</h2>
+  <div class="body"><p>One extra or missing space moves a key to a different parent, or makes the file invalid.</p></div>
+  <pre class="code" data-file="pod.yaml">metadata:
+  name: orders-api
+  labels:
+    app: orders
+     tier: backend</pre>
+  <div class="check" data-type="tapline" data-match="     tier: backend">
+    <p class="q">Tap the line that breaks this file.</p>
+    <div class="explain"><code>tier</code> is indented five spaces, but its sibling <code>app</code> uses four. Siblings must line up exactly, so the parser fails with "mapping values are not allowed here" or similar.</div>
+  </div>
+</section>
+
+<section class="step" id="s4">
+  <h2>4. Lists, and lists of maps</h2>
+  <div class="body">
+    <p>A <b>list</b> (also called a sequence) is a set of items, each starting with <code>- </code> (a dash and a space).</p>
+    <p>The pattern you'll see everywhere is a <b>list of maps</b>. Each <code>- name: …</code> starts a new item, and the keys under it, indented to line up with <code>name</code>, belong to that item.</p>
+  </div>
+  <pre class="code" data-file="deployment.yaml">ports:
+  - 80
+  - 443
+containers:
+  - name: api
+    image: contosoacr.azurecr.io/orders-api:1.4.2
+  - name: log-shipper
+    image: fluent/fluent-bit:3.1</pre>
+  <div class="widget" data-widget="yaml-tree">Same tree view, now showing <code>containers</code> as a list with two items, each item a map with <code>name</code> and <code>image</code>.</div>
+  <div class="check" data-type="fill">
+    <p class="q">Complete the file so that <code>sidecar</code> becomes a <b>second container</b>, not a key inside the first one.</p>
+    <pre class="code" data-file="deployment.yaml">containers:
+  - name: api
+    image: orders-api:1.4.2
+  <span class="blank">?</span> name: sidecar
+    image: fluent-bit:3.1</pre>
+    <ul class="chips">
+      <li class="correct"><code>-</code></li>
+      <li><code>*</code> <span class="why">YAML lists use a dash, not an asterisk. <code>*</code> starts an alias.</span></li>
+      <li><code>+</code> <span class="why">YAML has no <code>+</code> list marker.</span></li>
+      <li><code>:</code> <span class="why">A colon separates a key from its value; it doesn't start an item.</span></li>
+    </ul>
+    <div class="explain">The dash starts a new list item. Without it, <code>name: sidecar</code> would collide with the first item's <code>name</code>.</div>
+  </div>
+</section>
+
+<section class="step" id="s5">
+  <h2>5. Strings, numbers and the quoting traps</h2>
+  <div class="body">
+    <p>YAML guesses each value's type. Most of the time that's what you want; sometimes it isn't.</p>
+    <ul>
+      <li><code>replicas: 3</code> is a number.</li>
+      <li><code>version: 1.20</code> is the number <b>1.2</b>. The trailing zero is lost.</li>
+      <li><code>enabled: yes</code>, <code>on</code> and <code>no</code> become <b>booleans</b> in the YAML 1.1 rules that Kubernetes' YAML library still follows.</li>
+      <li><code>zip: 01234</code> may be read as a number and lose its leading zero.</li>
+    </ul>
+    <p>When a value must stay text, <b>quote it</b>: <code>"1.20"</code>, <code>"yes"</code>, <code>"01234"</code>.</p>
+    <p>Environment variable values in Kubernetes must be strings, so <code>value: "8080"</code> needs the quotes.</p>
+  </div>
+  <pre class="code" data-file="values.yaml">kubernetesVersion: "1.30"   # quoted: stays "1.30"
+replicas: 3                 # number
+featureFlag: "on"           # quoted: stays the text "on"
+env:
+  - name: PORT
+    value: "8080"           # env values must be strings</pre>
+  <div class="check" data-type="mcq">
+    <p class="q">What does <code>version: 1.20</code> parse as?</p>
+    <ol class="options">
+      <li>The string <code>"1.20"</code> <span class="why">Only if it's quoted. Unquoted, YAML reads it as a number.</span></li>
+      <li class="correct">The number <code>1.2</code></li>
+      <li>The number <code>1.20</code>, kept exactly <span class="why">Numbers don't keep trailing zeros, so 1.20 and 1.2 are the same value.</span></li>
+      <li>A parse error <span class="why">It's valid YAML. That's what makes the bug easy to miss.</span></li>
+    </ol>
+    <div class="explain">Unquoted <code>1.20</code> is a floating-point number, which is stored as <code>1.2</code>. This is how a Kubernetes version "1.20" silently becomes "1.2". Quote version strings.</div>
+  </div>
+</section>
+
+<section class="step" id="s6">
+  <h2>6. Multi-line strings: <code>|</code> and <code>&gt;</code></h2>
+  <div class="body">
+    <p>Scripts and certificates often span several lines. YAML has two block styles:</p>
+    <ul>
+      <li><code>|</code> (literal) <b>keeps line breaks</b>. Use it for scripts, config files and certificates.</li>
+      <li><code>&gt;</code> (folded) <b>joins lines with spaces</b>. Use it for long prose that you want to wrap in the file.</li>
+    </ul>
+    <p>The text block is indented under its key. You'll use <code>|</code> constantly in pipeline <code>script:</code> steps and ConfigMaps.</p>
+  </div>
+  <pre class="code" data-file="azure-pipelines.yml">steps:
+  - script: |
+      echo "Building $(Build.BuildId)"
+      docker build -t orders-api .
+    displayName: Build image
+description: >
+  This text is folded
+  into one line.</pre>
+  <aside class="more"><p>Add <code>-</code> after the indicator (<code>|-</code>) to drop the final newline, or <code>+</code> to keep all trailing newlines. You'll rarely need either.</p></aside>
+</section>
+
+<section class="step" id="s7">
+  <h2>7. Comments and several documents in one file</h2>
+  <div class="body">
+    <p>A <code>#</code> starts a comment that runs to the end of the line. Inside quotes it's just a character.</p>
+    <p>A line containing only <code>---</code> separates <b>documents</b>. Kubernetes uses this to put several objects in one file, for example a Deployment and its Service. <code>kubectl apply -f</code> applies each document as a separate object.</p>
+  </div>
+  <pre class="code" data-file="app.yaml">apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: orders-api   # the Deployment
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: orders-api   # the Service, a second document</pre>
+  <div class="check" data-type="custom">
+    <p class="q">Fix the file in the tree view until it parses.</p>
+    <div class="widget" data-widget="yaml-tree">Starts with a broken file: a tab used for indentation on line 3, a missing space after a colon (<code>name:web</code>) on line 4, and a list item missing its dash. The step completes when the file parses with no errors and the tree shows <code>spec.containers</code> as a list of two maps.</div>
+    <pre class="start" data-file="broken.yaml">spec:
+  containers:
+	- name: api
+    image:web
+    name: sidecar
+    image: fluent-bit:3.1</pre>
+    <details class="solution"><summary>Solution</summary>
+<pre>spec:
+  containers:
+    - name: api
+      image: web
+    - name: sidecar
+      image: fluent-bit:3.1</pre></details>
+    <div class="explain">Tabs are never allowed for indentation. <code>key:value</code> without a space is read as one string, not a key and value. And every list item needs its own dash.</div>
+  </div>
+</section>
+
+<section class="step summary" id="s8">
+  <h2>YAML, sorted</h2>
+  <ul>
+    <li>Maps are <code>key: value</code>, with a space after the colon. Nesting is done by indentation with spaces only.</li>
+    <li>Lists use <code>- </code>. The <code>- name:</code> pattern is a list of maps.</li>
+    <li>Quote anything that must stay text: versions, <code>"yes"</code>/<code>"on"</code>, leading zeros, and env values.</li>
+    <li>Use <code>|</code> to keep line breaks (scripts) and <code>&gt;</code> to fold them (prose).</li>
+    <li><code>---</code> separates documents; <code>#</code> starts a comment.</li>
+  </ul>
+</section>
+</article>
+</body>
+</html>

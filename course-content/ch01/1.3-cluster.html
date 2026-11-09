@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>1.3 · The cluster: control plane &amp; nodes</title>
+<link rel="stylesheet" href="../content.css">
+</head>
+<body>
+<article class="lesson" data-id="1.3" data-chapter="1">
+<nav class="crumbs"><a href="../index.html">Course</a> / <a href="index.html">Chapter 1</a> / 1.3</nav>
+<header>
+  <p class="kicker">Chapter 1 · Lesson 1.3 · ~12 steps · ~15 min</p>
+  <h1>The cluster: control plane &amp; nodes</h1>
+  <p class="meta">You'll be able to name every component of a Kubernetes cluster, say what each one does, and trace a <code>kubectl apply</code> all the way to a running container.</p>
+</header>
+
+<section class="step" id="s1">
+  <h2>1. Two halves</h2>
+  <div class="body">
+    <p>A Kubernetes cluster has two halves:</p>
+    <ul>
+      <li>The <b>control plane</b> is the brain. It stores what you asked for, decides where things run, and keeps checking that reality matches.</li>
+      <li>The <b>nodes</b> (worker machines) are the muscle. They run your containers.</li>
+    </ul>
+    <p>You almost never talk to the nodes directly. You talk to the control plane, and it talks to the nodes.</p>
+  </div>
+  <div class="widget" data-widget="cluster-diagram">A clickable diagram. The top box is the control plane: kube-apiserver, etcd, kube-scheduler, kube-controller-manager and cloud-controller-manager. Below it are three nodes, each with kubelet, kube-proxy, containerd and some pods. Clicking a component highlights it and opens its one-line job description; arrows show who talks to whom. Every arrow goes through the API server.</div>
+  <aside class="coming" data-set="A">
+    <dl>
+      <dt>Windows/IIS admin</dt><dd>A loose analogy: the control plane is like System Center or a domain controller, the central source of truth. The nodes are the member servers that do the work.</dd>
+      <dt>Linux admin</dt><dd>Every component is a normal Linux process or container. On self-built clusters you can <code>ps</code> them all; on AKS the control plane is hidden.</dd>
+      <dt>Developer (Compose)</dt><dd>Compose has one engine on one host. Kubernetes splits that job into an API, a database, a placement engine and an agent on every machine.</dd>
+      <dt>Other clouds</dt><dd>Same architecture as EKS and GKE: the provider runs the control plane, and you see only the nodes.</dd>
+    </dl>
+  </aside>
+</section>
+
+<section class="step" id="s2">
+  <h2>2. kube-apiserver: the front door</h2>
+  <div class="body">
+    <p>The <b>API server</b> is the only component everyone talks to: <code>kubectl</code>, pipelines, the other control-plane components and every node.</p>
+    <p>For every request it:</p>
+    <ul>
+      <li>checks <b>who you are</b> (authentication);</li>
+      <li>checks <b>whether you're allowed</b> (authorisation, RBAC);</li>
+      <li>validates the object;</li>
+      <li>stores it.</li>
+    </ul>
+    <p>It's a REST API: <code>kubectl get pods</code> is really an HTTPS <code>GET /api/v1/namespaces/default/pods</code>.</p>
+  </div>
+</section>
+
+<section class="step" id="s3">
+  <h2>3. etcd: the cluster's memory</h2>
+  <div class="body">
+    <p><b>etcd</b> is a distributed key-value database that holds every object in the cluster: Deployments, Pods, Secrets, everything. Only the API server reads and writes it.</p>
+    <p>If etcd is lost without a backup, the cluster forgets everything it was supposed to run. On AKS, Azure runs and backs up etcd for you.</p>
+  </div>
+</section>
+
+<section class="step" id="s4">
+  <h2>4. kube-scheduler: choosing a node</h2>
+  <div class="body">
+    <p>When a new pod has no node yet, the <b>scheduler</b> picks one. It filters out nodes that can't fit the pod (not enough CPU or memory, wrong labels, taints). Then it scores the rest and writes its choice back to the API server.</p>
+    <p>The scheduler only <i>decides</i>. It doesn't start anything.</p>
+  </div>
+</section>
+
+<section class="step" id="s5">
+  <h2>5. kube-controller-manager and cloud-controller-manager</h2>
+  <div class="body">
+    <p>The <b>controller manager</b> runs dozens of <b>controllers</b>. Each is a loop that watches one kind of object and makes reality match it:</p>
+    <ul>
+      <li>the Deployment controller creates ReplicaSets;</li>
+      <li>the ReplicaSet controller creates pods;</li>
+      <li>the node controller notices dead nodes.</li>
+    </ul>
+    <p>The <b>cloud-controller-manager</b> connects Kubernetes to the cloud. On AKS it creates Azure load balancer rules when you make a <code>LoadBalancer</code> Service, and it tells Kubernetes when an Azure VM behind a node is gone.</p>
+  </div>
+</section>
+
+<section class="step" id="s6">
+  <h2>6. On every node: kubelet, runtime, kube-proxy</h2>
+  <div class="body">
+    <ul>
+      <li><b>kubelet</b>: the node's agent. It watches the API server for pods assigned to <i>its</i> node, asks the runtime to start their containers, runs health probes, and reports status back.</li>
+      <li><b>Container runtime</b> (<b>containerd</b> on AKS and kind): actually pulls images and runs containers. Kubernetes itself never runs a container directly.</li>
+      <li><b>kube-proxy</b>: programs the node's networking rules so traffic to a Service reaches its pods. Some network setups, such as Cilium on AKS, replace it.</li>
+    </ul>
+  </div>
+  <aside class="more"><p>Older clusters used Docker Engine as the runtime through a shim called dockershim. It was removed in Kubernetes 1.24. Images built with Docker still run unchanged, because they're standard OCI images.</p></aside>
+</section>
+
+<section class="step" id="s7">
+  <h2>7. Follow a <code>kubectl apply</code></h2>
+  <div class="body"><p>Now put it together. You run <code>kubectl apply -f deployment.yaml</code> for 3 replicas of <code>orders-api</code>.</p></div>
+  <div class="widget" data-widget="cluster-diagram">"Follow a kubectl apply" animation, one click per hop:
+    <ol>
+      <li>kubectl → API server (auth, validate).</li>
+      <li>API server → etcd (Deployment stored).</li>
+      <li>Deployment controller sees it and creates a ReplicaSet.</li>
+      <li>ReplicaSet controller creates 3 Pods with no node.</li>
+      <li>Scheduler assigns each Pod to a node.</li>
+      <li>The kubelet on each chosen node sees its Pod.</li>
+      <li>containerd pulls the image and starts the container.</li>
+      <li>The kubelet reports the Pod as Running.</li>
+    </ol></div>
+</section>
+
+<section class="step" id="s8">
+  <h2>8. Put it in order</h2>
+  <div class="check" data-type="order">
+    <p class="q">Order the steps from <code>kubectl apply</code> to a running container.</p>
+    <ol class="options">
+      <li>The API server validates the Deployment and stores it in etcd</li>
+      <li>The Deployment controller creates a ReplicaSet</li>
+      <li>The ReplicaSet controller creates Pods</li>
+      <li>The scheduler assigns each Pod to a node</li>
+      <li>The kubelet on that node asks containerd to start the container</li>
+    </ol>
+    <div class="explain">No component calls the next one directly. Each one <i>watches</i> the API server and reacts to changes. That's why Kubernetes keeps working when parts are slow or restarting.</div>
+  </div>
+</section>
+
+<section class="step" id="s9">
+  <h2>9. What if part of the control plane is down?</h2>
+  <div class="check" data-type="mcq">
+    <p class="q">The scheduler crashes for ten minutes. What happens to <code>orders-api</code>'s three running pods?</p>
+    <ol class="options">
+      <li>They stop <span class="why">Running pods are managed by the kubelet on each node, which doesn't need the scheduler.</span></li>
+      <li class="correct">They keep running; only <i>new</i> pods wait in <code>Pending</code> until the scheduler is back</li>
+      <li>They move to other nodes <span class="why">Nothing is moving them; moving pods would need the scheduler anyway.</span></li>
+      <li>kubectl stops working <span class="why">kubectl talks to the API server, which is still up.</span></li>
+    </ol>
+    <div class="explain">Running workloads don't depend on the control plane minute to minute. A control-plane outage stops <i>changes</i>, not the app. Even with the API server down, pods keep serving traffic.</div>
+  </div>
+</section>
+
+<section class="step" id="s10">
+  <h2>10. Namespaces: folders for objects</h2>
+  <div class="body">
+    <p>Objects live in <b>namespaces</b>, which work like folders.</p>
+    <ul>
+      <li>The control-plane add-ons live in <code>kube-system</code>.</li>
+      <li>Your apps live in namespaces you create, such as <code>orders</code>.</li>
+      <li>If you don't say, <code>kubectl</code> uses <code>default</code>.</li>
+    </ul>
+    <p>Chapter 8 uses namespaces to separate teams and environments.</p>
+  </div>
+  <pre class="output">$ kubectl get pods -n kube-system
+NAME                                       READY   STATUS
+coredns-7db6d8ff4d-2xk9p                   1/1     Running
+coredns-7db6d8ff4d-q8w4m                   1/1     Running
+kube-proxy-4mz7d                           1/1     Running
+…</pre>
+</section>
+
+<section class="step" id="s11">
+  <h2>11. In AKS, Azure runs the top half</h2>
+  <div class="body">
+    <p>On AKS, the whole control plane runs in an Azure-managed environment you can't see or log into: API server, etcd, scheduler and controller managers. Azure patches it, scales it and backs it up.</p>
+    <p>You see only the nodes, which are Azure VMs in your subscription, and the add-ons that run on them.</p>
+    <p>That split, what Azure manages and what you own, is the whole of Chapter 4.</p>
+  </div>
+</section>
+
+<section class="step summary" id="s12">
+  <h2>The cluster, sorted</h2>
+  <ul>
+    <li><b>Control plane:</b>
+      <ul>
+        <li>API server: the front door, which does auth and validation.</li>
+        <li>etcd: stores every object.</li>
+        <li>Scheduler: picks a node for each new pod.</li>
+        <li>Controllers: reconcile reality with what was asked for.</li>
+        <li>Cloud controller: talks to Azure.</li>
+      </ul>
+    </li>
+    <li><b>Nodes:</b> the kubelet runs pods through containerd; kube-proxy routes Service traffic.</li>
+    <li>Components only talk through the API server, by watching for changes.</li>
+    <li>Running pods survive control-plane outages; changes wait.</li>
+    <li>In AKS, Azure runs the control plane.</li>
+  </ul>
+</section>
+</article>
+</body>
+</html>

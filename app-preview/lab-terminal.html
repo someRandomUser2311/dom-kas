@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Terminal lab · Ship it by hand</title>
+<link rel="stylesheet" href="assets/styles.css">
+</head>
+<body data-page="lab-term">
+<header id="topbar"></header>
+
+<div class="lab-shell">
+  <section class="lab-pane">
+    <div class="lab-pane-head">📋 Steps <span class="badge badge-violet" style="margin-left:auto" id="step-badge">0 / 12</span></div>
+    <div class="lab-pane-body">
+      <div class="breadcrumb" style="margin-bottom:10px"><a href="chapter.html">← Ch 7</a><span class="sep">/</span><span>Terminal lab</span></div>
+      <h3 style="margin-top:0">Ship it by hand: ACR → AKS</h3>
+      <p class="muted" style="font-size:14px">Do <em>manually</em> everything the pipeline from this chapter automates. Once you've typed each command yourself, every task in <code>azure-pipelines.yml</code> will make sense.</p>
+      <ul class="task-list" id="steps"></ul>
+    </div>
+  </section>
+
+  <section class="lab-pane" style="display:flex;flex-direction:column;background:#07090e">
+    <div class="lab-pane-head" style="background:#0b0e15;color:#c9d4e8;border-color:#161c28">
+      <span>⌨️ learner@kubequest: ~/orders-api</span>
+      <span class="badge" style="margin-left:auto;background:#13261b;color:#5ee38f">● floci-az connected</span>
+    </div>
+    <div class="terminal" id="term" style="flex:1;min-height:420px"></div>
+    <div style="padding:10px 14px;border-top:1px solid #161c28;background:#0b0e15" class="suggest" id="suggest"></div>
+  </section>
+
+  <section class="lab-pane">
+    <div class="lab-pane-head">🔍 Live checks</div>
+    <div class="lab-pane-body">
+      <p class="subtle" style="margin-top:0">In the real app the backend verifies these directly against <b>floci-az</b> (ARM API) and the <b>k3s</b> cluster after each command.</p>
+      <div id="checks"></div>
+      <h4 style="margin:18px 0 6px">📄 k8s/deployment.yaml</h4>
+      <div id="manifest"></div>
+    </div>
+  </section>
+</div>
+
+<div class="lab-bottom">
+  <span class="subtle">Tip: <code>hint</code> shows the next command · <code>↑</code> recalls history · <code>clear</code> clears the screen</span>
+  <span style="margin-left:auto"></span>
+  <a class="btn" href="lab-yaml.html">← Back</a>
+  <a class="btn btn-primary" id="finish" href="chapter-complete.html">Finish chapter →</a>
+</div>
+
+<script src="assets/app.js"></script>
+<script src="assets/yaml.js"></script>
+<script>
+const RG = "rg-orders-dev", ACR = "kqacr", AKS = "aks-orders-dev", IMG = "kqacr.azurecr.io/orders-api:1427";
+const S = { login: false, rg: false, acr: false, aks: false, attach: false, acrLogin: false, built: false, pushed: false, creds: false, ns: false, applied: false, rolled: false };
+
+const STEPS = [
+  { k: "login", t: "Sign in as the pipeline's service principal", cmd: `az login --service-principal -u $AZURE_CLIENT_ID --federated-token "$OIDC_TOKEN" --tenant $AZURE_TENANT_ID`, re: /^az login\b/,
+    out: () => `<span class="dim">Authenticating with federated token against floci-az Entra ID…</span>
+[
+  {
+    "cloudName": "FlociAzure",
+    "name": "KubeQuest-Dev",
+    "state": "Enabled",
+    "user": { "name": "sp-orders-pipeline", "type": "servicePrincipal" }
+  }
+]` },
+  { k: "rg", t: `Create resource group <code>${RG}</code>`, cmd: `az group create -n ${RG} -l westeurope`, re: /^az group create\b/, req: ["login"],
+    out: () => `{\n  "id": "/subscriptions/0000-kq/resourceGroups/${RG}",\n  "location": "westeurope",\n  "properties": { "provisioningState": "<span class="ok">Succeeded</span>" }\n}` },
+  { k: "acr", t: `Create the container registry <code>${ACR}</code>`, cmd: `az acr create -g ${RG} -n ${ACR} --sku Standard`, re: /^az acr create\b/, req: ["rg"],
+    out: () => `{\n  "loginServer": "${ACR}.azurecr.io",\n  "name": "${ACR}",\n  "sku": { "name": "Standard" },\n  "provisioningState": "<span class="ok">Succeeded</span>"\n}\n<span class="dim"># floci-az: backed by the shared registry:2 container</span>` },
+  { k: "aks", t: `Create AKS cluster <code>${AKS}</code> and attach ACR`, cmd: `az aks create -g ${RG} -n ${AKS} --node-count 1 --attach-acr ${ACR} --generate-ssh-keys`, re: /^az aks create\b/, req: ["acr"],
+    out: () => `<span class="dim">\\ Running ..</span>\n<span class="dim"># floci-az: starting k3s container for ${AKS} (≈20s)</span>\n<span class="dim">AAD role propagation done[############################################]  100.0000%</span>\n{\n  "name": "${AKS}",\n  "kubernetesVersion": "1.33.2",\n  "agentPoolProfiles": [ { "name": "nodepool1", "count": 1, "vmSize": "Standard_D4ds_v5" } ],\n  "provisioningState": "<span class="ok">Succeeded</span>"\n}`, after: () => { S.attach = true; } },
+  { k: "acrLogin", t: "Log Docker in to ACR", cmd: `az acr login -n ${ACR}`, re: /^az acr login\b/, req: ["acr"], out: () => `<span class="ok">Login Succeeded</span>` },
+  { k: "built", t: "Build the image with a traceable tag", cmd: `docker build -t ${IMG} .`, re: /^docker (image )?build\b/,
+    out: () => `[+] Building 18.4s (11/11) <span class="ok">FINISHED</span>\n => [build 3/5] RUN npm ci                                   9.1s\n => [build 4/5] RUN npm test                                 4.2s\n => exporting to image                                       0.6s\n => => naming to ${IMG}` },
+  { k: "pushed", t: "Push the image to ACR", cmd: `docker push ${IMG}`, re: /^docker (image )?push\b/, req: ["acrLogin", "built"],
+    fail: { acrLogin: `<span class="er">unauthorized: authentication required</span>\n<span class="dim">→ Docker isn't logged in to ${ACR}.azurecr.io yet. (In a pipeline, the service connection does this for you.)</span>`, built: `<span class="er">An image does not exist locally with the tag: ${IMG}</span>` },
+    out: () => `The push refers to repository [kqacr.azurecr.io/orders-api]\n5f70bf18a086: Pushed\n9c1b6dd6c1e6: Pushed\n1427: digest: sha256:7d3e…b91c size: 1789` },
+  { k: "creds", t: "Get a kubeconfig for the cluster", cmd: `az aks get-credentials -g ${RG} -n ${AKS}`, re: /^az aks get-credentials\b/, req: ["aks"], out: () => `Merged "${AKS}" as current context in /home/learner/.kube/config` },
+  { k: "ns", t: "Create namespace <code>orders</code>", cmd: `kubectl create namespace orders`, re: /^kubectl create (namespace|ns) orders\b/, req: ["creds"], out: () => `namespace/orders created` },
+  { k: "applied", t: "Apply the manifests", cmd: `kubectl apply -n orders -f k8s/`, re: /^kubectl apply\b.*-f\s+k8s/, req: ["ns", "pushed"],
+    fail: { pushed: `deployment.apps/orders-api created\nservice/orders-api created\n<span class="dim"># …but pods will hit ImagePullBackOff: the image isn't in ACR yet!</span>` },
+    out: () => `deployment.apps/orders-api created\nservice/orders-api created` },
+  { k: "rolled", t: "Wait for the rollout", cmd: `kubectl rollout status deploy/orders-api -n orders`, re: /^kubectl rollout status\b/, req: ["applied"],
+    out: () => `Waiting for deployment "orders-api" rollout to finish: 0 of 2 updated replicas are available...\nWaiting for deployment "orders-api" rollout to finish: 1 of 2 updated replicas are available...\ndeployment "orders-api" <span class="ok">successfully rolled out</span>` },
+  { k: "pods", t: "Verify the pods are running", cmd: `kubectl get pods -n orders`, re: /^kubectl get (pods|po)\b/, req: ["creds"],
+    out: () => S.rolled ? `NAME                          READY   STATUS    RESTARTS   AGE\norders-api-7c9d8f6b5d-4kq2x   1/1     <span class="ok">Running</span>   0          41s\norders-api-7c9d8f6b5d-p8m7z   1/1     <span class="ok">Running</span>   0          41s` : (S.applied ? `NAME                          READY   STATUS              RESTARTS   AGE\norders-api-7c9d8f6b5d-4kq2x   0/1     ContainerCreating   0          3s` : `No resources found in orders namespace.`) },
+];
+S.pods = false;
+
+const MANIFEST = `apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: orders-api
+spec:
+  replicas: 2
+  selector:
+    matchLabels: { app: orders-api }
+  template:
+    metadata:
+      labels: { app: orders-api }
+    spec:
+      containers:
+        - name: api
+          image: ${IMG}
+          ports: [{ containerPort: 8080 }]
+          readinessProbe:
+            httpGet: { path: /healthz, port: 8080 }`;
+KQY.block(document.getElementById("manifest"), MANIFEST, { title: "k8s/deployment.yaml" });
+
+const term = document.getElementById("term");
+const hist = []; let hi = 0;
+function print(html, cls = "") { const d = document.createElement("div"); d.className = "tl " + cls; d.innerHTML = html; term.insertBefore(d, term.querySelector(".inp")); term.scrollTop = term.scrollHeight; }
+term.innerHTML = `<div class="tl dim">KubeQuest lab sandbox · Ubuntu 24.04 · az 2.7x (floci-az custom cloud) · docker · kubectl 1.33</div>
+<div class="tl dim">Environment variables AZURE_CLIENT_ID, AZURE_TENANT_ID and OIDC_TOKEN are pre-set for you.</div>
+<div class="tl dim">Type <span class="ylw">hint</span> if you're stuck.</div><div class="tl">&nbsp;</div>
+<div class="inp"><span class="pr">learner@kubequest:~/orders-api$</span><input id="in" autocomplete="off" spellcheck="false" aria-label="Terminal input"></div>`;
+const inp = document.getElementById("in");
+term.addEventListener("click", () => inp.focus());
+
+function nextStep() { return STEPS.find(s => !S[s.k]); }
+function run(raw) {
+  const cmd = raw.trim();
+  print(`<span class="pr">learner@kubequest:~/orders-api$</span> <span class="cmd">${KQ.escapeHtml(cmd)}</span>`);
+  if (!cmd) return;
+  hist.push(cmd); hi = hist.length;
+  if (cmd === "clear") { term.querySelectorAll(".tl").forEach(x => x.remove()); return; }
+  if (cmd === "hint") { const n = nextStep(); print(n ? `<span class="ylw">Next:</span> ${n.t.replace(/<[^>]+>/g, "")}\n<span class="dim">$ ${KQ.escapeHtml(n.cmd)}</span>` : `<span class="ok">All steps done! 🎉</span>`); return; }
+  if (cmd === "help") { print(`Available: az, docker, kubectl, ls, cat, hint, clear`); return; }
+  if (/^ls\b/.test(cmd)) { print(`Dockerfile  k8s/  package.json  src/  test/  azure-pipelines.yml`); return; }
+  if (/^cat\s+k8s/.test(cmd)) { print(KQ.escapeHtml(MANIFEST)); return; }
+  if (/^cat\b/.test(cmd)) { print(`<span class="dim">(file contents omitted in the prototype)</span>`); return; }
+  const step = STEPS.find(s => s.re.test(cmd));
+  if (!step) {
+    const tool = cmd.split(/\s+/)[0];
+    if (["az", "docker", "kubectl"].includes(tool)) print(`<span class="er">This command isn't part of this lab's script.</span> <span class="dim">In the real app it would run for real in your sandbox. Type <span class="ylw">hint</span>.</span>`);
+    else print(`<span class="er">${KQ.escapeHtml(tool)}: command not found</span>`);
+    return;
+  }
+  const missing = (step.req || []).filter(r => !S[r]);
+  if (missing.length) {
+    const f = step.fail && step.fail[missing[0]];
+    if (f && step.k === "applied" && missing.length === 1 && missing[0] === "pushed") { print(f); return; }
+    print(f || `<span class="er">ERROR:</span> prerequisite missing → ${STEPS.find(s => s.k === missing[0]).t.replace(/<[^>]+>/g, "")}`);
+    return;
+  }
+  inp.disabled = true;
+  const delay = step.k === "aks" ? 1600 : step.k === "built" || step.k === "rolled" ? 900 : 350;
+  const spinner = document.createElement("div"); spinner.className = "tl dim"; spinner.textContent = "…"; term.insertBefore(spinner, term.querySelector(".inp"));
+  setTimeout(() => {
+    spinner.remove();
+    print(step.out());
+    const first = !S[step.k];
+    S[step.k] = true; if (step.after) step.after();
+    if (first) KQ.addXP(5, false);
+    refresh();
+    inp.disabled = false; inp.focus();
+  }, delay);
+}
+inp.addEventListener("keydown", e => {
+  if (e.key === "Enter") { const v = inp.value; inp.value = ""; run(v); }
+  else if (e.key === "ArrowUp") { if (hi > 0) { hi--; inp.value = hist[hi]; } e.preventDefault(); }
+  else if (e.key === "ArrowDown") { if (hi < hist.length - 1) { hi++; inp.value = hist[hi]; } else { hi = hist.length; inp.value = ""; } e.preventDefault(); }
+});
+
+function refresh() {
+  const done = STEPS.filter(s => S[s.k]).length;
+  document.getElementById("steps").innerHTML = STEPS.map(s => `<li class="${S[s.k] ? "ok" : ""}"><span class="tick">✓</span><span class="tx">${s.t}<br><code style="font-size:11.5px;word-break:break-all">${KQ.escapeHtml(s.cmd)}</code></span></li>`).join("");
+  document.getElementById("step-badge").textContent = `${done} / ${STEPS.length}`;
+  const C = [
+    [S.rg, "Resource group exists", `ARM GET /resourceGroups/${RG}`],
+    [S.acr, "Registry exists", `ARM GET …/registries/${ACR}`],
+    [S.aks, "AKS cluster provisioned (k3s up)", `ARM GET …/managedClusters/${AKS}`],
+    [S.attach, "Kubelet identity has AcrPull on ACR", "ARM role assignments"],
+    [S.pushed, "Image orders-api:1427 in registry", "GET /v2/orders-api/tags/list"],
+    [S.ns, "Namespace orders exists", "kubectl get ns orders"],
+    [S.rolled, "Deployment orders-api 2/2 ready", "kubectl get deploy -n orders"],
+  ];
+  document.getElementById("checks").innerHTML = C.map(([ok, t, how]) => `<div class="rule ${ok ? "pass" : "pend"}"><span class="r-ico">${ok ? "✓" : "·"}</span><div><div class="r-title">${t}</div><div class="r-hint mono" style="font-size:11.5px">${how}</div></div></div>`).join("");
+  const n = nextStep();
+  document.getElementById("suggest").innerHTML = n
+    ? `<span class="subtle" style="color:#7c869a;align-self:center">Next:</span><button class="chip mono" id="type-it" style="background:#111827;color:#c9d4e8;border-color:#273149">${KQ.escapeHtml(n.cmd.length > 70 ? n.cmd.slice(0, 68) + "…" : n.cmd)}</button><span class="subtle" style="color:#7c869a;align-self:center">(click to type it)</span>`
+    : `<span style="color:#5ee38f;font-weight:700">✓ All steps complete. Your app is running on (emulated) AKS!</span>`;
+  const ti = document.getElementById("type-it");
+  if (ti) ti.onclick = () => { inp.value = n.cmd; inp.focus(); };
+  if (!n && !KQ.isDone("lab-term")) { KQ.markDone("lab-term"); KQ.toast("Terminal lab complete!", "🏆"); }
+}
+refresh();
+inp.focus();
+</script>
+</body>
+</html>

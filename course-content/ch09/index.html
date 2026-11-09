@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chapter 9 · Network policies</title>
+<link rel="stylesheet" href="../content.css">
+</head>
+<body>
+<main>
+<nav class="crumbs"><a href="../index.html">Course</a> / Chapter 9</nav>
+<p class="kicker">DevOps · ~1.5 h</p>
+<h1>Chapter 9 · Network policies: default-deny &amp; zero trust</h1>
+<p>Every pod in Contoso's cluster can currently talk to every other pod, including the database. This chapter locks that down: deny by default, then allow exactly the flows the app needs. These files become <code>k8s/policies/</code>.</p>
+
+<h2>By the end, you can</h2>
+<ul>
+  <li>Explain the default (everything can talk to everything), and what makes a pod "isolated" for ingress or egress.</li>
+  <li>Write default-deny policies, plus precise allow rules using podSelector, namespaceSelector and ports.</li>
+  <li>Avoid the classic traps: AND vs OR selectors, forgetting DNS egress, and policies being additive.</li>
+  <li>Choose a policy engine on AKS, and know when L7 or FQDN policies (Cilium) are needed.</li>
+</ul>
+
+<h2>Lessons</h2>
+<ol class="lessons">
+  <li><a href="9.1-flat-network.html">9.1 · The flat network &amp; isolation</a></li>
+  <li><a href="9.2-default-deny.html">9.2 · Default-deny</a></li>
+  <li><a href="9.3-allow-rules.html">9.3 · Allow rules &amp; selector semantics</a></li>
+  <li><a href="9.4-egress-dns.html">9.4 · Egress &amp; DNS</a></li>
+  <li><a href="9.5-engines.html">9.5 · Engines on AKS &amp; zero-trust practice</a></li>
+</ol>
+
+<h2>Practice</h2>
+<ul>
+  <li><a href="practice.html#quiz">Checkpoint quiz</a> (8 questions from a pool of 16)</li>
+  <li><a href="practice.html#predict">Predict the outcome</a> (4 connectivity puzzles)</li>
+  <li><a href="practice.html#lab">Write lab: secure the Contoso namespaces</a></li>
+  <li><a href="practice.html#walkthrough">Walkthrough: default-deny breaks the app, then open flows one by one</a></li>
+  <li><a href="practice.html#try">Try it locally</a></li>
+</ul>
+<p class="muted">Persona tabs: set A (Background).</p>
+</main>
+</body>
+</html>

@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>9.4 · Egress &amp; DNS</title>
+<link rel="stylesheet" href="../content.css">
+</head>
+<body>
+<article class="lesson" data-id="9.4" data-chapter="9">
+<nav class="crumbs"><a href="../index.html">Course</a> / <a href="index.html">Chapter 9</a> / 9.4</nav>
+<header>
+  <p class="kicker">Chapter 9 · Lesson 9.4 · ~10 steps · ~12 min</p>
+  <h1>Egress &amp; DNS</h1>
+  <p class="meta">You'll be able to write egress rules, never forget DNS again, allow traffic to Azure services, and know when IP-based rules aren't enough.</p>
+</header>
+
+<section class="step" id="s1">
+  <h2>1. Egress rules mirror ingress</h2>
+  <div class="body">
+    <p>An <code>egress</code> rule lists <code>to</code> peers and <code>ports</code>, with the same selectors and the same AND/OR rules as <code>from</code>.</p>
+    <p>With default-deny egress, a client needs an egress allow, <b>and</b> the server needs an ingress allow.</p>
+  </div>
+  <pre class="code" data-file="k8s/policies/web-egress.yaml (spec)">podSelector:
+  matchLabels: { app: web }
+policyTypes: [Egress]
+egress:
+  - to:
+      - namespaceSelector:
+          matchLabels: { kubernetes.io/metadata.name: orders }
+        podSelector:
+          matchLabels: { app: orders-api }
+    ports:
+      - port: 8080</pre>
+  <aside class="coming" data-set="A">
+    <dl>
+      <dt>Windows/IIS admin</dt><dd>Outbound firewall rules, which most servers never had. That's exactly why exfiltration is so easy.</dd>
+      <dt>Linux admin</dt><dd>The OUTPUT chain, with DNS as the rule everyone forgets.</dd>
+      <dt>Developer (Compose)</dt><dd>List every service your app calls. That list becomes your egress policy.</dd>
+      <dt>Other clouds</dt><dd>Like the outbound rules of a security group, which default to allow-all in AWS but here are deny-all once isolated.</dd>
+    </dl>
+  </aside>
+</section>
+
+<section class="step" id="s2">
+  <h2>2. DNS is egress too</h2>
+  <div class="body">
+    <p>Every name lookup is a UDP (sometimes TCP) packet to CoreDNS on port 53, in <code>kube-system</code>. With default-deny egress, that's blocked, and <b>everything</b> that uses a hostname fails.</p>
+    <p>Allow DNS once per namespace, for all pods.</p>
+  </div>
+  <div class="check" data-type="fill">
+    <p class="q">Complete the DNS allow rule.</p>
+    <pre class="code" data-file="k8s/policies/allow-dns.yaml">apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns
+  namespace: orders
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: kube-system }
+          podSelector:
+            matchLabels: { k8s-app: kube-dns }
+      ports:
+        - protocol: UDP
+          port: <span class="blank">?</span>
+        - protocol: TCP
+          port: 53</pre>
+    <ul class="chips">
+      <li class="correct"><code>53</code></li>
+      <li><code>5353</code> <span class="why">That's multicast DNS, not cluster DNS.</span></li>
+      <li><code>443</code> <span class="why">CoreDNS listens on 53.</span></li>
+      <li><code>8053</code> <span class="why">Not the Service port.</span></li>
+    </ul>
+    <div class="explain">UDP and TCP 53 to the CoreDNS pods (label <code>k8s-app: kube-dns</code>) in <code>kube-system</code>. Large responses fall back to TCP, so allow both.</div>
+  </div>
+</section>
+
+<section class="step" id="s3">
+  <h2>3. Diagnose the timeout</h2>
+  <div class="check" data-type="diagnose">
+    <p class="q">After the platform team rolled out default-deny, <code>orders-api</code> logs this. What's missing?</p>
+    <pre class="output">2026-11-03T10:22:41Z ERROR db: dial tcp: lookup orders-sql.privatelink.database.windows.net on 172.16.0.10:53:
+read udp 192.168.4.17:41522-&gt;172.16.0.10:53: i/o timeout</pre>
+    <ol class="options">
+      <li>The SQL firewall blocks the cluster <span class="why">The failure is at the DNS lookup, before any SQL connection.</span></li>
+      <li class="correct">An egress allow for DNS (UDP/TCP 53 to kube-dns in kube-system)</li>
+      <li>An ingress allow on the database <span class="why">Azure SQL isn't a pod; and the lookup fails before that.</span></li>
+      <li>CoreDNS is down <span class="why">Possible in general, but right after default-deny, missing DNS egress is far more likely.</span></li>
+    </ol>
+    <div class="explain"><code>lookup … on 172.16.0.10:53: i/o timeout</code> = the pod can't reach the cluster DNS Service IP. Add <code>allow-dns</code>, then an egress rule for the SQL private endpoint (next step).</div>
+  </div>
+</section>
+
+<section class="step" id="s4">
+  <h2>4. Egress to Azure services</h2>
+  <div class="body">
+    <p>Azure services aren't pods, so selectors can't match them. You have two options:</p>
+    <ul>
+      <li><b>Private endpoints</b> (recommended): the service has a stable private IP in your VNet, so allow its subnet with <code>ipBlock</code> and the port.</li>
+      <li><b>Public endpoints</b>: their IPs are large, shared and changing. <code>ipBlock</code> rules become huge and fragile. This is where FQDN policies help (step 6).</li>
+    </ul>
+  </div>
+  <pre class="code" data-file="k8s/policies/orders-api-egress.yaml (spec)">podSelector:
+  matchLabels: { app: orders-api }
+policyTypes: [Egress]
+egress:
+  - to:
+      - ipBlock: { cidr: 10.20.5.0/27 }     # private endpoints: SQL, Key Vault
+    ports:
+      - port: 1433
+      - port: 443</pre>
+</section>
+
+<section class="step" id="s5">
+  <h2>5. Workload identity needs egress</h2>
+  <div class="body">
+    <p>Pods using workload identity (lesson 5.6) must reach <b>Microsoft Entra ID</b> (<code>login.microsoftonline.com</code>) on 443 to exchange tokens. That's a public, changing endpoint.</p>
+    <p>With strict egress, you need either an FQDN-based allow or a broad 443 rule kept in check by the cluster's firewall (lesson 5.3).</p>
+  </div>
+</section>
+
+<section class="step" id="s6">
+  <h2>6. Why FQDN rules need more than NetworkPolicy</h2>
+  <div class="body">
+    <p>Standard NetworkPolicy only knows IPs and ports. "Allow <code>api.payments-provider.example</code>" can't be written.</p>
+    <p><b>Cilium</b> can, by watching DNS answers and allowing the resolved IPs. On AKS, that's part of <b>Advanced Container Networking Services</b> with the Cilium dataplane, using <code>CiliumNetworkPolicy</code> with <code>toFQDNs</code>.</p>
+    <p>Alternatively, enforce FQDN egress centrally in <b>Azure Firewall</b> (lesson 5.3).</p>
+  </div>
+  <pre class="code" data-file="cilium-fqdn.yaml (Cilium only)">apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: orders-api-to-payments
+  namespace: orders
+spec:
+  endpointSelector:
+    matchLabels: { app: orders-api }
+  egress:
+    - toFQDNs:
+        - matchName: api.payments-provider.example
+      toPorts:
+        - ports: [ { port: "443", protocol: TCP } ]</pre>
+</section>
+
+<section class="step" id="s7">
+  <h2>7. Blocking the metadata endpoint</h2>
+  <div class="body">
+    <p>Azure's instance metadata service (<code>169.254.169.254</code>) can hand out tokens for the <b>node's</b> identities. Pods rarely need it; with workload identity they shouldn't.</p>
+    <p>Strict egress (allow-lists only) blocks it automatically. If you allow broad egress, add <code>except: [169.254.169.254/32]</code> to the <code>ipBlock</code>.</p>
+  </div>
+</section>
+
+<section class="step" id="s8">
+  <h2>8. Complete Contoso egress</h2>
+  <table>
+    <tr><th>Namespace</th><th>Egress policies</th></tr>
+    <tr><td><code>web</code></td><td>allow-dns; web → orders-api:8080</td></tr>
+    <tr><td><code>orders</code></td><td>allow-dns; orders-api and orders-worker → postgres:5432 (namespace <code>db</code>); orders-api → private endpoints:443; Entra ID:443 (FQDN, Cilium)</td></tr>
+    <tr><td><code>db</code></td><td>allow-dns only</td></tr>
+  </table>
+</section>
+
+<section class="step" id="s9">
+  <h2>9. Testing a flow</h2>
+  <pre class="code" data-file="terminal">kubectl exec -n web deploy/web -- wget -qO- -T 3 http://orders-api.orders/healthz    # expect ok
+kubectl exec -n web deploy/web -- nc -zv -w 3 postgres.db 5432                      # expect timeout
+kubectl exec -n orders deploy/orders-api -- nslookup kubernetes.default             # DNS works?</pre>
+  <div class="body"><p>Distroless images have no shell or tools, so use <code>kubectl debug</code> with a tools image, sharing the pod's network (Chapter 14).</p></div>
+</section>
+
+<section class="step summary" id="s10">
+  <h2>Egress, sorted</h2>
+  <ul>
+    <li>Egress rules mirror ingress; both ends must allow.</li>
+    <li>Always allow DNS: UDP+TCP 53 to <code>k8s-app=kube-dns</code> in <code>kube-system</code>.</li>
+    <li>Azure services: private endpoints + <code>ipBlock</code>; FQDNs need Cilium (ACNS) or Azure Firewall.</li>
+    <li>Workload identity needs egress to Entra ID; block 169.254.169.254.</li>
+  </ul>
+</section>
+</article>
+</body>
+</html>

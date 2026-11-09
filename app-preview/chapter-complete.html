@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chapter results · Azure Pipelines</title>
+<link rel="stylesheet" href="assets/styles.css">
+</head>
+<body data-page="complete">
+<header id="topbar"></header>
+
+<main class="page page-narrow">
+  <div class="card score-hero">
+    <div class="confetti" id="emoji">🏆</div>
+    <div class="kicker" style="margin-top:10px">Chapter 7 · Azure Pipelines: CI/CD to AKS</div>
+    <div class="big" id="total">0%</div>
+    <p class="muted" id="verdict" style="max-width:520px;margin:0 auto 16px"></p>
+    <div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap">
+      <span class="badge badge-accent">⚡ <span id="xp">0</span> XP total</span>
+      <span class="badge badge-warn">🔥 12-day streak</span>
+      <span class="badge badge-success" id="cert">📜 Chapter badge earned</span>
+    </div>
+  </div>
+
+  <h2>Score breakdown</h2>
+  <div class="table-wrap">
+    <table class="table" id="breakdown"></table>
+  </div>
+
+  <div class="grid grid-2" style="margin-top:20px">
+    <div class="card">
+      <div class="card-title">🎯 Skills earned</div>
+      <div class="skill-list">
+        <span class="badge badge-success">Pipeline YAML anatomy</span>
+        <span class="badge badge-success">Agent pools</span>
+        <span class="badge badge-success">Service connections</span>
+        <span class="badge badge-success">Workload identity federation</span>
+        <span class="badge badge-success">ACR + AcrPull</span>
+        <span class="badge badge-success">Stage conditions</span>
+        <span class="badge badge-success">Environments & approvals</span>
+        <span class="badge badge-success">Templates & expressions</span>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-title">🔁 Worth a second look</div>
+      <div class="lesson-list" id="review"></div>
+    </div>
+  </div>
+
+  <h2>Up next</h2>
+  <div class="chapter-row locked" style="margin-top:8px">
+    <span class="ch-num">8</span>
+    <span class="ch-body"><div class="ch-title">Namespaces, Ingress & the Gateway API</div><div class="ch-sub">Route traffic into the orders-api you just deployed. Not included in this prototype.</div></span>
+    <span class="badge">🔒 Preview only</span>
+  </div>
+
+  <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:24px">
+    <a class="btn btn-lg" href="chapter.html">← Chapter overview</a>
+    <a class="btn btn-lg btn-primary" href="index.html">Back to home</a>
+    <button class="btn btn-lg btn-ghost" id="reset">↺ Reset prototype progress</button>
+  </div>
+</main>
+
+<script src="assets/app.js"></script>
+<script>
+document.addEventListener("DOMContentLoaded", () => {
+  const lessons = ["l1", "l2", "l3", "l4", "l5", "l6"];
+  const lessonPct = Math.round(lessons.filter(KQ.isDone).length / lessons.length * 100);
+  const quiz = KQ.store.get("quizScore", KQ.isDone("quiz") ? 75 : 0);
+  const predict = KQ.isDone("predict") ? 87 : 0;
+  const lab = KQ.store.get("labScore", 0);
+  const term = KQ.isDone("lab-term") ? 100 : 0;
+  const rows = [
+    ["Inline knowledge checks", "📘", lessonPct, 10, "lesson.html?l=ch07/l1"],
+    ["Checkpoint quiz", "❓", quiz, 20, "quiz.html"],
+    ["Predict the run", "🔮", predict, 15, "predict.html"],
+    ["YAML lab (static grader)", "✍️", lab, 35, "lab-yaml.html"],
+    ["Terminal lab (live checks)", "⌨️", term, 20, "lab-terminal.html"],
+  ];
+  const total = Math.round(rows.reduce((a, r) => a + r[2] * r[3] / 100, 0));
+  document.getElementById("total").textContent = total + "%";
+  document.getElementById("xp").textContent = KQ.xp().toLocaleString();
+  const pass = total >= 70;
+  document.getElementById("emoji").textContent = pass ? "🏆" : "🧭";
+  document.getElementById("verdict").textContent = pass
+    ? "You passed! You can read, write and reason about multi-stage Azure Pipelines that ship to AKS."
+    : "Not at the 70% pass mark yet. Finish the remaining items below. Everything can be retried, and your best score counts.";
+  document.getElementById("cert").classList.toggle("hidden", !pass);
+  document.getElementById("breakdown").innerHTML = `<tr><th>Activity</th><th>Weight</th><th style="width:40%">Score</th><th></th></tr>` +
+    rows.map(r => `<tr><td>${r[1]} ${r[0]}</td><td>${r[3]}%</td><td><div style="display:flex;align-items:center;gap:10px"><div class="progress ${r[2] >= 70 ? "success" : ""}" style="flex:1"><span style="width:${r[2]}%"></span></div><b style="width:42px;text-align:right">${r[2]}%</b></div></td><td><a href="${r[4]}">${r[2] ? "Retry" : "Start"}</a></td></tr>`).join("");
+
+  const review = [
+    ["lesson.html?l=ch07/l5", "🚦", "Custom conditions replace succeeded()", "Most-missed concept across learners"],
+    ["lesson.html?l=ch07/l6", "🧬", "${{ }} vs $[ ] vs $( )", "Compile time vs runtime"],
+    ["lesson.html?l=ch07/l4", "🔐", "AcrPush vs AcrPull", "Who needs which role"],
+  ];
+  document.getElementById("review").innerHTML = review.map(r => `<a class="lesson-row" href="${r[0]}"><span class="lr-ico">${r[1]}</span><span class="lr-body"><div class="lr-title">${KQ.escapeHtml(r[2])}</div><div class="lr-sub">${r[3]}</div></span></a>`).join("");
+
+  document.getElementById("reset").onclick = () => {
+    if (!confirm("Clear all prototype progress (lessons, scores, XP, lab editor)?")) return;
+    try { Object.keys(localStorage).filter(k => k.startsWith("kq.") && k !== "kq.theme").forEach(k => localStorage.removeItem(k)); } catch (e) {}
+    location.href = "index.html";
+  };
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>11.4 · Rollout in the pipeline</title>
+<link rel="stylesheet" href="../content.css">
+</head>
+<body>
+<article class="lesson" data-id="11.4" data-chapter="11">
+<nav class="crumbs"><a href="../index.html">Course</a> / <a href="index.html">Chapter 11</a> / 11.4</nav>
+<header>
+  <p class="kicker">Chapter 11 · Lesson 11.4 · ~12 steps · ~15 min</p>
+  <h1>Rollout in the pipeline</h1>
+  <p class="meta">You'll be able to write a canary deployment job with lifecycle hooks, gate each step on health signals, and make failure reject the canary automatically.</p>
+</header>
+
+<section class="step" id="s1">
+  <h2>1. Deployment strategies in YAML</h2>
+  <div class="body">
+    <p>Chapter 7 used <code>strategy: runOnce</code>. A deployment job can also use <code>rolling</code> (for VM targets) or <b><code>canary</code></b>, which runs the deploy cycle once per <b>increment</b> (e.g. 10%, then 50%), followed by a final 100%.</p>
+    <p>Each cycle has <b>lifecycle hooks</b>, which are named places to put steps.</p>
+  </div>
+  <aside class="coming" data-set="B">
+    <dl>
+      <dt>GitHub Actions</dt><dd>There's no built-in canary strategy; you'd script stages with jobs and environments. Here the hooks are built in.</dd>
+      <dt>GitLab CI</dt><dd>Like incremental rollouts (<code>rollout 10%</code> jobs), but with explicit pre/post hooks.</dd>
+      <dt>Jenkins</dt><dd>Like a scripted pipeline with stages per percentage and post-conditions for failure.</dd>
+      <dt>Classic pipelines</dt><dd>Similar to deployment gates and post-deployment conditions on release stages.</dd>
+    </dl>
+  </aside>
+</section>
+
+<section class="step" id="s2">
+  <h2>2. The hooks</h2>
+  <table>
+    <tr><th>Hook</th><th>Runs</th><th>Typical use</th></tr>
+    <tr><td><code>preDeploy</code></td><td>Once, before any increment</td><td>Bake manifests, run migrations (expand)</td></tr>
+    <tr><td><code>deploy</code></td><td>Each increment</td><td>Deploy the canary at <code>$(strategy.increment)</code>%</td></tr>
+    <tr><td><code>routeTraffic</code></td><td>Each increment, after deploy</td><td>Shift traffic (e.g. update weights)</td></tr>
+    <tr><td><code>postRouteTraffic</code></td><td>Each increment, after routing</td><td>Health checks: wait, query metrics, smoke test</td></tr>
+    <tr><td><code>on: failure</code></td><td>If any step failed</td><td><b>Reject</b> the canary / roll back</td></tr>
+    <tr><td><code>on: success</code></td><td>When all increments passed</td><td><b>Promote</b> the canary</td></tr>
+  </table>
+  <div class="check" data-type="order">
+    <p class="q">Order the hooks as they run for one increment, starting from the job's beginning.</p>
+    <ol class="options">
+      <li><code>preDeploy</code></li>
+      <li><code>deploy</code></li>
+      <li><code>routeTraffic</code></li>
+      <li><code>postRouteTraffic</code></li>
+      <li><code>on: success</code> or <code>on: failure</code></li>
+    </ol>
+    <div class="explain"><code>deploy → routeTraffic → postRouteTraffic</code> repeats for every increment; <code>on:</code> runs once at the end.</div>
+  </div>
+</section>
+
+<section class="step" id="s3">
+  <h2>3. The canary job</h2>
+  <pre class="code" data-file="templates/deploy-canary.yml">jobs:
+  - deployment: canary
+    environment: prod.orders          # prod environment, orders namespace resource
+    pool: { name: mdp-orders-prod }
+    strategy:
+      canary:
+        increments: [10, 50]
+        preDeploy:
+          steps:
+            - checkout: self
+            - task: KubernetesManifest@1
+              name: bake
+              inputs: { action: bake, renderType: kustomize, kustomizationPath: k8s/overlays/prod }
+        deploy:
+          steps:
+            - task: KubernetesManifest@1
+              inputs:
+                action: deploy
+                strategy: canary
+                percentage: $(strategy.increment)
+                namespace: orders
+                manifests: $(bake.manifestsBundle)
+                containers: contosoacr.azurecr.io/orders-api:$(Build.BuildId)
+        postRouteTraffic:
+          steps:
+            - script: ./scripts/check-canary.sh --minutes 10 --max-error-ratio 2.0
+              displayName: Compare canary vs stable
+        on:
+          failure:
+            steps:
+              - task: KubernetesManifest@1
+                inputs: { action: reject, strategy: canary, namespace: orders, manifests: $(bake.manifestsBundle) }
+          success:
+            steps:
+              - task: KubernetesManifest@1
+                inputs: { action: promote, strategy: canary, namespace: orders, manifests: $(bake.manifestsBundle), containers: contosoacr.azurecr.io/orders-api:$(Build.BuildId) }</pre>
+  <aside class="more"><p>With an environment Kubernetes resource (<code>prod.orders</code>), the task uses the environment's connection and you can drop the connection inputs. Otherwise, add <code>connectionType: azureResourceManager</code> and the cluster inputs, as in Chapter 10.</p></aside>
+</section>
+
+<section class="step" id="s4">
+  <h2>4. The automatic rollback</h2>
+  <div class="check" data-type="tapline" data-match="action: reject">
+    <p class="q">If the health check in <code>postRouteTraffic</code> fails, which line removes the canary?</p>
+    <div class="explain">The <code>on: failure</code> hook runs <code>action: reject</code>, which deletes the canary (and baseline) workloads. Stable never stopped serving.</div>
+  </div>
+</section>
+
+<section class="step" id="s5">
+  <h2>5. A health check that can fail</h2>
+  <div class="body">
+    <p><code>check-canary.sh</code> queries Azure Monitor (Prometheus metrics, Chapter 14) for the 5xx ratio of canary pods vs stable pods over the last N minutes. It exits non-zero if the canary is worse than the threshold, and that failure triggers <code>on: failure</code>.</p>
+    <p>A health step that only sleeps proves nothing.</p>
+  </div>
+  <pre class="code" data-file="scripts/check-canary.sh (core)">CANARY=$(query 'sum(rate(http_requests_total{app="orders-api",track="canary",code=~"5.."}[10m])) / sum(rate(http_requests_total{app="orders-api",track="canary"}[10m]))')
+STABLE=$(query 'sum(rate(http_requests_total{app="orders-api",track="stable",code=~"5.."}[10m])) / sum(rate(http_requests_total{app="orders-api",track="stable"}[10m]))')
+awk -v c="$CANARY" -v s="$STABLE" -v m="$MAX" 'BEGIN { exit !(c &lt;= (s + 0.001) * m) }'</pre>
+</section>
+
+<section class="step" id="s6">
+  <h2>6. Environment checks as gates</h2>
+  <div class="body">
+    <p>Checks on the <code>prod</code> environment run before the job starts, and can also be re-evaluated:</p>
+    <ul>
+      <li><b>Approvals</b>: a human says go.</li>
+      <li><b>Query Azure Monitor alerts</b>: block if any alert is firing for the service.</li>
+      <li><b>Business hours</b>: only deploy within a window.</li>
+      <li><b>Exclusive lock</b>: one deploy at a time per environment.</li>
+      <li><b>Required template</b>: the pipeline must extend the approved template.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="step" id="s7">
+  <h2>7. Watch the stages</h2>
+  <div class="widget" data-widget="stage-sim">The Chapter 7 stage simulator, extended: the prod stage expands into preDeploy → [deploy → routeTraffic → postRouteTraffic] × increments (10, 50) → on:success/failure. A toggle "canary errors at 50%" makes postRouteTraffic fail on the second increment, and the reject step runs.</div>
+</section>
+
+<section class="step" id="s8">
+  <h2>8. Gateway-weighted canaries in a job</h2>
+  <div class="body"><p>To use precise HTTPRoute weights instead of replica ratios: in <code>deploy</code>, roll out <code>orders-api-canary</code> at full size; in <code>routeTraffic</code>, patch the HTTPRoute weights to <code>$(strategy.increment)</code>; in <code>on: success</code>, update stable and set weights to 100/0; in <code>on: failure</code>, set weights to 100/0 and scale the canary to 0.</p></div>
+</section>
+
+<section class="step" id="s9">
+  <h2>9. Pause for a human</h2>
+  <div class="body"><p>Add a <code>ManualValidation@1</code> step in an agentless job between increments, or rely on an environment approval before the stage, for teams that want a person to look at the dashboard before 50%.</p></div>
+</section>
+
+<section class="step" id="s10">
+  <h2>10. Timeouts and concurrency</h2>
+  <div class="body">
+    <ul>
+      <li>Give the job a <code>timeoutInMinutes</code> longer than all the health windows added together.</li>
+      <li>Use an <b>exclusive lock</b> check so a second release can't start while a canary is in flight.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="step" id="s11">
+  <h2>11. After the canary</h2>
+  <div class="body"><p>On success, the canary becomes stable, and the release is done when the stable rollout finishes. Record the deployment, with the build, commit and image digest, on the environment. Azure DevOps shows it in the environment's deployment history.</p></div>
+</section>
+
+<section class="step summary" id="s12">
+  <h2>Pipeline rollouts, sorted</h2>
+  <ul>
+    <li><code>strategy: canary</code> with <code>increments</code>; hooks preDeploy → (deploy → routeTraffic → postRouteTraffic)× → on success/failure.</li>
+    <li><code>percentage: $(strategy.increment)</code>; <code>on: failure</code> → reject; <code>on: success</code> → promote.</li>
+    <li>Health checks must be able to fail: compare canary vs stable metrics.</li>
+    <li>Environment checks: approvals, Azure Monitor alerts, exclusive lock.</li>
+  </ul>
+</section>
+</article>
+</body>
+</html>

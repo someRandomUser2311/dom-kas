@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chapter 9 · Practice</title>
+<link rel="stylesheet" href="../content.css">
+</head>
+<body>
+<main>
+<nav class="crumbs"><a href="../index.html">Course</a> / <a href="index.html">Chapter 9</a> / Practice</nav>
+<p class="kicker">Chapter 9 · Practice</p>
+<h1>Practice: quiz, predict, lab, try it locally</h1>
+
+<h2 id="quiz">Checkpoint quiz (8 drawn from 16)</h2>
+<div class="check" data-type="mcq"><p class="q">With no NetworkPolicies, which pods can reach each other?</p><ol class="options"><li>Only pods in the same namespace</li><li class="correct">All pods, across all namespaces</li><li>None</li><li>Only pods behind a Service</li></ol><div class="explain">Kubernetes' network is flat by default.</div></div>
+<div class="check" data-type="mcq"><p class="q">When does a pod become isolated for ingress?</p><ol class="options"><li>When it's in a non-default namespace</li><li class="correct">When any policy selects it with Ingress in policyTypes</li><li>When it has a Service</li><li>Never by default</li></ol><div class="explain">After that, only explicit allows pass.</div></div>
+<div class="check" data-type="mcq"><p class="q">Can one NetworkPolicy deny traffic that another allows?</p><ol class="options"><li>Yes, with a deny rule</li><li class="correct">No; policies only allow, and allows add up</li><li>Yes, if it's applied later</li><li>Only cluster-wide</li></ol><div class="explain">Standard NetworkPolicy has no deny rules.</div></div>
+<div class="check" data-type="mcq"><p class="q">What does <code>podSelector: {}</code> select?</p><ol class="options"><li>No pods</li><li class="correct">Every pod in the policy's namespace</li><li>Every pod in the cluster</li><li>Pods without labels</li></ol><div class="explain">That's the basis of default-deny.</div></div>
+<div class="check" data-type="mcq"><p class="q">After egress default-deny, what usually breaks first?</p><ol class="options"><li>TLS</li><li class="correct">DNS lookups</li><li>Probes</li><li>Image pulls</li></ol><div class="explain">Allow UDP/TCP 53 to kube-dns.</div></div>
+<div class="check" data-type="mcq"><p class="q">One <code>from</code> item with both namespaceSelector and podSelector means…</p><ol class="options"><li>OR</li><li class="correct">AND: matching pods inside matching namespaces</li><li>Invalid</li><li>Only the namespace is used</li></ol><div class="explain">Separate items would be OR.</div></div>
+<div class="check" data-type="mcq"><p class="q">A <code>podSelector</code> alone inside <code>from</code> matches pods in…</p><ol class="options"><li>Any namespace</li><li class="correct">The policy's own namespace</li><li>kube-system</li><li>The default namespace</li></ol><div class="explain">Add a namespaceSelector for other namespaces.</div></div>
+<div class="check" data-type="mcq"><p class="q">Which label selects namespace <code>web</code> by name reliably?</p><ol class="options"><li><code>name: web</code></li><li class="correct"><code>kubernetes.io/metadata.name: web</code></li><li><code>namespace: web</code></li><li><code>app: web</code></li></ol><div class="explain">Kubernetes adds it to every namespace.</div></div>
+<div class="check" data-type="mcq"><p class="q">The Service listens on 80, the pod on 8080. Which port goes in the policy?</p><ol class="options"><li>80</li><li class="correct">8080 (or the named container port)</li><li>Both</li><li>Neither</li></ol><div class="explain">Policies see pod ports, after Service translation.</div></div>
+<div class="check" data-type="mcq"><p class="q">With default-deny everywhere, how many allows does web → orders-api need?</p><ol class="options"><li>One, on orders-api</li><li class="correct">Two: egress on web and ingress on orders-api</li><li>One, on web</li><li>None; same cluster</li></ol><div class="explain">Both ends are isolated.</div></div>
+<div class="check" data-type="mcq"><p class="q">How do you allow egress to a database's private endpoint?</p><ol class="options"><li>podSelector</li><li class="correct">ipBlock with the private endpoint subnet and port</li><li>A Service</li><li>An FQDN in standard NetworkPolicy</li></ol><div class="explain">Azure services aren't pods.</div></div>
+<div class="check" data-type="mcq"><p class="q">Which AKS option supports FQDN egress policies in-cluster?</p><ol class="options"><li>Azure NPM</li><li class="correct">Cilium with Advanced Container Networking Services</li><li>kube-proxy</li><li>Standard NetworkPolicy</li></ol><div class="explain">Or enforce FQDNs in Azure Firewall.</div></div>
+<div class="check" data-type="mcq"><p class="q">Policies are applied but have no effect at all. Likely cause?</p><ol class="options"><li>Wrong apiVersion</li><li class="correct">No network policy engine on the cluster</li><li>Policies need a restart</li><li>The namespace has no labels</li></ol><div class="explain">Check networkProfile.networkPolicy.</div></div>
+<div class="check" data-type="mcq"><p class="q">What's the status of Azure Network Policy Manager?</p><ol class="options"><li>The recommended engine</li><li class="correct">Being retired; choose Cilium (or Calico)</li><li>Required for Cilium</li><li>Windows-only and current</li></ol><div class="explain">Plan migration for existing clusters.</div></div>
+<div class="check" data-type="mcq"><p class="q">Why block 169.254.169.254 from pods?</p><ol class="options"><li>It's slow</li><li class="correct">The instance metadata service can hand out node identity tokens</li><li>It breaks DNS</li><li>It's the API server</li></ol><div class="explain">Pods should use workload identity instead.</div></div>
+<div class="check" data-type="mcq"><p class="q">Where does Contoso put default-deny?</p><ol class="options"><li>In each app's Helm chart, optionally</li><li class="correct">In the namespace template (and the Kustomize base), so every namespace starts locked</li><li>In kube-system</li><li>Nowhere; it relies on namespaces</li></ol><div class="explain">App allow-lists ship with the app.</div></div>
+
+<h2 id="predict">Predict the outcome (4 connectivity puzzles)</h2>
+<div class="check" data-type="predict"><p class="q">1 · AND vs OR: <code>orders</code> has ingress default-deny plus an allow whose <code>from</code> has two items: <code>namespaceSelector: web</code> and <code>podSelector: app=web</code>. A pod <code>web/debug</code> (no labels) calls orders-api:8080.</p><ol class="options"><li class="correct">Allowed: the first item allows any pod in namespace web</li><li>Denied</li><li>Allowed only on port 80</li></ol><div class="explain">Two items = OR.</div></div>
+<div class="check" data-type="predict"><p class="q">2 · Missing namespace label: the allow uses <code>namespaceSelector: { matchLabels: { team: shop } }</code>, but namespace <code>web</code> has no <code>team</code> label. web → orders-api?</p><ol class="options"><li>Allowed</li><li class="correct">Denied: no namespace matches the selector</li><li>Allowed for pods with app=web</li></ol><div class="explain">Use <code>kubernetes.io/metadata.name</code>, or label the namespace.</div></div>
+<div class="check" data-type="predict"><p class="q">3 · DNS: <code>web</code> has default-deny (Ingress + Egress) and an egress allow to orders-api:8080 only. <code>curl http://orders-api.orders/healthz</code> from web?</p><ol class="options"><li>Succeeds</li><li class="correct">Fails: "could not resolve host" (DNS egress blocked)</li><li>Connection refused</li></ol><div class="explain">Add allow-dns.</div></div>
+<div class="check" data-type="predict"><p class="q">4 · Additive: <code>db</code> has default-deny, plus <code>allow-orders-api</code> (from orders-api:5432) and, added by another team, <code>allow-reporting</code> (from namespace reporting, all ports). Can a reporting pod reach postgres:5432?</p><ol class="options"><li class="correct">Yes: the policies are added together</li><li>No: allow-orders-api restricts it</li><li>Only if applied first</li></ol><div class="explain">Review every allow; there's no "only" in NetworkPolicy.</div></div>
+
+<h2 id="lab">Write lab: secure the Contoso namespaces</h2>
+<div class="lab">
+  <p><b>Brief:</b> Namespaces <code>web</code>, <code>orders</code> and <code>db</code> exist, with pods <code>web</code> (app=web, :8080), <code>orders-api</code> (:8080), <code>orders-worker</code> and <code>postgres</code> (app=postgres, :5432). Write the policies in <code>k8s/policies/</code>. Graded by <b>netpol-eval</b> against this target matrix:</p>
+  <table>
+    <tr><th>Flow</th><th>Target</th></tr>
+    <tr><td>gateway-infra → web:8080, orders-api:8080</td><td>✓</td></tr>
+    <tr><td>web → orders-api:8080</td><td>✓</td></tr>
+    <tr><td>orders-api → postgres:5432</td><td>✓</td></tr>
+    <tr><td>orders-worker → postgres:5432</td><td>✓</td></tr>
+    <tr><td>Every pod → kube-dns:53 (UDP+TCP)</td><td>✓</td></tr>
+    <tr><td>Everything else</td><td>✗</td></tr>
+  </table>
+  <p>The results show each cell that differs from the target.</p>
+  <ul class="rules">
+    <li class="critical">A default-deny (Ingress + Egress) policy exists in every namespace (<code>web</code>, <code>orders</code>, <code>db</code>).</li>
+    <li class="critical">Nothing other than <code>orders-api</code> and <code>orders-worker</code> can reach <code>postgres</code>.</li>
+    <li>DNS works from every pod.</li>
+    <li>Every allowed flow has both its egress and its ingress side.</li>
+    <li>No allow-all rules (<code>ingress: [{}]</code> or <code>egress: [{}]</code>).</li>
+    <li>The matrix matches the target exactly.</li>
+  </ul>
+  <details class="solution"><summary>Reference solution (outline)</summary>
+  <ul>
+    <li>Each namespace: <code>default-deny</code> + <code>allow-dns</code> (lessons 9.2 and 9.4).</li>
+    <li><code>web</code>: ingress from gateway-infra:8080; egress to orders/orders-api:8080.</li>
+    <li><code>orders</code>: orders-api ingress from gateway-infra and web/web (AND form) on 8080; orders-api and orders-worker egress to db/postgres:5432.</li>
+    <li><code>db</code>: postgres ingress from orders pods with <code>app in (orders-api, orders-worker)</code> on 5432 (namespaceSelector AND podSelector with matchExpressions).</li>
+  </ul></details>
+</div>
+
+<h2 id="walkthrough">Walkthrough: default-deny breaks the app, then open flows one by one</h2>
+<ol>
+  <li>Apply default-deny to all three namespaces; the shop returns 502s, and the logs show DNS timeouts.</li>
+  <li>Add allow-dns: now the errors are connection timeouts.</li>
+  <li>Add gateway → web, web → orders-api and orders → db, in order, checking the site after each.</li>
+  <li>Verify a denied flow: <code>web</code> → <code>postgres</code> times out.</li>
+</ol>
+
+<h2 id="try">Try it locally</h2>
+<p class="muted">Run <code>./lab/addons/netpol.sh</code> first. It makes sure the lab enforces NetworkPolicy (installing a policy engine if the pinned kind version's default CNI doesn't). Results should match the in-browser matrix.</p>
+<div class="try" data-lesson="9.1-9.2"><p><b>Default-deny blocks traffic.</b></p>
+<pre>kubectl apply -f lab/examples/ch09/contoso-apps.yaml          # namespaces web, orders, db + pods + services
+kubectl exec -n web deploy/web -- wget -qO- -T 3 http://orders-api.orders/healthz
+kubectl apply -f lab/examples/ch09/default-deny-all.yaml
+kubectl exec -n web deploy/web -- wget -qO- -T 3 http://orders-api.orders/healthz</pre>
+<p>Expected: <code>ok</code>, then "bad address" (DNS blocked).</p><p><b>Cleanup:</b> keep it for the next box, or <code>kubectl delete -f lab/examples/ch09/</code></p></div>
+<div class="try" data-lesson="9.4"><p><b>DNS, then the flow.</b></p>
+<pre>kubectl apply -f lab/examples/ch09/allow-dns.yaml
+kubectl exec -n web deploy/web -- wget -qO- -T 3 http://orders-api.orders/healthz
+kubectl apply -f lab/examples/ch09/allow-web-to-orders.yaml
+kubectl exec -n web deploy/web -- wget -qO- -T 3 http://orders-api.orders/healthz</pre>
+<p>Expected: a timeout (DNS works, but the flow isn't allowed yet), then <code>ok</code>.</p><p><b>Cleanup:</b> none.</p></div>
+<div class="try" data-lesson="9.3"><p><b>AND vs OR.</b></p>
+<pre>kubectl run debug -n web --image=busybox:1.36 -- sleep 3600
+kubectl apply -f lab/examples/ch09/allow-web-OR.yaml;  kubectl exec -n web debug -- wget -qO- -T 3 http://orders-api.orders/healthz
+kubectl apply -f lab/examples/ch09/allow-web-AND.yaml; kubectl exec -n web debug -- wget -qO- -T 3 http://orders-api.orders/healthz</pre>
+<p>Expected: <code>ok</code> with OR (any pod in web), then a timeout with AND (debug lacks <code>app=web</code>). Both files use the same policy name, so the second replaces the first. The lab's egress allow in <code>web</code> covers every pod there, so only the ingress side on <code>orders-api</code> differs.</p>
+<p><b>Cleanup:</b> <code>kubectl delete pod debug -n web; kubectl delete -f lab/examples/ch09/</code></p></div>
+</main>
+</body>
+</html>

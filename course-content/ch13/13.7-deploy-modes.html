@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>13.7 · Deploy modes, what-if &amp; deployment stacks</title>
+<link rel="stylesheet" href="../content.css">
+</head>
+<body>
+<article class="lesson" data-id="13.7" data-chapter="13">
+<nav class="crumbs"><a href="../index.html">Course</a> / <a href="index.html">Chapter 13</a> / 13.7</nav>
+<header>
+  <p class="kicker">Chapter 13 · Lesson 13.7 · ~12 steps · ~16 min</p>
+  <h1>Deploy modes, what-if &amp; deployment stacks</h1>
+  <p class="meta">You'll be able to predict what a Bicep deployment does with resources you removed from the file, read what-if output, and use deployment stacks to manage a set of resources as a unit and block drift.</p>
+</header>
+
+<section class="step" id="s1">
+  <h2>1. Incremental mode (the default)</h2>
+  <div class="body">
+    <p>In <b>incremental</b> mode, ARM creates or updates the resources in the template and <b>leaves everything else alone</b>. That includes resources you <i>removed</i> from the file.</p>
+    <p>Without state, ARM has no memory that "this used to be in the template".</p>
+  </div>
+  <aside class="coming" data-set="TF">
+    <dl>
+      <dt>Terraform</dt><dd>The biggest difference. Delete a resource block in Terraform and the next apply <b>destroys</b> it, because state remembers it. Delete it in Bicep (incremental) and it <b>keeps running</b>, unmanaged and still billed.</dd>
+    </dl>
+  </aside>
+</section>
+
+<section class="step" id="s2">
+  <h2>2. Predict it</h2>
+  <div class="check" data-type="predict">
+    <p class="q">You delete the <code>userPool</code> agentPools resource from <code>aks.bicep</code> and redeploy (incremental). What happens to the <code>user</code> node pool in Azure?</p>
+    <ol class="options">
+      <li>It's deleted <span class="why">That's Terraform's behaviour, or complete mode / a stack with delete.</span></li>
+      <li class="correct">It stays, untouched and no longer managed by the template</li>
+      <li>The deployment fails <span class="why">Incremental deployments ignore resources not in the template.</span></li>
+      <li>It's scaled to zero <span class="why">Nothing touches it.</span></li>
+    </ol>
+    <div class="explain">To remove it, delete it explicitly (<code>az aks nodepool delete</code>), or use a deployment stack (step 7).</div>
+  </div>
+  <div class="widget" data-widget="deploy-modes">The template on the left (resources can be ticked off) and the resource group on the right. Deploy as Incremental, Complete, or Stack (actionOnUnmanage detach/delete). Removed resources stay grey (detached), turn red and disappear (deleted), or are flagged "unmanaged".</div>
+</section>
+
+<section class="step" id="s3">
+  <h2>3. Complete mode</h2>
+  <div class="body">
+    <p><code>--mode Complete</code> makes the resource group match the template exactly: anything in the group that isn't in the template is <b>deleted</b>. That includes resources other people or tools put there.</p>
+    <p>It's powerful and dangerous. It works only at resource-group scope, and conditional resources set to false are deleted too.</p>
+    <p>Most teams avoid it in favour of deployment stacks.</p>
+  </div>
+</section>
+
+<section class="step" id="s4">
+  <h2>4. what-if output</h2>
+  <pre class="output">$ az deployment group what-if -g rg-orders-prod -f main.bicep -p main.prod.bicepparam
+Resource and property changes are indicated with these symbols:
+  - Delete
+  + Create
+  ~ Modify
+  = Nochange
+  * Ignore
+  ! Deploy
+
+  ~ Microsoft.ContainerService/managedClusters/aks-orders-prod [2024-09-01]
+    ~ properties.agentPoolProfiles[0].upgradeSettings.maxSurge: "10%" =&gt; "33%"
+  + Microsoft.ContainerService/managedClusters/aks-orders-prod/agentPools/memory [2024-09-01]
+  = Microsoft.ManagedIdentity/userAssignedIdentities/id-aks-orders-prod [2023-01-31]
+  * Microsoft.Storage/storageAccounts/stdiagorders   (not in template; ignored in incremental mode)
+
+Resource changes: 1 to create, 1 to modify, 1 no change, 1 to ignore.</pre>
+  <div class="check" data-type="match">
+    <p class="q">Match each what-if symbol to its meaning.</p>
+    <table class="pairs">
+      <tr><td><code>+</code></td><td>Will be created</td></tr>
+      <tr><td><code>~</code></td><td>Will be modified</td></tr>
+      <tr><td><code>-</code></td><td>Will be deleted (complete mode or stacks)</td></tr>
+      <tr><td><code>*</code></td><td>Exists but not in the template, so ignored</td></tr>
+      <tr><td><code>=</code></td><td>No change</td></tr>
+    </table>
+    <div class="explain"><code>!</code> means what-if can't predict the result (for example, values only known during deployment).</div>
+  </div>
+</section>
+
+<section class="step" id="s5">
+  <h2>5. what-if noise</h2>
+  <div class="body"><p>what-if sometimes reports changes that aren't real: properties ARM normalises, or read-only values. Learn your template's usual noise, and use <code>--exclude-change-types NoChange Ignore</code> to focus. Remember that what-if is a <b>prediction</b>, not a saved plan (lesson 13.8).</p></div>
+</section>
+
+<section class="step" id="s6">
+  <h2>6. Drift without state</h2>
+  <div class="body"><p>"Bicep has no state, so there's no drift" is wrong. Someone can still change the node count in the portal. Bicep just doesn't track it. A redeploy resets the properties it sets, and what-if shows the difference. Run what-if on a schedule as a drift report, or prevent drift with deny settings (next).</p></div>
+</section>
+
+<section class="step" id="s7">
+  <h2>7. Deployment stacks</h2>
+  <div class="body">
+    <p>A <b>deployment stack</b> is an Azure resource that remembers the set of resources a template deployed, like a lightweight state that Azure keeps for you. That gives two powers:</p>
+    <ul>
+      <li><b><code>actionOnUnmanage</code></b>: what to do with resources removed from the template. <code>detachAll</code> keeps them; <code>deleteResources</code> or <code>deleteAll</code> deletes them, the Terraform-like behaviour.</li>
+      <li><b><code>denySettings</code></b>: block changes made outside the stack. <code>denyDelete</code> or <code>denyWriteAndDelete</code> stop portal and CLI edits, preventing drift, with exclusions for named principals.</li>
+    </ul>
+  </div>
+  <pre class="code" data-file="terminal">az stack group create \
+  --name stack-orders-prod \
+  --resource-group rg-orders-prod \
+  --template-file main.bicep \
+  --parameters main.prod.bicepparam \
+  --action-on-unmanage deleteResources \
+  --deny-settings-mode denyWriteAndDelete \
+  --deny-settings-excluded-principals "$PIPELINE_SP_OBJECT_ID"</pre>
+</section>
+
+<section class="step" id="s8">
+  <h2>8. Stopping portal drift</h2>
+  <div class="check" data-type="mcq">
+    <p class="q">Engineers keep changing the prod cluster in the portal during incidents and forgetting to update the code. Which Bicep-native feature stops that?</p>
+    <ol class="options">
+      <li>Complete mode <span class="why">It deletes extra resources; it doesn't stop edits to managed ones.</span></li>
+      <li class="correct">A deployment stack with <code>denySettings</code> (deny write and delete), excluding the pipeline identity</li>
+      <li>what-if <span class="why">It shows drift; it doesn't prevent it.</span></li>
+      <li>Resource locks on every resource <span class="why">Locks also block the pipeline unless removed each time; deny settings are designed for this.</span></li>
+    </ol>
+    <div class="explain">Changes then go through Git and the pipeline. For emergencies, the excluded principal list, or a break-glass procedure, still allows changes.</div>
+  </div>
+</section>
+
+<section class="step" id="s9">
+  <h2>9. Stack with delete: predict</h2>
+  <div class="check" data-type="predict">
+    <p class="q">The prod stack uses <code>actionOnUnmanage: deleteAll</code>. A PR removes the <code>memory</code> node pool from the parameters and the stack is updated. What happens?</p>
+    <ol class="options">
+      <li>It stays, detached <span class="why">That's detachAll.</span></li>
+      <li class="correct">The memory node pool is deleted, because the stack knows it previously managed it</li>
+      <li>The stack update fails <span class="why">Removing resources is normal.</span></li>
+      <li>The whole cluster is recreated <span class="why">Only the removed resource is affected.</span></li>
+    </ol>
+    <div class="explain">That's why what-if (or a stack's own preview) in the PR matters: removals now have real consequences, as in Terraform.</div>
+  </div>
+</section>
+
+<section class="step" id="s10">
+  <h2>10. When the stack itself is deleted</h2>
+  <div class="body"><p><code>az stack group delete</code> also takes <code>--action-on-unmanage</code>. Choose <code>detachAll</code> to remove the stack but keep the resources, or a delete option to tear everything down. For prod, protect the stack itself with RBAC: only the pipeline may change it.</p></div>
+</section>
+
+<section class="step" id="s11">
+  <h2>11. Which mode for Contoso?</h2>
+  <table>
+    <tr><th>Option</th><th>Removed from template</th><th>Out-of-band edits</th><th>Contoso uses it for</th></tr>
+    <tr><td>Incremental deployment</td><td>Kept, unmanaged</td><td>Allowed</td><td>Quick dev experiments</td></tr>
+    <tr><td>Complete mode</td><td>Deleted (whole RG)</td><td>Allowed</td><td>Never</td></tr>
+    <tr><td>Stack, <code>detachAll</code>, <code>denyDelete</code></td><td>Kept, detached</td><td>No deletes</td><td>Dev</td></tr>
+    <tr><td>Stack, <code>deleteResources</code>, <code>denyWriteAndDelete</code></td><td>Deleted</td><td>Blocked</td><td>Prod</td></tr>
+  </table>
+</section>
+
+<section class="step summary" id="s12">
+  <h2>Deploy modes, sorted</h2>
+  <ul>
+    <li>Incremental (default): removed resources stay. This is the biggest difference from Terraform.</li>
+    <li>Complete mode deletes anything not in the template. Avoid it.</li>
+    <li>what-if: + ~ - * = !; a prediction, with some noise.</li>
+    <li>Deployment stacks: <code>actionOnUnmanage</code> (detach/delete) and <code>denySettings</code> to prevent drift.</li>
+  </ul>
+</section>
+</article>
+</body>
+</html>

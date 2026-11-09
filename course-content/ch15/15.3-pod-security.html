@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>15.3 · Pod security</title>
+<link rel="stylesheet" href="../content.css">
+</head>
+<body>
+<article class="lesson" data-id="15.3" data-chapter="15">
+<nav class="crumbs"><a href="../index.html">Course</a> / <a href="index.html">Chapter 15</a> / 15.3</nav>
+<header>
+  <p class="kicker">Chapter 15 · Lesson 15.3 · ~12 steps · ~15 min</p>
+  <h1>Pod security</h1>
+  <p class="meta">You'll be able to enforce the Pod Security Standards on a namespace, and write a <code>securityContext</code> that passes the "restricted" level.</p>
+</header>
+
+<section class="step" id="s1">
+  <h2>1. What a pod could do</h2>
+  <div class="body">
+    <p>By default a container can run as root, gain more privileges, write anywhere in its filesystem, and use a broad set of Linux capabilities.</p>
+    <p>A privileged pod, or one using the host's network or filesystem, can take over the <b>node</b>, and from there reach other pods' secrets.</p>
+    <p>Pod security limits what any pod is allowed to request.</p>
+  </div>
+  <aside class="coming" data-set="A">
+    <dl>
+      <dt>Windows/IIS admin</dt><dd>Like running app pools as low-privilege identities instead of LocalSystem, enforced for every site.</dd>
+      <dt>Linux admin</dt><dd>Non-root users, no setuid escalation, dropped capabilities, seccomp, a read-only root: standard host hardening, per container.</dd>
+      <dt>Developer (Compose)</dt><dd>Like <code>user:</code>, <code>read_only: true</code>, <code>cap_drop: [ALL]</code> and <code>security_opt: no-new-privileges</code> in Compose.</dd>
+      <dt>Other clouds</dt><dd>The same Pod Security Admission on EKS and GKE (GKE Autopilot enforces much of it by default).</dd>
+    </dl>
+  </aside>
+</section>
+
+<section class="step" id="s2">
+  <h2>2. Pod Security Standards</h2>
+  <table>
+    <tr><th>Level</th><th>Allows</th><th>Use for</th></tr>
+    <tr><td><b>privileged</b></td><td>Anything</td><td>System add-ons that genuinely need host access</td></tr>
+    <tr><td><b>baseline</b></td><td>Blocks known escalations (privileged, hostNetwork/hostPID, hostPath, added dangerous capabilities)</td><td>A minimum for everything</td></tr>
+    <tr><td><b>restricted</b></td><td>Baseline plus: must run as non-root, no privilege escalation, drop ALL capabilities, a seccomp profile, limited volume types</td><td>Your apps: the target for Contoso</td></tr>
+  </table>
+</section>
+
+<section class="step" id="s3">
+  <h2>3. Enforcing by namespace label</h2>
+  <div class="body">
+    <p>The built-in <b>Pod Security Admission</b> controller reads labels on each namespace. There are three modes per level:</p>
+    <ul>
+      <li><code>enforce</code>: reject violating pods.</li>
+      <li><code>audit</code>: allow, but record the violation in the audit log.</li>
+      <li><code>warn</code>: allow, but show a warning to whoever applied it.</li>
+    </ul>
+  </div>
+  <div class="check" data-type="fill">
+    <p class="q">Make namespace <code>orders</code> reject any pod that doesn't meet the restricted level.</p>
+    <pre class="code" data-file="k8s/namespaces/orders.yaml">apiVersion: v1
+kind: Namespace
+metadata:
+  name: orders
+  labels:
+    <span class="blank">?</span>: restricted
+    pod-security.kubernetes.io/warn: restricted</pre>
+    <ul class="chips">
+      <li class="correct"><code>pod-security.kubernetes.io/enforce</code></li>
+      <li><code>pod-security.kubernetes.io/audit</code> <span class="why">Audit only records violations; pods still run.</span></li>
+      <li><code>podsecuritypolicy</code> <span class="why">PodSecurityPolicy was removed in Kubernetes 1.25.</span></li>
+      <li><code>security.aks.azure.com/level</code> <span class="why">Not a real label.</span></li>
+    </ul>
+    <div class="explain">Pair enforce with warn, so people see why something would be rejected before it is.</div>
+  </div>
+</section>
+
+<section class="step" id="s4">
+  <h2>4. warn isn't protection</h2>
+  <div class="body"><p>In <code>warn</code> (or <code>audit</code>) mode, violating pods are <b>created and run</b>. Warnings are good for rolling a level out ("which of our apps would break?"), but only <code>enforce</code> protects you.</p></div>
+  <pre class="output">$ kubectl apply -f debug-pod.yaml -n orders
+Warning: would violate PodSecurity "restricted:latest": allowPrivilegeEscalation != false (container "debug" must set
+securityContext.allowPrivilegeEscalation=false), runAsNonRoot != true (pod or container "debug" must set
+securityContext.runAsNonRoot=true)
+pod/debug created</pre>
+</section>
+
+<section class="step" id="s5">
+  <h2>5. The hardened securityContext</h2>
+  <pre class="code" data-file="k8s/base/deployment.yaml (pod spec)">spec:
+  automountServiceAccountToken: false     # unless the app calls the Kubernetes API
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 65532
+    runAsGroup: 65532
+    fsGroup: 65532
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: api
+      image: contosoacr.azurecr.io/orders-api:1.4.2
+      securityContext:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        capabilities:
+          drop: ["ALL"]
+      volumeMounts:
+        - name: tmp
+          mountPath: /tmp
+  volumes:
+    - name: tmp
+      emptyDir: {}</pre>
+  <div class="body"><p>UID 65532 is the <code>nonroot</code> user of the distroless image from lesson 1.1. A read-only root filesystem means anything the app writes goes to a mounted <code>emptyDir</code>, such as <code>/tmp</code>.</p></div>
+</section>
+
+<section class="step" id="s6">
+  <h2>6. What each field stops</h2>
+  <table>
+    <tr><th>Field</th><th>Stops</th></tr>
+    <tr><td><code>runAsNonRoot</code></td><td>Running as UID 0 inside the container</td></tr>
+    <tr><td><code>allowPrivilegeEscalation: false</code></td><td>setuid binaries and similar tricks gaining more privileges</td></tr>
+    <tr><td><code>capabilities.drop: [ALL]</code></td><td>Kernel capabilities like NET_RAW, SYS_ADMIN</td></tr>
+    <tr><td><code>seccompProfile: RuntimeDefault</code></td><td>Rarely needed, dangerous system calls</td></tr>
+    <tr><td><code>readOnlyRootFilesystem</code></td><td>Attackers writing tools or changing binaries in the container</td></tr>
+  </table>
+</section>
+
+<section class="step" id="s7">
+  <h2>7. Make it pass</h2>
+  <div class="check" data-type="custom">
+    <p class="q">Edit the pod spec until it passes the restricted level.</p>
+    <div class="widget" data-widget="policy-rules">A pod spec editor with a live checker listing each restricted rule as ✓/✗. The starting spec has no securityContext and runs as root, with <code>NET_ADMIN</code> added. Success when every restricted rule passes (runAsNonRoot, allowPrivilegeEscalation false, drop ALL, no added capabilities except NET_BIND_SERVICE, seccomp RuntimeDefault or Localhost, no privileged, no host namespaces or hostPath).</div>
+    <div class="explain"><code>readOnlyRootFilesystem</code> isn't required by restricted, but Contoso requires it too (and Chapter 16's policies check it).</div>
+  </div>
+</section>
+
+<section class="step" id="s8">
+  <h2>8. Images must cooperate</h2>
+  <div class="body"><p>If an image's entrypoint needs root, for example to bind port 80 or write to <code>/var</code>, it fails under restricted: "container has runAsNonRoot and image will run as root". Fix the image (a non-root user, listen on 8080), not the policy. Lesson 1.1's Dockerfile already does.</p></div>
+</section>
+
+<section class="step" id="s9">
+  <h2>9. Exceptions</h2>
+  <div class="body"><p>Some add-ons need more (log agents reading host paths). Put them in their own namespace with <code>baseline</code> or <code>privileged</code>, owned by the platform team. Never relax an app namespace to make one pod work.</p></div>
+</section>
+
+<section class="step" id="s10">
+  <h2>10. Rolling it out</h2>
+  <ol>
+    <li>Label every app namespace with <code>warn</code> and <code>audit</code> = restricted.</li>
+    <li>Collect the warnings and audit events, and fix the manifests.</li>
+    <li>Switch to <code>enforce</code>, in dev first, then prod.</li>
+  </ol>
+</section>
+
+<section class="step" id="s11">
+  <h2>11. Pod Security and Azure Policy</h2>
+  <div class="body"><p>Pod Security Admission covers the standard levels. For anything beyond them (allowed registries, required labels, no <code>latest</code>, resource limits), use admission policies: the Azure Policy add-on or Kyverno (Chapter 16). They work together.</p></div>
+</section>
+
+<section class="step summary" id="s12">
+  <h2>Pod security, sorted</h2>
+  <ul>
+    <li>Levels: privileged / baseline / restricted; modes: enforce / audit / warn, set with namespace labels.</li>
+    <li>warn and audit let violating pods run; only enforce protects.</li>
+    <li>Restricted: runAsNonRoot, allowPrivilegeEscalation false, drop ALL, seccomp RuntimeDefault; add readOnlyRootFilesystem.</li>
+    <li>Fix images, not policies; isolate the exceptions.</li>
+  </ul>
+</section>
+</article>
+</body>
+</html>

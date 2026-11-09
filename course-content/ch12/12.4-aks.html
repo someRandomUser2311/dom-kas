@@ -1,0 +1,250 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>12.4 · Building AKS</title>
+<link rel="stylesheet" href="../content.css">
+</head>
+<body>
+<article class="lesson" data-id="12.4" data-chapter="12">
+<nav class="crumbs"><a href="../index.html">Course</a> / <a href="index.html">Chapter 12</a> / 12.4</nav>
+<header>
+  <p class="kicker">Chapter 12 · Lesson 12.4 · ~15 steps · ~20 min</p>
+  <h1>Building AKS</h1>
+  <p class="meta">You'll be able to write Contoso's AKS cluster in Terraform, one decision at a time. Every block maps to a choice you made with the CLI in Chapters 4–6.</p>
+</header>
+
+<section class="step" id="s1">
+  <h2>1. The skeleton</h2>
+  <div class="body"><p>Start with the required arguments. <code>dns_prefix</code> becomes part of the API server's hostname.</p></div>
+  <pre class="code" data-file="aks.tf">resource "azurerm_kubernetes_cluster" "main" {
+  name                = "aks-${local.name_suffix}"
+  location            = azurerm_resource_group.main.location
+  resource_group_name = azurerm_resource_group.main.name
+  dns_prefix          = "aks-${local.name_suffix}"
+  node_resource_group = "rg-${local.name_suffix}-nodes"
+  sku_tier            = local.is_prod ? "Standard" : "Free"
+  tags                = local.tags
+}</pre>
+  <aside class="coming" data-set="C">
+    <dl>
+      <dt>Portal/ARM</dt><dd>Each block maps to a section of the portal's "Create Kubernetes cluster" wizard, or to properties of <code>Microsoft.ContainerService/managedClusters</code>.</dd>
+      <dt>az CLI scripts</dt><dd>Each block replaces a group of <code>az aks create</code> flags from lesson 4.6, listed side by side in step 14.</dd>
+      <dt>CloudFormation</dt><dd>Like an <code>AWS::EKS::Cluster</code> plus nodegroups, with a lot more in one resource.</dd>
+      <dt>Pulumi</dt><dd>The same properties as <code>azure-native.containerservice.ManagedCluster</code>.</dd>
+    </dl>
+  </aside>
+</section>
+
+<section class="step" id="s2">
+  <h2>2. The system node pool</h2>
+  <div class="body"><p>Every cluster needs a <code>default_node_pool</code>, which is our system pool (lesson 4.2): three zones, critical add-ons only, in Contoso's subnet. <code>temporary_name_for_rotation</code> lets Terraform change settings that need the pool recreated.</p></div>
+  <pre class="code" data-file="aks.tf" data-diff>+  default_node_pool {
++    name                         = "system"
++    vm_size                      = "Standard_D4ds_v5"
++    node_count                   = 3
++    zones                        = ["1", "2", "3"]
++    only_critical_addons_enabled = true
++    vnet_subnet_id               = azurerm_subnet.aks_nodes.id
++    os_sku                       = "AzureLinux"
++    temporary_name_for_rotation  = "systemtmp"
++    upgrade_settings {
++      max_surge = "33%"
++    }
++  }</pre>
+  <aside class="more"><p><code>only_critical_addons_enabled = true</code> adds the <code>CriticalAddonsOnly=true:NoSchedule</code> taint from lesson 4.2.</p></aside>
+</section>
+
+<section class="step" id="s3">
+  <h2>3. The cluster's identity</h2>
+  <pre class="code" data-file="aks.tf" data-diff>+  identity {
++    type         = "UserAssigned"
++    identity_ids = [azurerm_user_assigned_identity.aks.id]
++  }</pre>
+  <div class="body"><p>A user-assigned identity, created in <code>identity.tf</code> (lesson 12.5), so we can grant it Network Contributor on the subnet <i>before</i> the cluster exists.</p></div>
+</section>
+
+<section class="step" id="s4">
+  <h2>4. Networking</h2>
+  <pre class="code" data-file="aks.tf" data-diff>+  network_profile {
++    network_plugin      = "azure"
++    network_plugin_mode = "overlay"
++    network_data_plane  = "cilium"
++    network_policy      = "cilium"
++    pod_cidr            = "192.168.0.0/16"
++    service_cidr        = "172.16.0.0/16"
++    dns_service_ip      = "172.16.0.10"
++    outbound_type       = "loadBalancer"
++  }</pre>
+  <div class="check" data-type="fill">
+    <p class="q">Which argument makes pods use the overlay range instead of VNet IPs?</p>
+    <pre class="code" data-file="aks.tf">  network_profile {
+    network_plugin      = "azure"
+    <span class="blank">?</span> = "overlay"</pre>
+    <ul class="chips">
+      <li class="correct"><code>network_plugin_mode</code></li>
+      <li><code>network_mode</code> <span class="why">A different, older setting (bridge/transparent).</span></li>
+      <li><code>network_data_plane</code> <span class="why">That picks Cilium vs Azure, not overlay.</span></li>
+      <li><code>pod_cidr</code> <span class="why">The range, not the mode.</span></li>
+    </ul>
+    <div class="explain">The same as <code>--network-plugin-mode overlay</code> in lesson 4.6.</div>
+  </div>
+</section>
+
+<section class="step" id="s5">
+  <h2>5. Workload identity</h2>
+  <pre class="code" data-file="aks.tf" data-diff>+  oidc_issuer_enabled       = true
++  workload_identity_enabled = true</pre>
+</section>
+
+<section class="step" id="s6">
+  <h2>6. Entra ID + Azure RBAC, no local accounts</h2>
+  <pre class="code" data-file="aks.tf" data-diff>+  azure_active_directory_role_based_access_control {
++    azure_rbac_enabled     = true
++    tenant_id              = data.azurerm_client_config.current.tenant_id
++    admin_group_object_ids = [var.aks_admin_group_id]
++  }
++  local_account_disabled = true</pre>
+  <div class="check" data-type="tapline" data-match="local_account_disabled = true">
+    <p class="q">Tap the argument that removes the static admin kubeconfig.</p>
+    <div class="explain"><code>local_account_disabled = true</code>. The admin group keeps an Entra ID way in, so you can't lock yourself out.</div>
+  </div>
+</section>
+
+<section class="step" id="s7">
+  <h2>7. Public in dev, private in prod</h2>
+  <pre class="code" data-file="aks.tf" data-diff>+  private_cluster_enabled = local.is_prod
++  private_dns_zone_id     = local.is_prod ? var.private_dns_zone_id : null
++
++  dynamic "api_server_access_profile" {
++    for_each = local.is_prod ? [] : [1]
++    content {
++      authorized_ip_ranges = var.authorized_ip_ranges
++    }
++  }</pre>
+  <div class="body"><p>Authorized IP ranges only apply to public clusters (lesson 6.4), so the block is generated only in dev. Lesson 12.6 explains <code>dynamic</code> blocks.</p></div>
+</section>
+
+<section class="step" id="s8">
+  <h2>8. Upgrades and maintenance</h2>
+  <pre class="code" data-file="aks.tf" data-diff>+  automatic_upgrade_channel = "patch"
++  node_os_upgrade_channel   = "NodeImage"
++
++  maintenance_window_node_os {
++    frequency   = "Weekly"
++    interval    = 1
++    day_of_week = "Sunday"
++    start_time  = "01:00"
++    duration    = 4
++    utc_offset  = "+01:00"
++  }</pre>
+</section>
+
+<section class="step" id="s9">
+  <h2>9. Monitoring</h2>
+  <pre class="code" data-file="main.tf (new resource)">resource "azurerm_log_analytics_workspace" "main" {
+  name                = "log-${local.name_suffix}"
+  location            = azurerm_resource_group.main.location
+  resource_group_name = azurerm_resource_group.main.name
+  sku                 = "PerGB2018"
+  retention_in_days   = 30
+  tags                = local.tags
+}</pre>
+  <pre class="code" data-file="aks.tf" data-diff>+  oms_agent {
++    log_analytics_workspace_id      = azurerm_log_analytics_workspace.main.id
++    msi_auth_for_monitoring_enabled = true
++  }</pre>
+  <div class="body"><p>Chapter 14 adds managed Prometheus and diagnostic settings.</p></div>
+</section>
+
+<section class="step" id="s10">
+  <h2>10. The user node pool</h2>
+  <div class="body"><p>Extra pools are separate resources. They can then be added or removed without touching the cluster resource.</p></div>
+  <pre class="code" data-file="aks.tf (new resource)">resource "azurerm_kubernetes_cluster_node_pool" "user" {
+  name                  = "user"
+  kubernetes_cluster_id = azurerm_kubernetes_cluster.main.id
+  mode                  = "User"
+  vm_size               = var.user_pool.vm_size
+  zones                 = ["1", "2", "3"]
+  vnet_subnet_id        = azurerm_subnet.aks_nodes.id
+  os_sku                = "AzureLinux"
+  auto_scaling_enabled  = true
+  min_count             = var.user_pool.min_count
+  max_count             = var.user_pool.max_count
+  tags                  = local.tags
+}</pre>
+</section>
+
+<section class="step" id="s11">
+  <h2>11. The container registry</h2>
+  <div class="body"><p>Contoso's registry is shared by dev and prod, so it lives in a small separate configuration (<code>infra/terraform/shared</code>). The cluster configurations <b>read</b> it with a data source.</p></div>
+  <pre class="code" data-file="shared/main.tf">resource "azurerm_container_registry" "main" {
+  name                          = "contosoacr"
+  resource_group_name           = azurerm_resource_group.shared.name
+  location                      = azurerm_resource_group.shared.location
+  sku                           = "Premium"
+  admin_enabled                 = false
+  public_network_access_enabled = false
+}</pre>
+  <pre class="code" data-file="main.tf (cluster config)">data "azurerm_container_registry" "shared" {
+  name                = "contosoacr"
+  resource_group_name = "rg-orders-shared"
+}</pre>
+</section>
+
+<section class="step" id="s12">
+  <h2>12. Dev vs prod with one variable</h2>
+  <div class="check" data-type="custom">
+    <p class="q">In the editor, make prod use the Standard tier and a private cluster, while dev stays Free and public, driven only by <code>var.environment</code>.</p>
+    <div class="widget" data-widget="iac-editor">The cluster from steps 1–9, with <code>sku_tier</code> and <code>private_cluster_enabled</code> hard-coded. Graded by iac-rules with environment=dev and environment=prod: prod plans <code>sku_tier = "Standard"</code> and <code>private_cluster_enabled = true</code>; dev plans Free and false; no other differences.</div>
+    <div class="explain">Use <code>local.is_prod</code> (lesson 12.3) in both arguments, which is exactly how steps 1 and 7 do it.</div>
+  </div>
+</section>
+
+<section class="step" id="s13">
+  <h2>13. Plan it</h2>
+  <pre class="output">$ terraform plan -var-file=dev.tfvars -out=tfplan
+  # azurerm_kubernetes_cluster.main will be created
+  + resource "azurerm_kubernetes_cluster" "main" {
+      + local_account_disabled    = true
+      + oidc_issuer_enabled       = true
+      + private_cluster_enabled   = false
+      + sku_tier                  = "Free"
+      + workload_identity_enabled = true
+      + network_profile {
+          + network_data_plane  = "cilium"
+          + network_plugin      = "azure"
+          + network_plugin_mode = "overlay"
+          ...
+Plan: 9 to add, 0 to change, 0 to destroy.</pre>
+</section>
+
+<section class="step" id="s14">
+  <h2>14. CLI flag → Terraform argument</h2>
+  <table>
+    <tr><th><code>az aks create</code> (lesson 4.6)</th><th>Terraform</th></tr>
+    <tr><td><code>--tier standard</code></td><td><code>sku_tier = "Standard"</code></td></tr>
+    <tr><td><code>--zones 1 2 3</code></td><td><code>default_node_pool { zones = ["1","2","3"] }</code></td></tr>
+    <tr><td><code>--nodepool-taints CriticalAddonsOnly=true:NoSchedule</code></td><td><code>only_critical_addons_enabled = true</code></td></tr>
+    <tr><td><code>--network-plugin-mode overlay</code></td><td><code>network_plugin_mode = "overlay"</code></td></tr>
+    <tr><td><code>--network-dataplane cilium</code></td><td><code>network_data_plane = "cilium"</code></td></tr>
+    <tr><td><code>--enable-oidc-issuer --enable-workload-identity</code></td><td><code>oidc_issuer_enabled</code>, <code>workload_identity_enabled</code></td></tr>
+    <tr><td><code>--enable-aad --enable-azure-rbac</code></td><td><code>azure_active_directory_role_based_access_control { azure_rbac_enabled = true }</code></td></tr>
+    <tr><td><code>--disable-local-accounts</code></td><td><code>local_account_disabled = true</code></td></tr>
+    <tr><td><code>--auto-upgrade-channel patch</code></td><td><code>automatic_upgrade_channel = "patch"</code></td></tr>
+  </table>
+</section>
+
+<section class="step summary" id="s15">
+  <h2>Building AKS, sorted</h2>
+  <ul>
+    <li><code>azurerm_kubernetes_cluster</code> with a system <code>default_node_pool</code>, user-assigned identity, overlay + Cilium, OIDC + workload identity, Azure RBAC, no local accounts.</li>
+    <li>Private in prod, authorized IPs in dev, from one variable.</li>
+    <li>Upgrade channels and a maintenance window; <code>oms_agent</code> to Log Analytics.</li>
+    <li>User pools as separate <code>azurerm_kubernetes_cluster_node_pool</code> resources; the shared ACR read through a data source.</li>
+  </ul>
+</section>
+</article>
+</body>
+</html>

@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>11.2 · Blue/green</title>
+<link rel="stylesheet" href="../content.css">
+</head>
+<body>
+<article class="lesson" data-id="11.2" data-chapter="11">
+<nav class="crumbs"><a href="../index.html">Course</a> / <a href="index.html">Chapter 11</a> / 11.2</nav>
+<header>
+  <p class="kicker">Chapter 11 · Lesson 11.2 · ~10 steps · ~12 min</p>
+  <h1>Blue/green</h1>
+  <p class="meta">You'll be able to run two full versions side by side, switch all traffic at once, roll back in seconds, and handle the database changes that make it hard.</p>
+</header>
+
+<section class="step" id="s1">
+  <h2>1. Two complete environments</h2>
+  <div class="body">
+    <p>In <b>blue/green</b>, the current version (blue) keeps running at full size while the new version (green) is deployed alongside it, also at full size, and tested.</p>
+    <p>Then traffic switches <b>all at once</b> from blue to green. If anything's wrong, you switch back just as fast.</p>
+  </div>
+  <aside class="coming" data-set="A">
+    <dl>
+      <dt>Windows/IIS admin</dt><dd>Like App Service deployment slots: deploy to staging, warm it up, swap.</dd>
+      <dt>Linux admin</dt><dd>Like pointing a load balancer's backend pool, or a symlink, from the old release directory to the new one.</dd>
+      <dt>Developer (Compose)</dt><dd>Run <code>app-blue</code> and <code>app-green</code>, then repoint the proxy.</dd>
+      <dt>Other clouds</dt><dd>Like CodeDeploy blue/green for ECS, or swapping target groups.</dd>
+    </dl>
+  </aside>
+</section>
+
+<section class="step" id="s2">
+  <h2>2. Two Deployments, one label apart</h2>
+  <div class="body"><p>Both Deployments run the same app with a different <code>version</code> label and image.</p></div>
+  <pre class="code" data-file="k8s/bluegreen/deploy-green.yaml (excerpt)">metadata:
+  name: orders-api-green
+spec:
+  replicas: 4
+  selector:
+    matchLabels: { app: orders-api, version: green }
+  template:
+    metadata:
+      labels: { app: orders-api, version: green }
+    spec:
+      containers:
+        - name: api
+          image: contosoacr.azurecr.io/orders-api:1.5.0</pre>
+</section>
+
+<section class="step" id="s3">
+  <h2>3. The switch: a Service selector</h2>
+  <div class="body">
+    <p>The live Service selects <code>version: blue</code>. Changing that one value to <code>green</code> moves all new connections to the green pods within seconds.</p>
+    <p>A second Service, <code>orders-api-preview</code>, always points at the idle colour, so you can test green before switching.</p>
+  </div>
+  <div class="check" data-type="tapline" data-match="version: green">
+    <p class="q">Tap the line that sends production traffic to the new version.</p>
+    <pre class="code" data-file="k8s/bluegreen/service.yaml">apiVersion: v1
+kind: Service
+metadata:
+  name: orders-api
+  namespace: orders
+spec:
+  selector:
+    app: orders-api
+    version: green
+  ports:
+    - port: 80
+      targetPort: 8080</pre>
+    <div class="explain">Flipping <code>version</code> in the live Service's selector is the whole switch. With the Gateway API you'd instead change the HTTPRoute's <code>backendRefs</code> from <code>orders-api-blue</code> to <code>orders-api-green</code>.</div>
+  </div>
+</section>
+
+<section class="step" id="s4">
+  <h2>4. The flow</h2>
+  <ol>
+    <li>Blue (1.4.2) serves production; green doesn't exist or is scaled to 0.</li>
+    <li>Deploy green (1.5.0) at full size; wait for ready.</li>
+    <li>Test green through <code>orders-api-preview</code>: smoke tests, a manual check.</li>
+    <li>Switch the live Service selector to <code>green</code>.</li>
+    <li>Watch metrics. If they're bad, switch back to <code>blue</code>.</li>
+    <li>After a safe period, scale blue to 0. It becomes the next "green".</li>
+  </ol>
+</section>
+
+<section class="step" id="s5">
+  <h2>5. Rollback speed and cost</h2>
+  <div class="check" data-type="mcq">
+    <p class="q">What's the main trade-off of blue/green compared with a rolling update?</p>
+    <ol class="options">
+      <li>Slower rollback <span class="why">Rollback is the fastest of all: one selector change.</span></li>
+      <li class="correct">Near-instant switch and rollback, at the cost of running double capacity during the release</li>
+      <li>It doesn't work with Services <span class="why">A Service selector is the simplest way to do it.</span></li>
+      <li>Users see mixed versions <span class="why">That's rolling and canary; blue/green switches everyone at once.</span></li>
+    </ol>
+    <div class="explain">Double the pods, so double the requests on the cluster, possibly with the autoscaler adding nodes. That's the price of a clean, instant switch.</div>
+  </div>
+</section>
+
+<section class="step" id="s6">
+  <h2>6. The database problem</h2>
+  <div class="body">
+    <p>Blue and green share the <b>same database</b>. If 1.5.0 renames a column, blue breaks the moment green migrates, and you can't switch back.</p>
+    <p>The fix is <b>expand/contract</b> migrations:</p>
+    <ol>
+      <li><b>Expand:</b> add the new column and keep the old one. Both versions work.</li>
+      <li>Deploy and switch to the new version, which writes both columns or reads the new one.</li>
+      <li><b>Contract:</b> once blue is retired for good, remove the old column in a later release.</li>
+    </ol>
+    <p>The same rule applies to rolling and canary releases, which also run two versions at once.</p>
+  </div>
+</section>
+
+<section class="step" id="s7">
+  <h2>7. Long-lived connections and state</h2>
+  <div class="body"><p>A selector switch only affects <b>new</b> connections. Long-lived connections (WebSockets, gRPC streams) stay on blue until they close. In-memory sessions on blue are lost on switch, so keep session state in a shared store.</p></div>
+</section>
+
+<section class="step" id="s8">
+  <h2>8. Blue/green in a pipeline</h2>
+  <pre class="code" data-file="(steps excerpt)">- script: |
+    set -euo pipefail
+    COLOR=$(kubectl get svc orders-api -n orders -o jsonpath='{.spec.selector.version}')
+    NEXT=$([ "$COLOR" = blue ] &amp;&amp; echo green || echo blue)
+    kubectl set image deploy/orders-api-$NEXT api=contosoacr.azurecr.io/orders-api:$(Build.BuildId) -n orders
+    kubectl scale deploy/orders-api-$NEXT --replicas=4 -n orders
+    kubectl rollout status deploy/orders-api-$NEXT -n orders --timeout=5m
+    ./smoke-test.sh http://orders-api-preview.orders
+    kubectl patch svc orders-api -n orders -p "{\"spec\":{\"selector\":{\"app\":\"orders-api\",\"version\":\"$NEXT\"}}}"
+  displayName: Blue/green switch</pre>
+  <div class="body"><p>Put an approval check before the switch step, or after the smoke test, if a human should decide.</p></div>
+</section>
+
+<section class="step" id="s9">
+  <h2>9. A selector typo</h2>
+  <div class="body"><p>If the switch sets <code>version: Green</code> (capital G), the Service matches <b>no pods</b> and every request fails, instantly, for everyone. Script the switch, verify the endpoints right after (<code>kubectl get endpointslices</code>), and switch back automatically if they're empty.</p></div>
+</section>
+
+<section class="step summary" id="s10">
+  <h2>Blue/green, sorted</h2>
+  <ul>
+    <li>Two full Deployments; a Service selector or route decides which gets traffic.</li>
+    <li>Instant switch and rollback; double capacity while both run.</li>
+    <li>Test green through a preview Service before switching.</li>
+    <li>Expand/contract database changes; external session state.</li>
+  </ul>
+</section>
+</article>
+</body>
+</html>

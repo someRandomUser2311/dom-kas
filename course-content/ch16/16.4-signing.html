@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>16.4 · Signing &amp; verification</title>
+<link rel="stylesheet" href="../content.css">
+</head>
+<body>
+<article class="lesson" data-id="16.4" data-chapter="16">
+<nav class="crumbs"><a href="../index.html">Course</a> / <a href="index.html">Chapter 16</a> / 16.4</nav>
+<header>
+  <p class="kicker">Chapter 16 · Lesson 16.4 · ~12 steps · ~15 min</p>
+  <h1>Signing &amp; verification</h1>
+  <p class="meta">You'll be able to sign images in the pipeline with a Key Vault key, verify signatures before deploy and at admission, and choose between Notation and cosign.</p>
+</header>
+
+<section class="step" id="s1">
+  <h2>1. What a signature proves</h2>
+  <div class="body">
+    <p>A signature over an image <b>digest</b> proves two things:</p>
+    <ul>
+      <li><b>integrity</b>: the image hasn't changed since it was signed;</li>
+      <li><b>provenance</b>: it was signed by a key you trust, Contoso's pipeline.</li>
+    </ul>
+    <p>Verification at deploy time turns "anything in the registry can run" into "only images our pipeline vouched for can run".</p>
+  </div>
+  <aside class="coming" data-set="B">
+    <dl>
+      <dt>GitHub Actions</dt><dd>Often cosign keyless with the workflow's OIDC identity (Sigstore). The same verify-at-admission idea.</dd>
+      <dt>GitLab CI</dt><dd>cosign signing in CI with GitLab's OIDC id_tokens.</dd>
+      <dt>Jenkins</dt><dd>cosign or Notation with keys from a vault.</dd>
+      <dt>Classic pipelines</dt><dd>Same tools as script steps.</dd>
+    </dl>
+  </aside>
+</section>
+
+<section class="step" id="s2">
+  <h2>2. Two ecosystems</h2>
+  <table>
+    <tr><th></th><th>Notation (Notary Project)</th><th>cosign (Sigstore)</th></tr>
+    <tr><td>Keys</td><td>X.509 certificates, with a plugin for <b>Azure Key Vault</b></td><td>Key pairs, KMS keys, or keyless (OIDC identity + transparency log)</td></tr>
+    <tr><td>Azure integration</td><td>First-class: ACR, Key Vault, Ratify / AKS image integrity</td><td>Works with ACR; verification with Kyverno or Ratify</td></tr>
+    <tr><td>Contoso uses</td><td>✔ In the pipeline and at admission</td><td>In the local lab (simplest with a local key)</td></tr>
+  </table>
+</section>
+
+<section class="step" id="s3">
+  <h2>3. The signing key lives in Key Vault</h2>
+  <div class="body">
+    <p>Create a signing certificate in Key Vault. The private key never leaves the vault: Notation's <code>azure-kv</code> plugin asks Key Vault to sign.</p>
+    <p>The pipeline identity needs <b>Key Vault Crypto User</b> (to sign) and <b>Key Vault Certificate User</b> on that key, and nothing more.</p>
+    <p>There's no key material in the repo or the pipeline.</p>
+  </div>
+</section>
+
+<section class="step" id="s4">
+  <h2>4. Sign in the pipeline</h2>
+  <pre class="code" data-file="(Build job, after scan + push)">- task: AzureCLI@2
+  displayName: Sign image
+  inputs:
+    azureSubscription: sc-orders-signing          # WIF, Key Vault Crypto User on the signing key
+    scriptType: bash
+    scriptLocation: inlineScript
+    inlineScript: |
+      set -euo pipefail
+      az acr login -n contosoacr
+      notation sign --signature-format cose \
+        --id "$(signingKeyId)" --plugin azure-kv \
+        contosoacr.azurecr.io/orders-api@$(imageDigest)</pre>
+  <div class="body"><p>The signature is pushed to ACR as a referrer of the image digest (lesson 16.3, step 8).</p></div>
+</section>
+
+<section class="step" id="s5">
+  <h2>5. Verify</h2>
+  <div class="body"><p>Verification needs a <b>trust policy</b>: which registries, which trusted certificates (trust store), and what to do on failure.</p></div>
+  <pre class="code" data-file="trustpolicy.json">{
+  "version": "1.0",
+  "trustPolicies": [{
+    "name": "contoso-images",
+    "registryScopes": [ "contosoacr.azurecr.io/orders-api" ],
+    "signatureVerification": { "level": "strict" },
+    "trustStores": [ "ca:contoso-signing" ],
+    "trustedIdentities": [ "x509.subject: CN=Contoso Release Signing, O=Contoso" ]
+  }]
+}</pre>
+  <pre class="code" data-file="terminal">notation verify contosoacr.azurecr.io/orders-api@sha256:3f5a9c0d…</pre>
+</section>
+
+<section class="step" id="s6">
+  <h2>6. The flow</h2>
+  <div class="check" data-type="order">
+    <p class="q">Order the sign-and-verify flow.</p>
+    <ol class="options">
+      <li>The pipeline builds and scans the image</li>
+      <li>It pushes the image and records the digest</li>
+      <li>It signs the digest with the Key Vault key (signature stored in ACR)</li>
+      <li>The deploy stage applies manifests that reference the digest</li>
+      <li>The admission controller verifies the signature against the trust policy, and admits or denies</li>
+    </ol>
+    <div class="explain">The last step is what makes signing worth doing: unsigned or tampered images can't run.</div>
+  </div>
+</section>
+
+<section class="step" id="s7">
+  <h2>7. Verification at admission</h2>
+  <div class="body">
+    <p>On AKS, verification at admission uses <b>Ratify</b>, a verification engine. Ratify works with Gatekeeper and Azure Policy, which AKS packages as its <b>image integrity</b> feature.</p>
+    <p>A policy assignment says "images must have a valid Notation signature from this trust store", in <b>audit</b> or <b>deny</b> mode.</p>
+    <p><b>Kyverno</b>'s <code>verifyImages</code> rules are the common alternative, especially with cosign.</p>
+  </div>
+</section>
+
+<section class="step" id="s8">
+  <h2>8. Deny mode in action</h2>
+  <div class="check" data-type="mcq">
+    <p class="q">Image verification runs in <b>deny</b> mode. Someone applies a Deployment with an unsigned image from <code>contosoacr.azurecr.io</code>. What happens?</p>
+    <ol class="options">
+      <li>The pod runs, and an audit event is recorded <span class="why">That's audit mode.</span></li>
+      <li class="correct">Admission rejects the pod; the ReplicaSet reports FailedCreate with the policy message</li>
+      <li>The image is signed automatically <span class="why">Nothing signs on your behalf.</span></li>
+      <li>The node refuses to pull it <span class="why">Verification happens at admission, before scheduling.</span></li>
+    </ol>
+    <div class="explain">As with Pod Security, roll out in audit first, fix whatever's unsigned (including add-on images, or exclude system namespaces), then switch to deny.</div>
+  </div>
+</section>
+
+<section class="step" id="s9">
+  <h2>9. Verify in the pipeline too</h2>
+  <div class="body"><p>Add a <code>notation verify</code> step before the prod deploy. It fails fast with a clear message, and covers clusters where admission enforcement isn't on yet.</p></div>
+</section>
+
+<section class="step" id="s10">
+  <h2>10. Key management</h2>
+  <ul>
+    <li>Separate signing keys for dev and release builds; only the release pipeline can use the release key.</li>
+    <li>Rotate certificates before they expire. Old images stay verifiable if the trust store keeps the previous certificate.</li>
+    <li>Monitor the key's use in Key Vault logs: any signing outside the pipeline is an incident.</li>
+  </ul>
+</section>
+
+<section class="step" id="s11">
+  <h2>11. cosign in one minute</h2>
+  <pre class="code" data-file="terminal">cosign generate-key-pair                                  # local lab only
+cosign sign --key cosign.key localhost:5001/orders-api@sha256:…
+cosign verify --key cosign.pub localhost:5001/orders-api@sha256:…</pre>
+</section>
+
+<section class="step summary" id="s12">
+  <h2>Signing, sorted</h2>
+  <ul>
+    <li>Signatures prove integrity and provenance, not safety.</li>
+    <li>Notation + the Key Vault plugin in the pipeline; the key never leaves the vault.</li>
+    <li>Sign the digest after the scan; the signature is stored as an OCI referrer.</li>
+    <li>Verify at admission (Ratify / image integrity, or Kyverno) and in the pipeline; audit, then deny.</li>
+  </ul>
+</section>
+</article>
+</body>
+</html>

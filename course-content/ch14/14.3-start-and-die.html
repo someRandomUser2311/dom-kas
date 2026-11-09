@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>14.3 · Pods that start and die</title>
+<link rel="stylesheet" href="../content.css">
+</head>
+<body>
+<article class="lesson" data-id="14.3" data-chapter="14">
+<nav class="crumbs"><a href="../index.html">Course</a> / <a href="index.html">Chapter 14</a> / 14.3</nav>
+<header>
+  <p class="kicker">Chapter 14 · Lesson 14.3 · ~11 steps · ~14 min</p>
+  <h1>Pods that start and die</h1>
+  <p class="meta">You'll be able to diagnose CrashLoopBackOff, OOMKilled and probe-driven restarts from logs, exit codes and events.</p>
+</header>
+
+<section class="step" id="s1">
+  <h2>1. CrashLoopBackOff explained</h2>
+  <div class="body">
+    <p>The container starts and then exits. The kubelet restarts it, waiting longer each time: 10 s, 20 s, 40 s… up to 5 minutes. <code>CrashLoopBackOff</code> is that waiting state. It's a symptom, not a cause.</p>
+    <p>The cause is in three places:</p>
+    <ul>
+      <li>the previous container's <b>logs</b>;</li>
+      <li>its <b>exit code</b>;</li>
+      <li>the <b>events</b> (probe failures).</li>
+    </ul>
+  </div>
+  <aside class="coming" data-set="A">
+    <dl>
+      <dt>Windows/IIS admin</dt><dd>Like an app pool hitting rapid-fail protection: something crashes it repeatedly, and the event log and app logs say what.</dd>
+      <dt>Linux admin</dt><dd>Like systemd's <code>Restart=always</code> with <code>RestartSec</code> backing off. Check <code>ExecMainStatus</code> = the exit code.</dd>
+      <dt>Developer (Compose)</dt><dd>Same as a Compose service with <code>restart: always</code> that keeps exiting. <code>docker logs</code> = <code>kubectl logs --previous</code>.</dd>
+      <dt>Other clouds</dt><dd>Identical everywhere.</dd>
+    </dl>
+  </aside>
+</section>
+
+<section class="step" id="s2">
+  <h2>2. Exit codes</h2>
+  <div class="check" data-type="match">
+    <p class="q">Match each exit code to its usual meaning.</p>
+    <table class="pairs">
+      <tr><td>0</td><td>Exited normally, but a Deployment's container should never exit</td></tr>
+      <tr><td>1</td><td>General application error (read the logs)</td></tr>
+      <tr><td>137</td><td>Killed with SIGKILL (128 + 9): OOMKilled, or killed after the grace period</td></tr>
+      <tr><td>143</td><td>Terminated by SIGTERM (128 + 15), normally during shutdown</td></tr>
+      <tr><td>127</td><td>Command not found: a wrong <code>command</code>/<code>args</code>, or a missing binary</td></tr>
+    </table>
+    <div class="explain">Exit codes above 128 mean "killed by signal (code − 128)".</div>
+  </div>
+</section>
+
+<section class="step" id="s3">
+  <h2>3. Diagnose: the app error</h2>
+  <div class="check" data-type="diagnose">
+    <p class="q">What's wrong?</p>
+    <pre class="output">$ kubectl describe pod orders-api-5b6f4c9d7-kx8q2 -n orders | grep -A4 "Last State"
+    Last State:     Terminated
+      Reason:       Error
+      Exit Code:    1
+$ kubectl logs orders-api-5b6f4c9d7-kx8q2 -n orders --previous
+2026/11/05 10:12:01 starting orders-api 1.5.0
+2026/11/05 10:12:01 connecting to database host=orders-db.postgres.database.azure.com
+2026/11/05 10:12:31 FATAL: failed to connect: dial tcp 10.20.5.9:5432: i/o timeout</pre>
+    <ol class="options">
+      <li>Out of memory <span class="why">The exit code is 1, not 137.</span></li>
+      <li class="correct">The app can't reach the database on 5432 and exits, most likely an egress NetworkPolicy or a database firewall rule</li>
+      <li>The image is wrong <span class="why">It started and logged its version.</span></li>
+      <li>A liveness probe kills it <span class="why">That would show "Liveness probe failed" events, and usually exit code 137 or 143.</span></li>
+    </ol>
+    <div class="explain">A timeout to a private IP points at network policy (lesson 9.4) or the database firewall or private endpoint. Test from inside with <code>kubectl debug</code> and <code>nc -zv 10.20.5.9 5432</code>.</div>
+  </div>
+</section>
+
+<section class="step" id="s4">
+  <h2>4. Diagnose: the bad command</h2>
+  <div class="check" data-type="diagnose">
+    <p class="q">What's wrong?</p>
+    <pre class="output">    Last State:     Terminated
+      Reason:       StartError
+      Message:      failed to create containerd task: failed to create shim task: OCI runtime create failed:
+                    runc create failed: unable to start container process: exec: "/app/orders-api": stat
+                    /app/orders-api: no such file or directory: unknown
+      Exit Code:    128</pre>
+    <ol class="options">
+      <li class="correct">The <code>command</code> points to <code>/app/orders-api</code>, but the image's binary is <code>/orders-api</code></li>
+      <li>Missing permissions <span class="why">That would say "permission denied".</span></li>
+      <li>The node is broken <span class="why">The runtime is working fine; the path is wrong.</span></li>
+      <li>The ConfigMap is missing <span class="why">That gives CreateContainerConfigError.</span></li>
+    </ol>
+    <div class="explain">An override of <code>command</code> in the manifest no longer matches the image (lesson 1.1's Dockerfile uses <code>/orders-api</code>). Remove the override, or fix the path.</div>
+  </div>
+</section>
+
+<section class="step" id="s5">
+  <h2>5. OOMKilled</h2>
+  <div class="check" data-type="diagnose">
+    <p class="q">The pod restarts every ~20 minutes under load. What's the cause, and the first fix?</p>
+    <pre class="output">    Last State:     Terminated
+      Reason:       OOMKilled
+      Exit Code:    137
+    Limits:
+      memory:  256Mi
+$ kubectl top pod orders-api-7d9c5f6b8-2xk9p -n orders
+NAME                         CPU(cores)   MEMORY(bytes)
+orders-api-7d9c5f6b8-2xk9p   310m         251Mi</pre>
+    <ol class="options">
+      <li>Raise the CPU limit <span class="why">CPU is throttled, never OOM-killed.</span></li>
+      <li class="correct">Memory grows to the 256Mi limit and the kernel kills it. Raise the memory request and limit from measured peaks, and check for a leak</li>
+      <li>Add a liveness probe <span class="why">It'd still be killed at the limit.</span></li>
+      <li>Delete the pod <span class="why">The next one hits the same limit.</span></li>
+    </ol>
+    <div class="explain">If memory climbs steadily over hours, it's a leak: raising the limit only delays it. Container Insights' memory charts per pod show the pattern.</div>
+  </div>
+</section>
+
+<section class="step" id="s6">
+  <h2>6. Probe-driven restarts</h2>
+  <div class="check" data-type="diagnose">
+    <p class="q">Restarts climb on every pod at the same time, but there's nothing in the app logs. Why?</p>
+    <pre class="output">Events:
+  Warning  Unhealthy  kubelet  Liveness probe failed: Get "http://10.244.1.12:8080/health/db": context deadline exceeded
+  Normal   Killing    kubelet  Container api failed liveness probe, will be restarted</pre>
+    <ol class="options">
+      <li>The app crashes <span class="why">The kubelet is killing it, not the app exiting.</span></li>
+      <li class="correct">The liveness probe calls the database health endpoint; the slow database makes it time out, so every pod is restarted</li>
+      <li>Readiness is failing <span class="why">Readiness doesn't restart pods.</span></li>
+      <li>Out of memory <span class="why">There'd be an OOMKilled reason.</span></li>
+    </ol>
+    <div class="explain">The death spiral from lesson 3.3. Point liveness at <code>/healthz</code> (the process only), and increase <code>timeoutSeconds</code>.</div>
+  </div>
+</section>
+
+<section class="step" id="s7">
+  <h2>7. Containers that exit 0</h2>
+  <div class="body"><p>A Deployment's container that exits <b>successfully</b> still gets restarted, and still crash-loops. That happens when the process daemonises (runs in the background and the main process exits), or when a script finishes. Containers must run their main process in the foreground.</p></div>
+</section>
+
+<section class="step" id="s8">
+  <h2>8. Missing configuration at runtime</h2>
+  <div class="body"><p>An app that checks its config on start ("PAYMENTS_URL is not set", lesson 14.1) exits 1 straight away. That's a good design: failing fast beats running half-configured. Fix the ConfigMap or Secret, and the rollout recovers.</p></div>
+</section>
+
+<section class="step" id="s9">
+  <h2>9. Stop the crash loop while you investigate</h2>
+  <div class="body">
+    <ul>
+      <li>If a rollout caused it: <code>kubectl rollout undo</code>. Old pods are still serving with <code>maxUnavailable: 0</code>.</li>
+      <li>To keep a pod alive for inspection, use <code>kubectl debug --copy-to</code> with <code>-- sleep 3600</code>.</li>
+      <li>Don't "fix" it by removing probes or limits. That hides the problem and causes new ones.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="step" id="s10">
+  <h2>10. Node-level causes</h2>
+  <div class="body"><p>If many unrelated pods on <b>one node</b> fail, look at the node: <code>kubectl describe node</code> for conditions (<code>MemoryPressure</code>, <code>DiskPressure</code>), and evictions in events. AKS's node auto-repair replaces nodes that are NotReady for too long.</p></div>
+</section>
+
+<section class="step summary" id="s11">
+  <h2>Start and die, sorted</h2>
+  <ul>
+    <li>CrashLoopBackOff = restarts with back-off; the cause is in logs <code>--previous</code>, the exit code and events.</li>
+    <li>1 = app error; 137 = SIGKILL (OOM); 143 = SIGTERM; 127/128 = command problems.</li>
+    <li>OOM: measure, then right-size, and watch for leaks.</li>
+    <li>Liveness on dependencies = synchronised restarts.</li>
+    <li>Roll back first if a release caused it.</li>
+  </ul>
+</section>
+</article>
+</body>
+</html>

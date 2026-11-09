@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>11.5 · Choosing a strategy</title>
+<link rel="stylesheet" href="../content.css">
+</head>
+<body>
+<article class="lesson" data-id="11.5" data-chapter="11">
+<nav class="crumbs"><a href="../index.html">Course</a> / <a href="index.html">Chapter 11</a> / 11.5</nav>
+<header>
+  <p class="kicker">Chapter 11 · Lesson 11.5 · ~8 steps · ~10 min</p>
+  <h1>Choosing a strategy</h1>
+  <p class="meta">You'll be able to pick a release strategy for a given risk, budget and team, and know when a feature flag is the better tool.</p>
+</header>
+
+<section class="step" id="s1">
+  <h2>1. The decision matrix</h2>
+  <table>
+    <tr><th></th><th>Rolling</th><th>Blue/green</th><th>Canary</th></tr>
+    <tr><td>Blast radius of a bad release</td><td>Grows as the rollout proceeds</td><td>Everyone, at the switch (but brief)</td><td>Small share, controlled</td></tr>
+    <tr><td>Rollback speed</td><td>Minutes (another rollout)</td><td>Seconds (switch back)</td><td>Seconds (weights to 0)</td></tr>
+    <tr><td>Extra capacity</td><td>+maxSurge</td><td>Double</td><td>Small (canary pods)</td></tr>
+    <tr><td>Complexity</td><td>Built in</td><td>Two Deployments + switch</td><td>Traffic splitting + metrics + automation</td></tr>
+    <tr><td>Needs good metrics</td><td>Helpful</td><td>Helpful</td><td>Essential</td></tr>
+  </table>
+  <aside class="coming" data-set="A">
+    <dl>
+      <dt>Windows/IIS admin</dt><dd>Rolling = patch the farm in batches; blue/green = slot swap; canary = one server with the new build in the pool, watched closely.</dd>
+      <dt>Linux admin</dt><dd>The same trade-offs you'd make for any fleet rollout.</dd>
+      <dt>Developer (Compose)</dt><dd>The strategy is mostly the platform's choice; your part is backward-compatible changes and good metrics.</dd>
+      <dt>Other clouds</dt><dd>The same three patterns exist on every platform under different product names.</dd>
+    </dl>
+  </aside>
+</section>
+
+<section class="step" id="s2">
+  <h2>2. Feature flags: release ≠ deploy</h2>
+  <div class="body">
+    <p>Deployment strategies manage <b>technical</b> risk: does the new build run? <b>Business</b> risk is different: will customers like the new checkout? <b>Feature flags</b> handle that better.</p>
+    <p>Deploy the code switched off, then turn it on for 5% of users, a country, or internal staff, without a deployment. Turning it off is instant.</p>
+    <p>Azure App Configuration's feature manager is one option.</p>
+  </div>
+</section>
+
+<section class="step" id="s3">
+  <h2>3. Database changes constrain everything</h2>
+  <div class="body">
+    <p>Every strategy except a full stop-and-replace runs two versions against one database. A schema change that breaks the old version breaks rollback for <b>all</b> strategies.</p>
+    <p>Expand/contract (lesson 11.2) is required whichever strategy you choose.</p>
+  </div>
+</section>
+
+<section class="step" id="s4">
+  <h2>4. Scenarios</h2>
+  <div class="check" data-type="mcq">
+    <p class="q">An internal reporting tool, 3 replicas, used by 20 people in office hours. Releases weekly. Small team, basic monitoring. Strategy?</p>
+    <ol class="options">
+      <li class="correct">A rolling update with readiness probes and <code>maxUnavailable: 0</code></li>
+      <li>Blue/green with double capacity <span class="why">The cost and complexity outweigh the benefit for 20 internal users.</span></li>
+      <li>An automated multi-step canary <span class="why">Too little traffic to measure, and basic metrics.</span></li>
+      <li>Recreate (stop everything first) <span class="why">Unnecessary downtime.</span></li>
+    </ol>
+    <div class="explain">Rolling is the right default when the stakes and traffic are modest.</div>
+  </div>
+  <div class="check" data-type="mcq">
+    <p class="q">Contoso's <code>orders-api</code>: thousands of requests per minute, revenue-critical, good Prometheus metrics, and a platform team. Strategy?</p>
+    <ol class="options">
+      <li>Rolling only <span class="why">Every user is exposed as the rollout proceeds.</span></li>
+      <li class="correct">An automated canary (10% → 50% → 100%) with metric checks and auto-reject</li>
+      <li>Manual blue/green on Friday nights <span class="why">Manual and late. Automation and a small blast radius are better.</span></li>
+      <li>Deploy straight to 100% <span class="why">No safety net.</span></li>
+    </ol>
+    <div class="explain">High traffic gives fast, statistically meaningful signals, which is exactly what a canary needs.</div>
+  </div>
+</section>
+
+<section class="step" id="s5">
+  <h2>5. Match scenario to strategy</h2>
+  <div class="check" data-type="match">
+    <p class="q">Match each scenario to the best tool.</p>
+    <table class="pairs">
+      <tr><td>A new version must be fully smoke-tested in production infrastructure before any user sees it, and rollback must be instant</td><td>Blue/green</td></tr>
+      <tr><td>A risky performance change on a high-traffic API</td><td>Canary</td></tr>
+      <tr><td>A redesigned checkout the business wants to try on 5% of customers</td><td>Feature flag</td></tr>
+      <tr><td>A routine patch release of a low-traffic internal service</td><td>Rolling update</td></tr>
+    </table>
+    <div class="explain">Strategies combine: Contoso does canary releases of code whose new features are behind flags.</div>
+  </div>
+</section>
+
+<section class="step" id="s6">
+  <h2>6. Prerequisites for any of them</h2>
+  <ul>
+    <li>Readiness probes that mean "can serve traffic".</li>
+    <li>2+ replicas and a PDB.</li>
+    <li>Backward-compatible APIs and schemas.</li>
+    <li>Metrics per version, and a rollback you've practised.</li>
+  </ul>
+</section>
+
+<section class="step" id="s7">
+  <h2>7. Contoso's policy</h2>
+  <div class="body">
+    <ul>
+      <li><b>Dev:</b> rolling, on every merge.</li>
+      <li><b>Prod:</b> canary 10% → 50% → 100% with automated checks, behind a prod approval.</li>
+      <li>Big features behind flags.</li>
+      <li>Blue/green only for the yearly major database migration, with expand/contract.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="step summary" id="s8">
+  <h2>Choosing, sorted</h2>
+  <ul>
+    <li>Rolling: simple default. Blue/green: instant switch, double cost. Canary: smallest blast radius, needs metrics.</li>
+    <li>Feature flags separate release from deploy, for business risk.</li>
+    <li>Database compatibility constrains every strategy.</li>
+  </ul>
+</section>
+</article>
+</body>
+</html>

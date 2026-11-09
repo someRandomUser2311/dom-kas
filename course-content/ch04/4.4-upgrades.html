@@ -1,0 +1,196 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>4.4 · Upgrades &amp; maintenance</title>
+<link rel="stylesheet" href="../content.css">
+</head>
+<body>
+<article class="lesson" data-id="4.4" data-chapter="4">
+<nav class="crumbs"><a href="../index.html">Course</a> / <a href="index.html">Chapter 4</a> / 4.4</nav>
+<header>
+  <p class="kicker">Chapter 4 · Lesson 4.4 · ~11 steps · ~15 min</p>
+  <h1>Upgrades &amp; maintenance</h1>
+  <p class="meta">You'll be able to keep an AKS cluster on a supported version, choose upgrade channels for Kubernetes and node images, set maintenance windows, and make sure upgrades don't take your app down.</p>
+</header>
+
+<section class="step" id="s1">
+  <h2>1. Two different things get upgraded</h2>
+  <div class="body">
+    <ul>
+      <li><b>Kubernetes version</b> (e.g. 1.32 → 1.33): new API features and removals. It covers the control plane, then each node pool's kubelet.</li>
+      <li><b>Node image</b>: the OS and runtime on each node (Ubuntu or Azure Linux, security patches, containerd). Azure publishes new images often, at least weekly for security fixes.</li>
+    </ul>
+    <p>They have separate settings, and you need both. A cluster on the latest Kubernetes version can still have nodes missing months of OS patches.</p>
+  </div>
+  <aside class="coming" data-set="A">
+    <dl>
+      <dt>Windows/IIS admin</dt><dd>Kubernetes upgrades are like moving to a new Windows Server version; node image upgrades are like Patch Tuesday. Both happen by <i>replacing</i> nodes, not patching them in place.</dd>
+      <dt>Linux admin</dt><dd>No <code>apt upgrade</code> on nodes; you roll new images instead. Think immutable infrastructure.</dd>
+      <dt>Developer (Compose)</dt><dd>Like rebuilding from a newer base image rather than patching a running container.</dd>
+      <dt>Other clouds</dt><dd>Like EKS control-plane upgrades plus managed node group AMI updates, or GKE release channels plus node auto-upgrade.</dd>
+    </dl>
+  </aside>
+</section>
+
+<section class="step" id="s2">
+  <h2>2. The support window</h2>
+  <div class="body">
+    <ul>
+      <li>Kubernetes releases a minor version roughly every 4 months.</li>
+      <li>AKS supports about three GA minor versions at a time, each for roughly 12 months. Fall behind and you're <b>out of support</b>.</li>
+      <li>Control-plane upgrades go <b>one minor version at a time</b> (1.31 → 1.32 → 1.33). You can't skip.</li>
+      <li><b>Long-term support (LTS)</b>, on the Premium tier, keeps selected versions supported for about two years, for teams that can't upgrade often.</li>
+    </ul>
+    <p>Check what's available with <code>az aks get-upgrades</code> and <code>az aks get-versions</code>.</p>
+  </div>
+  <pre class="output">$ az aks get-upgrades -g rg-orders-dev -n aks-orders-dev -o table
+Name     ResourceGroup   MasterVersion   Upgrades
+-------  --------------  --------------  -------------------
+default  rg-orders-dev   1.32.6          1.33.1, 1.33.2</pre>
+</section>
+
+<section class="step" id="s3">
+  <h2>3. How an upgrade runs</h2>
+  <div class="body">
+    <ol>
+      <li>The <b>control plane</b> is upgraded first. Running pods aren't affected.</li>
+      <li>Then each <b>node pool</b>, node by node:
+        <ol type="a">
+          <li>a new <b>surge</b> node is added with the new version;</li>
+          <li>an old node is <b>cordoned</b>, so no new pods go there;</li>
+          <li>it's <b>drained</b>: pods are evicted through the eviction API, respecting PDBs;</li>
+          <li>it's deleted.</li>
+        </ol>
+      </li>
+    </ol>
+    <p><code>--max-surge</code> sets how many extra nodes are added at once. Higher is faster but needs more quota and IPs; 33% is a common production setting.</p>
+  </div>
+  <div class="check" data-type="order">
+    <p class="q">Order the steps of an AKS version upgrade.</p>
+    <ol class="options">
+      <li>Upgrade the control plane</li>
+      <li>Add a surge node running the new version</li>
+      <li>Cordon an old node</li>
+      <li>Drain it, evicting pods with respect to PDBs</li>
+      <li>Delete the old node and repeat for the next</li>
+    </ol>
+    <div class="explain">Pods move only during the drain. That's where PDBs, replicas and readiness probes decide whether users notice.</div>
+  </div>
+</section>
+
+<section class="step" id="s4">
+  <h2>4. Kubernetes auto-upgrade channels</h2>
+  <div class="body">
+    <p>The cluster's <code>--auto-upgrade-channel</code> decides whether AKS upgrades the Kubernetes version for you:</p>
+    <ul>
+      <li><code>none</code>: you upgrade manually.</li>
+      <li><code>patch</code>: the latest patch of your current minor version (e.g. 1.33.1 → 1.33.2).</li>
+      <li><code>stable</code>: the latest patch of the second-newest minor version (N-1).</li>
+      <li><code>rapid</code>: the newest supported minor version.</li>
+      <li><code>node-image</code>: only node images. Prefer the separate node OS channel for that (next step).</li>
+    </ul>
+    <p>A common choice is <code>patch</code>, with minor upgrades done deliberately: tested in dev first, by a pipeline or IaC change.</p>
+  </div>
+</section>
+
+<section class="step" id="s5">
+  <h2>5. Node OS upgrade channels</h2>
+  <div class="body">
+    <p><code>--node-os-upgrade-channel</code> decides how nodes get OS patches:</p>
+    <ul>
+      <li><code>NodeImage</code> (the default for new clusters): roll nodes onto the newest node image, regularly.</li>
+      <li><code>SecurityPatch</code>: apply only security patches to the existing image, with fewer reimages.</li>
+      <li><code>Unmanaged</code>: the OS's own unattended updates; reboots are up to you.</li>
+      <li><code>None</code>: nothing; you're responsible.</li>
+    </ul>
+  </div>
+  <div class="check" data-type="mcq">
+    <p class="q">Which setting makes sure Contoso's nodes receive OS security patches without anyone remembering to run a command?</p>
+    <ol class="options">
+      <li><code>--auto-upgrade-channel patch</code> <span class="why">That upgrades the Kubernetes patch version, not the node OS image.</span></li>
+      <li class="correct"><code>--node-os-upgrade-channel NodeImage</code> (or <code>SecurityPatch</code>)</li>
+      <li>The Standard tier <span class="why">The tier affects SLA and features, not patching.</span></li>
+      <li>Nothing; AKS always patches nodes <span class="why">It depends on the channel; <code>None</code> means no patching.</span></li>
+    </ol>
+    <div class="explain">Managed doesn't mean patched by default in every case. Set both channels explicitly, and give them maintenance windows.</div>
+  </div>
+</section>
+
+<section class="step" id="s6">
+  <h2>6. Planned maintenance windows</h2>
+  <div class="body">
+    <p><b>Maintenance configurations</b> restrict when automatic upgrades may start, for example Sunday 01:00–05:00 in your time zone. There are two named configurations:</p>
+    <ul>
+      <li><code>aksManagedAutoUpgradeSchedule</code> for Kubernetes upgrades;</li>
+      <li><code>aksManagedNodeOSUpgradeSchedule</code> for node OS upgrades.</li>
+    </ul>
+  </div>
+  <pre class="code" data-file="maintenance.sh">az aks maintenanceconfiguration add -g rg-orders-prod --cluster-name aks-orders-prod \
+  --name aksManagedNodeOSUpgradeSchedule \
+  --schedule-type Weekly --day-of-week Sunday --interval-weeks 1 \
+  --start-time 01:00 --duration 4 --utc-offset +01:00</pre>
+</section>
+
+<section class="step" id="s7">
+  <h2>7. Making upgrades invisible</h2>
+  <div class="body">
+    <p>Upgrades replace every node, so every pod is moved at least once. Your app survives that if it has:</p>
+    <ul>
+      <li>at least <b>2 replicas</b>, spread across nodes and zones;</li>
+      <li>a <b>PDB</b> that allows at least one disruption;</li>
+      <li>a <b>readiness probe</b>, so replacements only get traffic when ready;</li>
+      <li><b>graceful shutdown</b> on SIGTERM.</li>
+    </ul>
+    <p>AKS settings like <code>--drain-timeout</code> and <code>--node-soak-duration</code> control how long it waits for drains, and the pause between nodes.</p>
+  </div>
+</section>
+
+<section class="step" id="s8">
+  <h2>8. An upgrade that blocks</h2>
+  <div class="check" data-type="predict">
+    <p class="q">A single-replica Deployment has a PDB with <code>maxUnavailable: 0</code>. A node pool upgrade reaches the node it runs on. What happens?</p>
+    <ol class="options">
+      <li>The pod is moved and briefly unavailable <span class="why">The PDB forbids any unavailability, so the eviction is refused.</span></li>
+      <li class="correct">The drain is blocked by the PDB; after the drain timeout the upgrade fails (or the node is left cordoned, depending on settings)</li>
+      <li>AKS deletes the PDB <span class="why">AKS never deletes your objects.</span></li>
+      <li>The node is upgraded in place without moving the pod <span class="why">AKS upgrades replace nodes.</span></li>
+    </ol>
+    <div class="explain">A PDB that allows zero disruptions plus one replica makes the node impossible to drain. Fix it with 2+ replicas and <code>maxUnavailable: 1</code>.</div>
+  </div>
+</section>
+
+<section class="step" id="s9">
+  <h2>9. Deprecated APIs</h2>
+  <div class="body">
+    <p>New Kubernetes minor versions sometimes <b>remove</b> old API versions. Manifests that use them stop applying after the upgrade. AKS can detect clusters still using deprecated APIs and stop the upgrade, warning you first.</p>
+    <p>Check your manifests in CI (Chapter 10) and upgrade dev first. The release notes list each removal.</p>
+  </div>
+</section>
+
+<section class="step" id="s10">
+  <h2>10. Manual upgrades</h2>
+  <pre class="code" data-file="upgrade.sh"># control plane + all node pools
+az aks upgrade -g rg-orders-dev -n aks-orders-dev --kubernetes-version 1.33.2
+
+# one pool's node image only
+az aks nodepool upgrade -g rg-orders-dev --cluster-name aks-orders-dev -n user --node-image-only
+
+# set surge on a pool
+az aks nodepool update -g rg-orders-dev --cluster-name aks-orders-dev -n user --max-surge 33%</pre>
+</section>
+
+<section class="step summary" id="s11">
+  <h2>Upgrades, sorted</h2>
+  <ul>
+    <li>Kubernetes versions and node images are separate. Keep both current.</li>
+    <li>Upgrade one minor version at a time, within the support window; LTS on Premium.</li>
+    <li>Control plane first, then pools node by node (surge, cordon, drain, delete).</li>
+    <li>Channels: <code>--auto-upgrade-channel</code> (none/patch/stable/rapid/node-image) and <code>--node-os-upgrade-channel</code> (None/Unmanaged/SecurityPatch/NodeImage), plus maintenance windows.</li>
+    <li>Replicas + PDB (allowing 1) + readiness = invisible upgrades.</li>
+  </ul>
+</section>
+</article>
+</body>
+</html>

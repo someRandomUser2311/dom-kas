@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>4.5 · Tiers, SKUs &amp; AKS Automatic</title>
+<link rel="stylesheet" href="../content.css">
+</head>
+<body>
+<article class="lesson" data-id="4.5" data-chapter="4">
+<nav class="crumbs"><a href="../index.html">Course</a> / <a href="index.html">Chapter 4</a> / 4.5</nav>
+<header>
+  <p class="kicker">Chapter 4 · Lesson 4.5 · ~8 steps · ~10 min</p>
+  <h1>Tiers, SKUs &amp; AKS Automatic</h1>
+  <p class="meta">You'll be able to pick the right AKS pricing tier for each environment, explain what AKS Automatic decides for you, and name the main cost drivers.</p>
+</header>
+
+<section class="step" id="s1">
+  <h2>1. Three pricing tiers</h2>
+  <div class="body">
+    <p>The tier is about the <b>control plane</b>. You always pay separately for nodes, disks and networking.</p>
+    <table>
+      <tr><th>Tier</th><th>Control plane</th><th>Good for</th></tr>
+      <tr><td><b>Free</b></td><td>No charge, no uptime SLA, intended for smaller clusters</td><td>Learning, dev, experiments</td></tr>
+      <tr><td><b>Standard</b></td><td>Hourly charge per cluster; financially backed uptime SLA (higher with availability zones); scales to large clusters</td><td>Production</td></tr>
+      <tr><td><b>Premium</b></td><td>Everything in Standard, plus <b>long-term support (LTS)</b> versions</td><td>Production that must stay on one version for longer</td></tr>
+    </table>
+    <p>Change the tier at any time with <code>az aks update --tier standard</code>.</p>
+  </div>
+  <aside class="coming" data-set="A">
+    <dl>
+      <dt>Windows/IIS admin</dt><dd>Like the difference between a dev/test and a production App Service plan: same product, different guarantees.</dd>
+      <dt>Linux admin</dt><dd>You're paying for the guarantee on components you can't see, not for more features in your nodes.</dd>
+      <dt>Developer (Compose)</dt><dd>Free is fine for your own experiments; anything customers depend on goes on Standard.</dd>
+      <dt>Other clouds</dt><dd>EKS always charges per cluster; GKE has a free-tier credit. AKS Free has no charge but no SLA.</dd>
+    </dl>
+  </aside>
+</section>
+
+<section class="step" id="s2">
+  <h2>2. Which tier where?</h2>
+  <div class="check" data-type="match">
+    <p class="q">Match each Contoso requirement to the tier.</p>
+    <table class="pairs">
+      <tr><td>A developer's sandbox cluster, deleted every Friday</td><td>Free</td></tr>
+      <tr><td>Production with a contractual uptime target</td><td>Standard</td></tr>
+      <tr><td>Production that can only upgrade Kubernetes once every two years</td><td>Premium (LTS)</td></tr>
+      <tr><td>The shared dev cluster that the whole team's pipelines deploy to</td><td>Standard (shared and busy enough to justify the SLA and scale)</td></tr>
+    </table>
+    <div class="explain">Free for throwaway clusters; Standard for anything people depend on; Premium only when LTS is truly needed.</div>
+  </div>
+</section>
+
+<section class="step" id="s3">
+  <h2>3. Production needs an SLA</h2>
+  <div class="check" data-type="mcq">
+    <p class="q">Contoso's production cluster must have a financially backed control-plane uptime SLA. What's the minimum?</p>
+    <ol class="options">
+      <li>Free with three zones <span class="why">Zones protect nodes, but Free has no control-plane SLA at all.</span></li>
+      <li class="correct">Standard tier (with availability zones for the higher SLA)</li>
+      <li>Premium only <span class="why">Premium includes the SLA, but Standard is enough unless you need LTS.</span></li>
+      <li>Any tier; AKS always has an SLA <span class="why">The SLA only comes with the paid tiers.</span></li>
+    </ol>
+    <div class="explain">The SLA covers the API server. Your <i>app's</i> availability still depends on replicas, zones and PDBs.</div>
+  </div>
+</section>
+
+<section class="step" id="s4">
+  <h2>4. AKS Automatic</h2>
+  <div class="body">
+    <p><b>AKS Automatic</b> is a way of creating a cluster where Azure makes most choices for you, following its own best practices. You mainly bring workloads.</p>
+    <p>It comes preconfigured with:</p>
+    <ul>
+      <li>Node Auto Provisioning: no node pools to design;</li>
+      <li>automatic upgrades and node patching, with maintenance windows;</li>
+      <li>Azure CNI Overlay with Cilium;</li>
+      <li>Entra ID + Azure RBAC, with local accounts disabled;</li>
+      <li>workload identity;</li>
+      <li>monitoring;</li>
+      <li><b>deployment safeguards</b> that enforce good manifests (probes, resource requests, and so on).</li>
+    </ul>
+    <p>The alternative is <b>AKS Standard</b> (the cluster type, not the pricing tier), where you choose all of this yourself.</p>
+  </div>
+</section>
+
+<section class="step" id="s5">
+  <h2>5. What you give up with Automatic</h2>
+  <div class="body">
+    <ul>
+      <li>Less control: you can't design node pools freely, and some settings are fixed.</li>
+      <li>Some features and add-ons may not be supported yet. Check the current docs.</li>
+      <li>Safeguards may reject manifests that work elsewhere until you fix them. That's a good thing, but it surprises people.</li>
+    </ul>
+    <p>This course uses AKS Standard so you see and understand every choice. Every setting Automatic picks is one you'll configure yourself in Chapters 4–6 and 12–13.</p>
+  </div>
+</section>
+
+<section class="step" id="s6">
+  <h2>6. What drives the bill</h2>
+  <div class="body">
+    <ul>
+      <li><b>Nodes</b>: by far the largest cost. Right-size requests, use the autoscaler, and consider spot for batch work and reservations or savings plans for steady load.</li>
+      <li>The control-plane tier (Standard/Premium).</li>
+      <li><b>Disks</b> (OS disks, PVs), <b>load balancers</b> and <b>public IPs</b>.</li>
+      <li><b>Egress</b> data and NAT gateways.</li>
+      <li><b>Monitoring</b> ingestion (Log Analytics), which is often a surprise. Chapter 14 covers how to keep it in check.</li>
+    </ul>
+    <p>AKS cost analysis (an add-on) breaks costs down by namespace, so teams can see their own spend.</p>
+  </div>
+</section>
+
+<section class="step" id="s7">
+  <h2>7. Cheaper dev clusters</h2>
+  <div class="body">
+    <ul>
+      <li>The Free tier.</li>
+      <li><code>az aks stop</code> and <code>az aks start</code> to shut a whole cluster down outside working hours; you pay nothing for its nodes while stopped.</li>
+      <li>Smaller VM sizes and a lower autoscaler min.</li>
+      <li>A spot user pool.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="step summary" id="s8">
+  <h2>Tiers, sorted</h2>
+  <ul>
+    <li>Free (no SLA) for dev; Standard (SLA) for production; Premium adds LTS.</li>
+    <li>AKS Automatic = Azure's opinionated defaults and safeguards; AKS Standard = you choose.</li>
+    <li>Nodes dominate cost; watch disks, IPs, egress and log ingestion too.</li>
+  </ul>
+</section>
+</article>
+</body>
+</html>

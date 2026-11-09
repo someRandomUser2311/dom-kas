@@ -1,0 +1,201 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>10.2 · Kustomize base &amp; overlays</title>
+<link rel="stylesheet" href="../content.css">
+</head>
+<body>
+<article class="lesson" data-id="10.2" data-chapter="10">
+<nav class="crumbs"><a href="../index.html">Course</a> / <a href="index.html">Chapter 10</a> / 10.2</nav>
+<header>
+  <p class="kicker">Chapter 10 · Lesson 10.2 · ~13 steps · ~16 min</p>
+  <h1>Kustomize base &amp; overlays</h1>
+  <p class="meta">You'll be able to build a Kustomize base and per-environment overlays that set the namespace, replicas, image tag and resource patches, and preview exactly what will be applied.</p>
+</header>
+
+<section class="step" id="s1">
+  <h2>1. The layout</h2>
+  <pre class="code" data-file="k8s/">k8s/
+├─ base/
+│  ├─ kustomization.yaml
+│  ├─ deployment.yaml
+│  ├─ service.yaml
+│  ├─ hpa.yaml
+│  ├─ pdb.yaml
+│  └─ default-deny.yaml
+└─ overlays/
+   ├─ dev/
+   │  └─ kustomization.yaml
+   └─ prod/
+      ├─ kustomization.yaml
+      └─ resources-patch.yaml</pre>
+  <div class="body"><p>The <b>base</b> is the app as plain YAML: everything from Chapters 2, 3 and 9. Each <b>overlay</b> points at the base and lists only what's different.</p></div>
+  <aside class="coming" data-set="A">
+    <dl>
+      <dt>Windows/IIS admin</dt><dd>The base is <code>web.config</code>; overlays are <code>web.Release.config</code> transforms, but declarative and per environment.</dd>
+      <dt>Linux admin</dt><dd>Like a base config file plus <code>conf.d</code> drop-ins that override specific keys.</dd>
+      <dt>Developer (Compose)</dt><dd>Same as <code>docker compose -f base.yml -f prod.yml</code> merging, but for Kubernetes objects.</dd>
+      <dt>Other clouds</dt><dd>Identical everywhere; Kustomize is built into kubectl.</dd>
+    </dl>
+  </aside>
+</section>
+
+<section class="step" id="s2">
+  <h2>2. The base kustomization</h2>
+  <pre class="code" data-file="k8s/base/kustomization.yaml">apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - deployment.yaml
+  - service.yaml
+  - hpa.yaml
+  - pdb.yaml
+  - default-deny.yaml
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: contoso-orders</pre>
+  <aside class="more"><p>Use <code>labels:</code> (newer) rather than the deprecated <code>commonLabels:</code>. By default <code>labels</code> doesn't touch selectors, which avoids accidentally changing an immutable Deployment selector.</p></aside>
+</section>
+
+<section class="step" id="s3">
+  <h2>3. A dev overlay</h2>
+  <pre class="code" data-file="k8s/overlays/dev/kustomization.yaml">apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: orders
+resources:
+  - ../../base
+replicas:
+  - name: orders-api
+    count: 1
+images:
+  - name: contosoacr.azurecr.io/orders-api
+    newTag: "1.4.2"</pre>
+  <div class="body">
+    <ul>
+      <li><code>namespace</code>: set on every object.</li>
+      <li><code>replicas</code>: change the count without a patch.</li>
+      <li><code>images</code>: replace the tag (or name, or digest) of every container using that image. The pipeline sets it (lesson 10.6).</li>
+    </ul>
+  </div>
+</section>
+
+<section class="step" id="s4">
+  <h2>4. Preview before applying</h2>
+  <div class="body"><p><code>kubectl kustomize</code> (or <code>kustomize build</code>) prints the fully rendered YAML. Review it, diff it against the cluster with <code>kubectl diff -k</code>, and then apply it.</p></div>
+  <pre class="code" data-file="terminal">kubectl kustomize k8s/overlays/dev | less
+kubectl diff -k k8s/overlays/dev
+kubectl apply -k k8s/overlays/dev</pre>
+  <div class="widget" data-widget="kustomize-lite">Three panes: the base files (read-only), the overlay's <code>kustomization.yaml</code> and patches (editable), and the rendered output with changed lines highlighted against the base. A target spec can be shown for checks.</div>
+</section>
+
+<section class="step" id="s5">
+  <h2>5. Patches</h2>
+  <div class="body">
+    <p>For anything without a dedicated field, use <code>patches:</code>. A <b>strategic merge patch</b> is a partial copy of the object: only the fields you change, matched by name. Lists of containers merge by container name.</p>
+  </div>
+  <pre class="code" data-file="k8s/overlays/prod/resources-patch.yaml">apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: orders-api
+spec:
+  template:
+    spec:
+      containers:
+        - name: api
+          resources:
+            requests: { cpu: 500m, memory: 512Mi }
+            limits:   { memory: 1Gi }</pre>
+</section>
+
+<section class="step" id="s6">
+  <h2>6. JSON 6902 patches for precision</h2>
+  <div class="body"><p>For one exact change, such as removing a field or editing a list item by index, use a JSON patch with <code>op</code> and <code>path</code>.</p></div>
+  <pre class="code" data-file="(prod kustomization excerpt)">patches:
+  - target:
+      kind: HorizontalPodAutoscaler
+      name: orders-api
+    patch: |-
+      - op: replace
+        path: /spec/maxReplicas
+        value: 20</pre>
+</section>
+
+<section class="step" id="s7">
+  <h2>7. The prod overlay</h2>
+  <pre class="code" data-file="k8s/overlays/prod/kustomization.yaml">apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: orders
+resources:
+  - ../../base
+replicas:
+  - name: orders-api
+    count: 4
+images:
+  - name: contosoacr.azurecr.io/orders-api
+    newTag: "1.4.2"
+patches:
+  - path: resources-patch.yaml
+  - target: { kind: HorizontalPodAutoscaler, name: orders-api }
+    patch: |-
+      - op: replace
+        path: /spec/maxReplicas
+        value: 20</pre>
+  <div class="check" data-type="tapline" data-match="newTag: &quot;1.4.2&quot;">
+    <p class="q">Which line decides the version of <code>orders-api</code> that prod runs?</p>
+    <div class="explain">The <code>images</code> entry's <code>newTag</code>. The base's tag is overridden here, and the pipeline updates it with <code>kustomize edit set image</code>, never by editing <code>deployment.yaml</code>.</div>
+  </div>
+</section>
+
+<section class="step" id="s8">
+  <h2>8. Make prod right</h2>
+  <div class="check" data-type="custom">
+    <p class="q">In the kustomize-lite widget, edit the prod overlay so the rendered Deployment has 4 replicas and image <code>contosoacr.azurecr.io/orders-api:1.4.2</code>, in namespace <code>orders</code>.</p>
+    <div class="widget" data-widget="kustomize-lite">Success when the rendered output's Deployment has <code>replicas: 4</code>, the container image ends in <code>:1.4.2</code>, and the namespace is <code>orders</code>, without editing the base.</div>
+    <div class="explain">Use the <code>replicas</code>, <code>images</code> and <code>namespace</code> fields; no patch is needed for these three.</div>
+  </div>
+</section>
+
+<section class="step" id="s9">
+  <h2>9. Replicas vs the HPA</h2>
+  <div class="body"><p>If an HPA manages the Deployment, setting <code>replicas</code> only affects the first apply. Then the HPA takes over (lesson 3.5). For HPA-managed apps, patch <code>minReplicas</code>/<code>maxReplicas</code> instead, as the prod overlay does for max.</p></div>
+</section>
+
+<section class="step" id="s10">
+  <h2>10. ConfigMap generators</h2>
+  <div class="body">
+    <p><code>configMapGenerator</code> creates a ConfigMap with a <b>content hash</b> in its name (<code>orders-api-config-7k2m9h</code>), and rewrites references to it. Change a value and the name changes, so the Deployment's template changes, and the pods roll out with the new config automatically.</p>
+    <p>That solves lesson 2.6's "env vars don't update" problem.</p>
+  </div>
+  <pre class="code" data-file="(overlay excerpt)">configMapGenerator:
+  - name: orders-api-config
+    literals:
+      - LOG_LEVEL=warn
+      - FEATURE_EXPRESS_SHIPPING=true</pre>
+</section>
+
+<section class="step" id="s11">
+  <h2>11. Precedence</h2>
+  <div class="body">
+    <p>Kustomize processes the base, then each transformation in the overlay. When the same field is set in several places, the <b>overlay wins over the base</b>. Between patches in one overlay, they're applied in the order listed, so the last change to a field wins.</p>
+    <p>When in doubt, render it and look.</p>
+  </div>
+</section>
+
+<section class="step" id="s12">
+  <h2>12. Secrets and Kustomize</h2>
+  <div class="body"><p><code>secretGenerator</code> exists, but it reads secret values from files, which must not be in Git. Contoso doesn't use it. Secrets come from Key Vault through the CSI driver (Chapter 15), and the overlay only references the SecretProviderClass.</p></div>
+</section>
+
+<section class="step summary" id="s13">
+  <h2>Kustomize, sorted</h2>
+  <ul>
+    <li>A base of plain YAML; overlays reference it and list the differences.</li>
+    <li><code>namespace</code>, <code>replicas</code>, <code>images</code>, <code>labels</code>, plus <code>patches</code> (strategic merge or JSON 6902).</li>
+    <li>Preview with <code>kubectl kustomize</code> and <code>kubectl diff -k</code>; apply with <code>-k</code>.</li>
+    <li><code>configMapGenerator</code> rolls pods on config change.</li>
+  </ul>
+</section>
+</article>
+</body>
+</html>

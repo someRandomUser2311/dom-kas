@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>8.3 · Ingress</title>
+<link rel="stylesheet" href="../content.css">
+</head>
+<body>
+<article class="lesson" data-id="8.3" data-chapter="8">
+<nav class="crumbs"><a href="../index.html">Course</a> / <a href="index.html">Chapter 8</a> / 8.3</nav>
+<header>
+  <p class="kicker">Chapter 8 · Lesson 8.3 · ~12 steps · ~15 min</p>
+  <h1>Ingress</h1>
+  <p class="meta">You'll be able to route HTTP traffic for several apps through one entry point using host and path rules, and know why an Ingress does nothing without a controller.</p>
+</header>
+
+<section class="step" id="s1">
+  <h2>1. One front door</h2>
+  <div class="body">
+    <p>Lesson 5.2 ended with a problem: one public LoadBalancer per HTTP service means many IPs, many certificates and no shared routing.</p>
+    <p>Instead, run <b>one</b> HTTP proxy behind <b>one</b> load balancer, and let it route requests by host and path to ordinary ClusterIP Services:</p>
+    <ul>
+      <li><code>shop.contoso.example/</code> → <code>web</code></li>
+      <li><code>shop.contoso.example/api</code> → <code>orders-api</code></li>
+    </ul>
+  </div>
+  <aside class="coming" data-set="A">
+    <dl>
+      <dt>Windows/IIS admin</dt><dd>Like IIS ARR or URL Rewrite in front of several back-end sites: host headers and paths decide where requests go.</dd>
+      <dt>Linux admin</dt><dd>It's an nginx or HAProxy reverse proxy whose config is generated from Kubernetes objects.</dd>
+      <dt>Developer (Compose)</dt><dd>Like putting Traefik or nginx in front of your Compose services, with routing labels.</dd>
+      <dt>Other clouds</dt><dd>Like the AWS Load Balancer Controller creating an ALB from an Ingress, or GKE Ingress creating a Google HTTP(S) load balancer.</dd>
+    </dl>
+  </aside>
+</section>
+
+<section class="step" id="s2">
+  <h2>2. Ingress vs ingress controller</h2>
+  <div class="body">
+    <ul>
+      <li>An <b>Ingress</b> is just a Kubernetes object: a list of routing rules.</li>
+      <li>An <b>ingress controller</b> is software running in (or next to) the cluster that <i>reads</i> those objects and actually proxies the traffic.</li>
+    </ul>
+    <p>A cluster can have several controllers. Each one owns an <b>IngressClass</b>, and every Ingress names the one it's for with <code>ingressClassName</code>.</p>
+    <p>No controller, or the wrong class name, means the Ingress is accepted and nothing happens.</p>
+  </div>
+</section>
+
+<section class="step" id="s3">
+  <h2>3. A first Ingress</h2>
+  <pre class="code" data-file="k8s/gateway/ingress.yaml">apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: shop
+  namespace: orders
+spec:
+  ingressClassName: webapprouting.kubernetes.azure.com
+  rules:
+    - host: shop.contoso.example
+      http:
+        paths:
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: orders-api
+                port:
+                  number: 80</pre>
+  <div class="body"><p><code>webapprouting.kubernetes.azure.com</code> is the class of AKS's application routing add-on (lesson 8.5). Other controllers have their own class names.</p></div>
+</section>
+
+<section class="step" id="s4">
+  <h2>4. Path types</h2>
+  <div class="body">
+    <ul>
+      <li><code>Exact</code>: only that exact path. <code>/api</code> matches <code>/api</code>, not <code>/api/orders</code>.</li>
+      <li><code>Prefix</code>: matches by path <b>segments</b>. <code>/api</code> matches <code>/api</code> and <code>/api/orders</code>, but <b>not</b> <code>/apiary</code>.</li>
+      <li><code>ImplementationSpecific</code>: up to the controller. Avoid it.</li>
+    </ul>
+    <p>When several rules match, the <b>longest</b> path wins, and <code>Exact</code> beats <code>Prefix</code> for the same path.</p>
+  </div>
+  <div class="widget" data-widget="request-router">A URL bar and the current Ingress rules. Typing a URL (e.g. <code>https://shop.contoso.example/api/orders/42</code>) highlights the matching rule, the Service and the pod it would reach, or shows "default backend / 404". The rules are editable, so learners can test shadowing and path types.</div>
+</section>
+
+<section class="step" id="s5">
+  <h2>5. Route the shop</h2>
+  <div class="check" data-type="custom">
+    <p class="q">In the router widget, make <code>/api</code> (and everything under it) go to <code>orders-api:80</code>, and everything else on <code>shop.contoso.example</code> go to <code>web:80</code>.</p>
+    <div class="widget" data-widget="request-router">Success when these test URLs route correctly:
+      <ul>
+        <li><code>/</code> → web</li>
+        <li><code>/products/7</code> → web</li>
+        <li><code>/api</code> → orders-api</li>
+        <li><code>/api/orders/42</code> → orders-api</li>
+        <li><code>/apiary</code> → web</li>
+      </ul></div>
+    <details class="solution"><summary>Solution</summary>
+<pre>rules:
+  - host: shop.contoso.example
+    http:
+      paths:
+        - path: /api
+          pathType: Prefix
+          backend: { service: { name: orders-api, port: { number: 80 } } }
+        - path: /
+          pathType: Prefix
+          backend: { service: { name: web, port: { number: 80 } } }</pre></details>
+    <div class="explain">Longest-prefix matching means order in the file doesn't matter here. <code>/</code> as a Prefix is the catch-all.</div>
+  </div>
+</section>
+
+<section class="step" id="s6">
+  <h2>6. The rule that doesn't do what you think</h2>
+  <div class="check" data-type="tapline" data-match="pathType: Exact">
+    <p class="q">Users report every page except the home page returns 404. Tap the cause.</p>
+    <pre class="code" data-file="ingress.yaml (rules)">rules:
+  - host: shop.contoso.example
+    http:
+      paths:
+        - path: /api
+          pathType: Prefix
+          backend: { service: { name: orders-api, port: { number: 80 } } }
+        - path: /
+          pathType: Exact
+          backend: { service: { name: web, port: { number: 80 } } }</pre>
+    <div class="explain"><code>Exact</code> on <code>/</code> only matches the bare home page. <code>/products/7</code> matches nothing and gets a 404. Use <code>Prefix</code> for a catch-all.</div>
+  </div>
+</section>
+
+<section class="step" id="s7">
+  <h2>7. Host-based routing</h2>
+  <div class="body"><p>Several rules with different <code>host</code> values let one entry point serve many sites. Point every DNS name at the controller's single IP.</p></div>
+  <pre class="code" data-file="ingress.yaml (rules)">rules:
+  - host: shop.contoso.example
+    http: { paths: [ { path: /, pathType: Prefix, backend: { service: { name: web, port: { number: 80 } } } } ] }
+  - host: api.contoso.example
+    http: { paths: [ { path: /, pathType: Prefix, backend: { service: { name: orders-api, port: { number: 80 } } } } ] }</pre>
+</section>
+
+<section class="step" id="s8">
+  <h2>8. TLS in an Ingress</h2>
+  <div class="body"><p>A <code>tls</code> block names the hosts and the Secret of type <code>kubernetes.io/tls</code> that holds the certificate. The controller terminates HTTPS and forwards plain HTTP to the Services. Lesson 8.6 covers where certificates come from.</p></div>
+  <pre class="code" data-file="ingress.yaml (spec)">tls:
+  - hosts: [shop.contoso.example]
+    secretName: shop-contoso-tls</pre>
+</section>
+
+<section class="step" id="s9">
+  <h2>9. Annotations are controller-specific</h2>
+  <div class="body">
+    <p>The Ingress spec is small: hosts, paths, TLS. Everything else, such as redirects, rewrites, timeouts, body size and auth, is done with <b>annotations</b> that only one controller understands (for example <code>nginx.ingress.kubernetes.io/proxy-body-size</code>).</p>
+    <p>That makes Ingress manifests hard to move between controllers. It's the main reason the <b>Gateway API</b> was created (next lesson).</p>
+  </div>
+</section>
+
+<section class="step" id="s10">
+  <h2>10. One Ingress per namespace</h2>
+  <div class="body">
+    <p>An Ingress can only send traffic to Services in <b>its own namespace</b>. To route <code>/</code> to <code>web</code> (namespace <code>web</code>) and <code>/api</code> to <code>orders-api</code> (namespace <code>orders</code>), create one Ingress in each namespace with the same host. Most controllers merge them.</p>
+    <p>With many teams sharing a hostname, it gets fiddly. The Gateway API's role split handles it better.</p>
+  </div>
+</section>
+
+<section class="step" id="s11">
+  <h2>11. Checking an Ingress</h2>
+  <pre class="output">$ kubectl get ingress -n orders
+NAME   CLASS                                HOSTS                  ADDRESS        PORTS     AGE
+shop   webapprouting.kubernetes.azure.com   shop.contoso.example   20.50.40.11    80, 443   5m
+$ curl -s -o /dev/null -w "%{http_code}\n" -H "Host: shop.contoso.example" http://20.50.40.11/api/healthz
+200</pre>
+  <div class="body"><p>An empty <code>ADDRESS</code> usually means no controller has claimed the Ingress: check <code>ingressClassName</code>.</p></div>
+</section>
+
+<section class="step summary" id="s12">
+  <h2>Ingress, sorted</h2>
+  <ul>
+    <li>One controller and one IP route HTTP by host and path to ClusterIP Services.</li>
+    <li>The Ingress object is only rules; a controller (named by <code>ingressClassName</code>) does the work.</li>
+    <li><code>Prefix</code> matches by path segments; the longest match wins; <code>Exact</code> is exact.</li>
+    <li>A TLS block references a <code>kubernetes.io/tls</code> Secret.</li>
+    <li>Annotations aren't portable; same-namespace backends only.</li>
+  </ul>
+</section>
+</article>
+</body>
+</html>

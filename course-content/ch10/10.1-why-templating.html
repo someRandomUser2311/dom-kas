@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>10.1 · Why templating?</title>
+<link rel="stylesheet" href="../content.css">
+</head>
+<body>
+<article class="lesson" data-id="10.1" data-chapter="10">
+<nav class="crumbs"><a href="../index.html">Course</a> / <a href="index.html">Chapter 10</a> / 10.1</nav>
+<header>
+  <p class="kicker">Chapter 10 · Lesson 10.1 · ~8 steps · ~9 min</p>
+  <h1>Why templating?</h1>
+  <p class="meta">You'll be able to explain why copied YAML per environment goes wrong, and when to reach for Kustomize, Helm, or both.</p>
+</header>
+
+<section class="step" id="s1">
+  <h2>1. The copy-paste trap</h2>
+  <div class="body">
+    <p>Contoso's first approach: <code>k8s/dev/</code> and <code>k8s/prod/</code>, two full copies of every manifest. Within a month:</p>
+    <ul>
+      <li>someone added a readiness probe in dev and forgot prod;</li>
+      <li>prod's memory limit was raised during an incident and never written back to dev;</li>
+      <li>nobody can say which differences are intentional.</li>
+    </ul>
+    <p>The fix: keep <b>one</b> description of the app, plus a <b>small, explicit list of differences</b> per environment.</p>
+  </div>
+  <aside class="coming" data-set="A">
+    <dl>
+      <dt>Windows/IIS admin</dt><dd>Same problem as hand-edited <code>web.config</code> on each server, solved the way config transforms did: one base, small per-environment changes.</dd>
+      <dt>Linux admin</dt><dd>Like Ansible roles with per-group variables instead of copied playbooks.</dd>
+      <dt>Developer (Compose)</dt><dd>Like <code>docker-compose.yml</code> plus <code>docker-compose.prod.yml</code> overrides. Kustomize is that idea for Kubernetes.</dd>
+      <dt>Other clouds</dt><dd>Kustomize and Helm are the same tools on every Kubernetes platform.</dd>
+    </dl>
+  </aside>
+</section>
+
+<section class="step" id="s2">
+  <h2>2. Two philosophies</h2>
+  <table>
+    <tr><th></th><th>Kustomize: overlays</th><th>Helm: templates</th></tr>
+    <tr><td>Idea</td><td>Plain YAML base + patches per environment</td><td>Templated YAML + values per environment</td></tr>
+    <tr><td>Files</td><td>Valid Kubernetes YAML everywhere</td><td>Go templates (<code>{{ .Values.replicas }}</code>), not valid YAML until rendered</td></tr>
+    <tr><td>Install tracking</td><td>None (plain apply)</td><td>Releases with revisions and rollback</td></tr>
+    <tr><td>Sharing</td><td>Git directories / remote bases</td><td>Packaged, versioned charts in a registry</td></tr>
+    <tr><td>Built into kubectl</td><td>Yes (<code>kubectl apply -k</code>)</td><td>No (the <code>helm</code> CLI)</td></tr>
+  </table>
+</section>
+
+<section class="step" id="s3">
+  <h2>3. When each fits</h2>
+  <div class="check" data-type="mcq">
+    <p class="q">Contoso wants to deploy its <b>own</b> app to dev and prod with a few differences, keep plain YAML that reviewers can read, and avoid learning a template language. Which tool fits best?</p>
+    <ol class="options">
+      <li class="correct">Kustomize</li>
+      <li>Helm <span class="why">It works, but templating is more than this needs, and the files stop being plain YAML.</span></li>
+      <li>Copy-paste per environment <span class="why">That's the problem we're solving.</span></li>
+      <li>sed in the pipeline <span class="why">Fragile, and invisible in reviews.</span></li>
+    </ol>
+    <div class="explain">Kustomize suits your own apps with modest per-environment differences. Helm shines for <b>distributing</b> configurable software, such as third-party apps, or a platform team's chart used by many teams.</div>
+  </div>
+</section>
+
+<section class="step" id="s4">
+  <h2>4. You'll use both</h2>
+  <div class="body">
+    <p>In practice most teams use both:</p>
+    <ul>
+      <li><b>Helm</b> to install third-party software, such as cert-manager, Kyverno and monitoring agents, from their official charts.</li>
+      <li><b>Kustomize</b> for their own apps.</li>
+    </ul>
+    <p>Kustomize can even render a Helm chart and patch the result (<code>helmCharts:</code>), so they're not either/or.</p>
+  </div>
+</section>
+
+<section class="step" id="s5">
+  <h2>5. Feature → tool</h2>
+  <div class="check" data-type="match">
+    <p class="q">Match each feature to the tool known for it.</p>
+    <table class="pairs">
+      <tr><td><code>helm rollback</code> to a previous revision</td><td>Helm</td></tr>
+      <tr><td><code>images:</code> to set a tag without editing YAML</td><td>Kustomize</td></tr>
+      <tr><td>Versioned packages pushed to a registry</td><td>Helm (charts as OCI artifacts)</td></tr>
+      <tr><td>Works with <code>kubectl</code> alone</td><td>Kustomize</td></tr>
+      <tr><td>Loops and conditionals in manifests</td><td>Helm</td></tr>
+    </table>
+    <div class="explain">Pick by need, not fashion.</div>
+  </div>
+</section>
+
+<section class="step" id="s6">
+  <h2>6. What should differ between environments?</h2>
+  <div class="body">
+    <p>Keep the list short and deliberate:</p>
+    <ul>
+      <li>replicas and HPA bounds;</li>
+      <li>resource requests and limits;</li>
+      <li>namespace or cluster;</li>
+      <li>hostnames;</li>
+      <li>config values such as log level and URLs;</li>
+      <li>the image <b>tag</b>, set by the pipeline.</li>
+    </ul>
+    <p>Probes, security settings and policies should be <b>identical</b>. A difference there is how prod surprises you.</p>
+  </div>
+</section>
+
+<section class="step" id="s7">
+  <h2>7. Build once, deploy many</h2>
+  <div class="body">
+    <p>Whatever the tool, the <b>image</b> is built once, by CI, and the same image (same digest) is promoted from dev to prod. Only configuration changes per environment.</p>
+    <p>Rebuilding per environment means prod runs something that was never tested. Lesson 10.6 enforces this in the pipeline.</p>
+  </div>
+</section>
+
+<section class="step summary" id="s8">
+  <h2>Templating, sorted</h2>
+  <ul>
+    <li>Copied YAML drifts; keep one base plus explicit differences.</li>
+    <li>Kustomize = plain YAML + patches; Helm = templates + values + releases.</li>
+    <li>Kustomize for your apps, Helm for distributed software; combine freely.</li>
+    <li>Same image everywhere; only config differs.</li>
+  </ul>
+</section>
+</article>
+</body>
+</html>

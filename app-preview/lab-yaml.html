@@ -1,0 +1,218 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>YAML lab · Write a multi-stage pipeline</title>
+<link rel="stylesheet" href="assets/styles.css">
+</head>
+<body data-page="lab-yaml">
+<header id="topbar"></header>
+
+<div class="lab-shell">
+  <!-- instructions -->
+  <section class="lab-pane">
+    <div class="lab-pane-head">📋 Instructions <span class="badge badge-accent" style="margin-left:auto" id="score-badge">0 / 11</span></div>
+    <div class="lab-pane-body">
+      <div class="breadcrumb" style="margin-bottom:10px"><a href="chapter.html">← Ch 7</a><span class="sep">/</span><span>YAML lab</span></div>
+      <h3 style="margin-top:0">Write a multi-stage pipeline for <code>orders-api</code></h3>
+      <p class="muted" style="font-size:14px">Your team wants every push to <code>main</code> built, pushed to ACR and deployed to the <code>orders</code> namespace on AKS, but <b>only</b> after a successful build. Service connections already exist: <code>acr-connection</code> (Docker Registry) and <code>aks-prod</code> (Kubernetes).</p>
+      <ul class="task-list" id="tasks"></ul>
+      <div class="callout" style="font-size:13px"><span class="c-ico">ℹ️</span><div>This lab is graded <b>statically</b>: the grader parses your YAML and checks its structure and rules. Nothing is executed. That's the same approach the real app's Rust grader uses.</div></div>
+    </div>
+  </section>
+
+  <!-- editor -->
+  <section class="lab-pane" style="display:flex;flex-direction:column;background:var(--code-bg)">
+    <div class="lab-pane-head" style="background:#0d1220;color:#c9d4e8;border-color:#1a2131">
+      <span>📄 azure-pipelines.yml</span>
+      <span class="subtle" style="margin-left:auto;color:#7c869a" id="cursor-info">YAML · spaces: 2</span>
+    </div>
+    <div id="editor" style="flex:1;min-height:480px"></div>
+  </section>
+
+  <!-- results -->
+  <section class="lab-pane">
+    <div class="lab-pane-head">🧪 Grader results <span class="subtle" style="margin-left:auto" id="last-run">not run yet</span></div>
+    <div class="lab-pane-body">
+      <div id="parse-status"></div>
+      <div id="rules"><p class="subtle">Press <b>Check</b> to grade your pipeline.</p></div>
+      <h4 style="margin:18px 0 6px">Your pipeline, visualised</h4>
+      <div class="card" style="padding:10px"><div id="graph"></div></div>
+    </div>
+  </section>
+</div>
+
+<div class="lab-bottom">
+  <button class="btn btn-success" id="check">▶ Check</button>
+  <button class="btn" id="hint">💡 Hint <span class="subtle">(−5 XP)</span></button>
+  <button class="btn btn-ghost" id="reset">↺ Reset</button>
+  <button class="btn btn-ghost" id="solution">👁 View solution</button>
+  <span style="margin-left:auto"></span>
+  <a class="btn" href="predict.html">← Back</a>
+  <a class="btn btn-primary" id="next" href="lab-terminal.html">Next: Terminal lab →</a>
+</div>
+
+<script src="assets/app.js"></script>
+<script src="assets/yaml.js"></script>
+<script src="assets/pipeline-graph.js"></script>
+<script>
+const STARTER = `# azure-pipelines.yml for orders-api
+# TODO: only build pushes to main
+trigger:
+  - main
+
+pool:
+  vmImage: ubuntu-latest
+
+stages:
+  - stage: Build
+    jobs:
+      - job: build
+        steps:
+          - script: npm ci && npm test
+            displayName: Unit tests
+          # TODO: build & push the image to ACR with a traceable tag
+
+  # TODO: add a Deploy stage that
+  #  - only runs for main AND when Build succeeded
+  #  - uses a deployment job targeting the 'prod' environment
+  #  - deploys k8s/*.yaml to namespace 'orders' with the new image
+`;
+
+const SOLUTION = `# azure-pipelines.yml for orders-api
+trigger:
+  - main
+
+pool:
+  vmImage: ubuntu-latest
+
+variables:
+  imageRepo: orders-api
+  tag: $(Build.BuildId)
+
+stages:
+  - stage: Build
+    jobs:
+      - job: build
+        steps:
+          - script: npm ci && npm test
+            displayName: Unit tests
+          - task: Docker@2
+            displayName: Build & push image
+            inputs:
+              command: buildAndPush
+              containerRegistry: acr-connection
+              repository: $(imageRepo)
+              tags: $(tag)
+
+  - stage: Deploy
+    dependsOn: Build
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+    jobs:
+      - deployment: deploy_orders
+        environment: prod
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: self
+                - task: KubernetesManifest@1
+                  inputs:
+                    action: deploy
+                    connectionType: kubernetesServiceConnection
+                    kubernetesServiceConnection: aks-prod
+                    namespace: orders
+                    manifests: k8s/*.yaml
+                    containers: kqacr.azurecr.io/orders-api:$(tag)
+`;
+
+// ---------- helpers ----------
+const walk = (o, fn) => { if (Array.isArray(o)) o.forEach(x => walk(x, fn)); else if (o && typeof o === "object") { fn(o); Object.values(o).forEach(v => walk(v, fn)); } };
+const tasks = (o, name) => { const r = []; walk(o, x => { if (typeof x.task === "string" && x.task.toLowerCase().startsWith(name.toLowerCase())) r.push(x); }); return r; };
+const stages = p => Array.isArray(p && p.stages) ? p.stages.filter(s => s && s.stage) : [];
+const stageByName = (p, n) => stages(p).find(s => String(s.stage).toLowerCase() === n.toLowerCase());
+const asList = v => v == null ? [] : Array.isArray(v) ? v : [v];
+function resolveVars(p, s) {
+  // expand $(var) using pipeline-level variables (map form or list of name/value)
+  const vars = {};
+  if (p && p.variables && !Array.isArray(p.variables)) Object.assign(vars, p.variables);
+  if (Array.isArray(p && p.variables)) p.variables.forEach(v => { if (v && v.name) vars[v.name] = v.value; });
+  let out = String(s == null ? "" : s), n = 0;
+  while (/\$\((\w[\w.]*)\)/.test(out) && n++ < 5) out = out.replace(/\$\((\w[\w.]*)\)/g, (m, k) => vars[k] != null ? String(vars[k]) : (k.includes(".") ? "§" + k + "§" : m));
+  return out.replace(/§/g, "");
+}
+const deployJobs = s => asList(s && s.jobs).filter(j => j && j.deployment != null);
+
+const TOP_KEYS = ["trigger", "pr", "pool", "variables", "stages", "jobs", "steps", "resources", "name", "parameters", "extends", "schedules", "lockBehavior", "appendCommitMessageToRunName"];
+
+const RULES = [
+  { id: "syntax", task: 0, title: "YAML is valid", hint: "Check indentation (2 spaces, no tabs) and that every key has a colon.", test: (p, e) => e.length === 0 && !!p },
+  { id: "schema", task: 0, title: "Only known top-level keys", hint: "Allowed top-level keys include trigger, pr, pool, variables, stages, resources…", test: p => p && Object.keys(p).every(k => TOP_KEYS.includes(k)), why: p => p ? "Unknown: " + Object.keys(p).filter(k => !TOP_KEYS.includes(k)).join(", ") : "" },
+  { id: "trigger", task: 1, title: "CI trigger only for main", hint: "Use a list: <code>trigger: [main]</code> (or branches.include).", test: p => { const t = p && p.trigger; const inc = Array.isArray(t) ? t : t && t.branches && asList(t.branches.include); return Array.isArray(inc) && inc.length === 1 && /^(refs\/heads\/)?main$/.test(inc[0]); } },
+  { id: "docker", task: 2, title: "Build stage builds & pushes with Docker@2 via acr-connection", hint: "Add a <code>task: Docker@2</code> with <code>command: buildAndPush</code> and <code>containerRegistry: acr-connection</code> to the Build stage.", test: p => { const b = stageByName(p, "Build"); return !!b && tasks(b, "Docker@2").some(t => t.inputs && t.inputs.command === "buildAndPush" && t.inputs.containerRegistry === "acr-connection" && /orders-api/.test(resolveVars(p, t.inputs.repository))); } },
+  { id: "tag", task: 2, title: "Image tag is traceable ($(Build.BuildId)), never latest", hint: "Set <code>tags: $(Build.BuildId)</code> on the Docker task.", test: p => tasks(p, "Docker@2").some(t => t.inputs && /Build\.BuildId|Build\.SourceVersion/.test(resolveVars(p, t.inputs.tags)) && !/latest/.test(resolveVars(p, t.inputs.tags))) },
+  { id: "deploystage", task: 3, title: "Deploy stage depends on Build", hint: "Add <code>- stage: Deploy</code> after Build, optionally with <code>dependsOn: Build</code>.", test: p => { const st = stages(p); const d = st.findIndex(s => /^deploy/i.test(s.stage)); const b = st.findIndex(s => /^build$/i.test(s.stage)); if (d < 0 || b < 0) return false; const dep = st[d].dependsOn; return dep === undefined ? d === b + 1 : asList(dep).some(x => /^build$/i.test(x)); } },
+  { id: "condition", task: 3, title: "Deploy runs only for main AND when Build succeeded", hint: "<code>condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))</code>. Remember: a custom condition replaces the default succeeded().", test: p => { const d = stages(p).find(s => /^deploy/i.test(s.stage)); const c = d && String(d.condition || ""); return !!c && /succeeded\(\)/.test(c) && /refs\/heads\/main/.test(c) && /Build\.SourceBranch/.test(c); } },
+  { id: "deployment", task: 4, title: "Uses a deployment job targeting environment prod", hint: "Inside Deploy: <code>- deployment: deploy_orders</code> with <code>environment: prod</code> and a <code>strategy: runOnce</code>.", test: p => { const d = stages(p).find(s => /^deploy/i.test(s.stage)); return deployJobs(d).some(j => (j.environment === "prod" || (j.environment && j.environment.name === "prod")) && j.strategy); } },
+  { id: "checkout", task: 4, title: "Deployment job checks out the repo", hint: "Deployment jobs don't check out code by default. Add <code>- checkout: self</code> before the manifest task.", test: p => { const d = stages(p).find(s => /^deploy/i.test(s.stage)); let ok = false; deployJobs(d).forEach(j => walk(j, x => { if (x.checkout === "self") ok = true; })); return ok; } },
+  { id: "k8s", task: 5, title: "KubernetesManifest@1 deploys to namespace orders with the new image", hint: "Use <code>action: deploy</code>, <code>kubernetesServiceConnection: aks-prod</code>, <code>namespace: orders</code>, <code>manifests: k8s/*.yaml</code> and <code>containers: kqacr.azurecr.io/orders-api:$(Build.BuildId)</code>.", test: p => { const d = stages(p).find(s => /^deploy/i.test(s.stage)); return !!d && tasks(d, "KubernetesManifest@1").some(t => { const i = t.inputs || {}; return i.action === "deploy" && i.namespace === "orders" && /aks-prod/.test(i.kubernetesServiceConnection || "") && /k8s\//.test(i.manifests || "") && /Build\.BuildId|Build\.SourceVersion/.test(resolveVars(p, i.containers)); }); } },
+  { id: "secrets", task: 6, title: "No plaintext secrets in YAML", hint: "Remove keys like password/secret/token with literal values. Use secret variables or a Key Vault variable group.", test: (p, e, txt) => !/^\s*[\w.-]*(password|secret|token|apikey|api_key)[\w.-]*\s*:\s*['"]?[^\s$'"][^'"]*['"]?\s*$/im.test(txt) },
+];
+const TASKS = [
+  "Pipeline parses and uses only valid top-level keys",
+  "Trigger CI only on pushes to <code>main</code>",
+  "Build & push <code>orders-api</code> to ACR via <code>acr-connection</code> with a traceable tag",
+  "Add a <code>Deploy</code> stage that runs only on <code>main</code> after a successful build",
+  "Use a <b>deployment job</b> on environment <code>prod</code> that checks out the repo",
+  "Deploy <code>k8s/*.yaml</code> to namespace <code>orders</code> with <code>KubernetesManifest@1</code> using the new image",
+  "Keep secrets out of the YAML",
+];
+document.getElementById("tasks").innerHTML = TASKS.map((t, k) => `<li data-t="${k}"><span class="tick">✓</span><span class="tx">${t}</span></li>`).join("");
+
+let hintIdx = 0, lastResults = null;
+const ed = KQY.editor(document.getElementById("editor"), KQ.store.get("labYaml", STARTER), v => { KQ.store.set("labYaml", v); liveGraph(v); });
+
+function liveGraph(txt) {
+  const { value } = KQY.parse(txt);
+  KQG.render(document.getElementById("graph"), KQG.fromPipeline(value), { maxSteps: 4 });
+}
+function grade() {
+  const txt = ed.value;
+  const { value, errors } = KQY.parse(txt);
+  ed.markErrors(errors.map(e => e.line));
+  document.getElementById("parse-status").innerHTML = errors.length
+    ? `<div class="callout danger" style="margin-top:0"><span class="c-ico">⛔</span><div><b>${errors.length} YAML error(s)</b><br>${errors.slice(0, 4).map(e => `Line ${e.line}: ${KQ.escapeHtml(e.msg)}`).join("<br>")}</div></div>` : "";
+  const results = RULES.map(r => { let ok = false; try { ok = !!r.test(value, errors, txt); } catch (e) { ok = false; } return { ...r, ok }; });
+  lastResults = results;
+  const passed = results.filter(r => r.ok).length;
+  document.getElementById("rules").innerHTML = results.map(r => `<div class="rule ${r.ok ? "pass" : "fail"}"><span class="r-ico">${r.ok ? "✓" : "✕"}</span><div><div class="r-title">${r.title}</div>${r.ok ? "" : `<div class="r-hint">${r.id === "schema" && r.why ? KQ.escapeHtml(r.why(value)) + " · " : ""}${r.hint}</div>`}</div></div>`).join("");
+  document.getElementById("score-badge").textContent = `${passed} / ${RULES.length}`;
+  document.getElementById("score-badge").className = "badge " + (passed === RULES.length ? "badge-success" : "badge-accent");
+  document.getElementById("last-run").textContent = "checked " + new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  TASKS.forEach((_, k) => {
+    const rs = results.filter(r => r.task === k);
+    document.querySelector(`#tasks li[data-t="${k}"]`).classList.toggle("ok", rs.length > 0 && rs.every(r => r.ok));
+  });
+  liveGraph(txt);
+  if (passed === RULES.length) {
+    if (!KQ.isDone("lab-yaml")) { KQ.markDone("lab-yaml"); KQ.toast("Lab passed! All 11 rules green 🎉", "🏆"); }
+    KQ.store.set("labScore", 100);
+  } else KQ.store.set("labScore", Math.round(passed / RULES.length * 100));
+}
+document.getElementById("check").onclick = grade;
+document.getElementById("reset").onclick = () => { if (confirm("Reset the editor to the starter file?")) { ed.value = STARTER; document.getElementById("rules").innerHTML = '<p class="subtle">Press <b>Check</b> to grade your pipeline.</p>'; } };
+document.getElementById("solution").onclick = () => { if (confirm("Replace your YAML with the reference solution? You'll only get partial XP.")) { ed.value = SOLUTION; grade(); } };
+document.getElementById("hint").onclick = () => {
+  const failing = (lastResults || RULES.map(r => ({ ...r, ok: false }))).filter(r => !r.ok);
+  if (!failing.length) { KQ.toast("Everything passes, no hints needed!", "✨"); return; }
+  const r = failing[hintIdx++ % failing.length];
+  KQ.addXP(-5, false);
+  const el = document.getElementById("xp-val"); if (el) el.textContent = KQ.xp().toLocaleString();
+  KQ.toast(`Hint: ${r.hint.replace(/<[^>]+>/g, "")}`, "💡");
+};
+document.addEventListener("keydown", e => { if ((e.metaKey || e.ctrlKey) && e.key === "Enter") { e.preventDefault(); grade(); } });
+liveGraph(ed.value);
+</script>
+</body>
+</html>

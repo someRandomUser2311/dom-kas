@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>0.4 · Azure fundamentals for DevOps</title>
+<link rel="stylesheet" href="../content.css">
+</head>
+<body>
+<article class="lesson" data-id="0.4" data-chapter="0">
+<nav class="crumbs"><a href="../index.html">Course</a> / <a href="index.html">Chapter 0</a> / 0.4</nav>
+<header>
+  <p class="kicker">Chapter 0 · Lesson 0.4 · ~8 steps · ~12 min</p>
+  <h1>Azure fundamentals for DevOps</h1>
+  <p class="meta">You'll be able to explain where resources live in Azure, which kinds of identity exist, and how a role assignment gives an identity exactly the access it needs.</p>
+</header>
+
+<section class="step" id="s1">
+  <h2>1. The resource hierarchy</h2>
+  <div class="body">
+    <p>Everything in Azure sits in one tree:</p>
+    <ul>
+      <li><b>Tenant</b>: your organisation's <b>Microsoft Entra ID</b> directory (formerly Azure AD). It holds users, groups and app identities.</li>
+      <li><b>Management groups</b> (optional): folders of subscriptions, used to apply policy and access at scale.</li>
+      <li><b>Subscriptions</b>: the unit of billing and of quotas. Contoso has <code>sub-orders-nonprod</code> and <code>sub-orders-prod</code>.</li>
+      <li><b>Resource groups</b>: a folder of resources that share a lifecycle, such as <code>rg-orders-dev</code>.</li>
+      <li><b>Resources</b>: an AKS cluster, a container registry, a VNet.</li>
+    </ul>
+  </div>
+  <div class="widget" data-widget="scope-tree">An expandable tree: Tenant → management group "Contoso" → two subscriptions → resource groups (<code>rg-orders-dev</code>, <code>rg-orders-prod</code>, <code>rg-shared</code>) → resources (AKS, ACR, Key Vault, VNet). Clicking a node shows its <b>resource ID</b>, e.g. <code>/subscriptions/…/resourceGroups/rg-orders-dev/providers/Microsoft.ContainerService/managedClusters/aks-orders-dev</code>.</div>
+  <aside class="coming" data-set="A">
+    <dl>
+      <dt>Windows/IIS admin</dt><dd>Entra ID is the cloud cousin of Active Directory, but it has no OUs and no Group Policy. Management groups and resource groups are where you organise things instead.</dd>
+      <dt>Linux admin</dt><dd>Think of the tree as a filesystem: permissions set on a directory apply to everything under it.</dd>
+      <dt>Developer (Compose)</dt><dd>A resource group is roughly "one Compose project": things you create and delete together.</dd>
+      <dt>Other clouds</dt><dd>A subscription ≈ an AWS account or a GCP project. A resource group has no exact AWS equivalent; it's closest to a CloudFormation stack's set of resources. <b>Careful:</b> deleting a resource group deletes everything in it.</dd>
+    </dl>
+  </aside>
+</section>
+
+<section class="step" id="s2">
+  <h2>2. Regions and availability zones</h2>
+  <div class="body">
+    <p>A <b>region</b> is a set of datacentres in one area, such as <code>westeurope</code> or <code>eastus2</code>. Most resources live in one region.</p>
+    <p>Many regions have three <b>availability zones</b>: separate datacentres with their own power and cooling. Spreading AKS nodes across zones 1, 2 and 3 keeps the app running if one datacentre fails.</p>
+    <p>You choose zones when you <b>create</b> a node pool, and you can't change them afterwards. Chapter 4 covers this.</p>
+  </div>
+</section>
+
+<section class="step" id="s3">
+  <h2>3. Four kinds of identity</h2>
+  <div class="body">
+    <p>Anything that calls Azure must prove who it is. There are four kinds of identity:</p>
+    <ul>
+      <li><b>User</b>: a person who signs in.</li>
+      <li><b>Group</b>: a set of users (and other identities). Assign access to groups, not to individuals.</li>
+      <li><b>Service principal</b>: an identity for an application, created from an <i>app registration</i>. It authenticates with a secret, a certificate, or a <b>federated credential</b> (no secret at all; Chapter 7 uses this for pipelines).</li>
+      <li><b>Managed identity</b>: an identity Azure creates and manages for a resource. There's no secret for you to store or rotate.
+        <ul>
+          <li><b>System-assigned</b>: tied to one resource, and deleted with it.</li>
+          <li><b>User-assigned</b>: a standalone resource you can attach to several resources. AKS uses these.</li>
+        </ul>
+      </li>
+    </ul>
+  </div>
+  <div class="check" data-type="match">
+    <p class="q">Match each identity type to its best use.</p>
+    <table class="pairs">
+      <tr><td>User</td><td>An engineer opening the portal</td></tr>
+      <tr><td>Group</td><td>"Everyone on the platform team gets read access"</td></tr>
+      <tr><td>Service principal with a federated credential</td><td>An Azure DevOps pipeline deploying to Azure</td></tr>
+      <tr><td>User-assigned managed identity</td><td>An AKS cluster's control plane, reused if the cluster is rebuilt</td></tr>
+    </table>
+    <div class="explain">Prefer managed identities for Azure resources and federated credentials for external systems like pipelines. Both avoid secrets that can leak.</div>
+  </div>
+</section>
+
+<section class="step" id="s4">
+  <h2>4. RBAC = who + role + scope</h2>
+  <div class="body">
+    <p>Access in Azure is a <b>role assignment</b>, made of three parts:</p>
+    <ul>
+      <li><b>Who</b>: a user, group, service principal or managed identity.</li>
+      <li><b>Role</b>: a named set of allowed actions, such as <code>Reader</code> or <code>AcrPull</code>.</li>
+      <li><b>Scope</b>: where it applies: a management group, subscription, resource group or single resource.</li>
+    </ul>
+    <p>Assignments are <b>inherited downwards</b>. Reader on a subscription means Reader on every resource group and resource in it.</p>
+    <p>Least privilege means picking the <b>narrowest</b> role at the <b>lowest</b> scope that still works.</p>
+  </div>
+  <pre class="code" data-file="assign.sh">az role assignment create \
+  --assignee "&lt;pipeline-sp-app-id&gt;" \
+  --role Contributor \
+  --scope /subscriptions/&lt;sub-id&gt;/resourceGroups/rg-orders-dev</pre>
+  <div class="widget" data-widget="scope-tree">Assignment mode: pick an identity, a role and a node in the tree. Every node the assignment reaches lights up, so inheritance is visible.</div>
+</section>
+
+<section class="step" id="s5">
+  <h2>5. Give the pipeline just enough</h2>
+  <div class="check" data-type="custom">
+    <p class="q">The dev pipeline must create and update resources in <code>rg-orders-dev</code>, and nothing else. Make the assignment in the scope tree.</p>
+    <div class="widget" data-widget="scope-tree">Success when the identity <code>sp-orders-pipeline-dev</code> has <code>Contributor</code> at exactly <code>rg-orders-dev</code>. Feedback for common misses:
+      <ul>
+        <li><b>Subscription scope:</b> "This also reaches rg-orders-prod and rg-shared."</li>
+        <li><b>Owner:</b> "Owner can also grant access to others. The pipeline doesn't need that."</li>
+        <li><b>Reader:</b> "Reader can't create anything."</li>
+      </ul></div>
+    <div class="explain">Contributor at the resource group lets the pipeline manage everything in that group, but nothing outside it, and it can't grant access to anyone.</div>
+  </div>
+</section>
+
+<section class="step" id="s6">
+  <h2>6. Control plane vs data plane roles</h2>
+  <div class="body">
+    <p>The three classic roles manage <b>resources</b>:</p>
+    <ul>
+      <li><b>Owner</b>: everything, including assigning roles to others.</li>
+      <li><b>Contributor</b>: create, change and delete resources, but it <b>can't</b> assign roles.</li>
+      <li><b>Reader</b>: view only.</li>
+    </ul>
+    <p>Many services also have <b>data-plane roles</b> for what's <i>inside</i> a resource:</p>
+    <ul>
+      <li><code>AcrPull</code> and <code>AcrPush</code> to pull or push images.</li>
+      <li><code>Key Vault Secrets User</code> to read secrets.</li>
+      <li>The <code>Azure Kubernetes Service RBAC …</code> roles to act inside a cluster.</li>
+    </ul>
+    <p>Being Contributor on a registry doesn't by itself mean you should push images to it. Grant <code>AcrPush</code> for that.</p>
+    <p>To let an identity assign roles without making it Owner, use <b>Role Based Access Control Administrator</b>. You can add a <i>condition</i> that limits which roles it may assign, for example only <code>AcrPull</code>.</p>
+  </div>
+  <div class="check" data-type="mcq">
+    <p class="q">Your Terraform pipeline runs as Contributor on <code>rg-orders-dev</code>. It fails when creating the AcrPull assignment for the cluster. Why?</p>
+    <ol class="options">
+      <li>AcrPull can only be assigned in the portal <span class="why">Any role can be assigned from the CLI, Terraform or Bicep.</span></li>
+      <li class="correct">Contributor can't create role assignments; that needs Owner, User Access Administrator, or Role Based Access Control Administrator</li>
+      <li>The resource group is the wrong scope for AcrPull <span class="why">AcrPull is normally assigned on the registry itself, but scope isn't what blocks a Contributor.</span></li>
+      <li>The cluster doesn't exist yet <span class="why">Terraform orders the operations; the error here is a permissions error.</span></li>
+    </ol>
+    <div class="explain">Creating role assignments needs <code>Microsoft.Authorization/roleAssignments/write</code>, which Contributor explicitly lacks. The safe fix is Role Based Access Control Administrator, with a condition that limits it to the roles the pipeline is allowed to hand out.</div>
+  </div>
+</section>
+
+<section class="step" id="s7">
+  <h2>7. Signing in from the CLI</h2>
+  <div class="body">
+    <p><code>az login</code> signs you in (it opens a browser, or prints a device code). One account can see many subscriptions, so always check which one is <b>active</b> before you change anything.</p>
+    <p>In pipelines you never run <code>az login</code> yourself. The <code>AzureCLI@2</code> task signs in with the service connection (Chapter 7).</p>
+  </div>
+  <pre class="code" data-file="terminal">az login
+az account show --query name -o tsv           # which subscription am I in?
+az account set --subscription sub-orders-nonprod
+az group list -o table</pre>
+  <div class="check" data-type="command">
+    <p class="q">Switch the active subscription to <code>sub-orders-nonprod</code>.</p>
+    <p class="answer"><code>az account set --subscription sub-orders-nonprod</code></p>
+    <p class="accept">Also accepted: <code>-s</code> for <code>--subscription</code>, or the subscription ID instead of the name.</p>
+    <div class="explain">Every later <code>az</code> command uses this subscription unless you pass <code>--subscription</code> explicitly.</div>
+  </div>
+</section>
+
+<section class="step summary" id="s8">
+  <h2>Azure, sorted</h2>
+  <ul>
+    <li>Tenant (Entra ID) → management groups → subscriptions → resource groups → resources.</li>
+    <li>Regions contain availability zones; choose zones when you create a node pool.</li>
+    <li>Use managed identities for Azure resources and federated credentials for pipelines.</li>
+    <li>RBAC = who + role + scope, inherited downwards; use the narrowest role at the lowest scope.</li>
+    <li>Contributor can't assign roles; data-plane roles like AcrPull control what's inside a resource.</li>
+  </ul>
+</section>
+</article>
+</body>
+</html>

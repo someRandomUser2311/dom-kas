@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lesson · KubeQuest</title>
+<link rel="stylesheet" href="assets/styles.css">
+</head>
+<body>
+<noscript>This lesson needs JavaScript.</noscript>
+<script src="assets/app.js"></script>
+<script src="assets/yaml.js"></script>
+<script src="assets/pipeline-graph.js"></script>
+<script>
+// One player page for every guided lesson: lesson.html?l=ch07/l1 loads content/ch07/l1.js, then the step player.
+(function () {
+  const id = new URLSearchParams(location.search).get("l") || "";
+  const fail = msg => { document.body.innerHTML = `<main class="container" style="padding:40px 16px"><h1>Lesson not found</h1><p class="muted">${msg}</p><p><a class="btn" href="index.html">← Home</a></p></main>`; };
+  if (!/^(ch\d\d|dev)\/[a-z0-9-]+$/.test(id)) return fail("The link is missing a valid lesson id.");
+  const load = src => new Promise((ok, bad) => { const s = document.createElement("script"); s.src = src; s.onload = ok; s.onerror = bad; document.body.appendChild(s); });
+  load(`content/${id}.js`)
+    .then(() => {
+      if (!window.LESSON) throw new Error("no LESSON");
+      document.title = `${window.LESSON.code} · ${window.LESSON.title}`;
+      document.body.dataset.page = window.LESSON.id;
+      return load("assets/stepper.js");
+    })
+    .catch(() => fail(`Couldn't load <code>content/${KQ.escapeHtml(id)}.js</code>.`));
+})();
+</script>
+</body>
+</html>

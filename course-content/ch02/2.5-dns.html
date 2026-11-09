@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>2.5 · DNS &amp; service discovery</title>
+<link rel="stylesheet" href="../content.css">
+</head>
+<body>
+<article class="lesson" data-id="2.5" data-chapter="2">
+<nav class="crumbs"><a href="../index.html">Course</a> / <a href="index.html">Chapter 2</a> / 2.5</nav>
+<header>
+  <p class="kicker">Chapter 2 · Lesson 2.5 · ~8 steps · ~10 min</p>
+  <h1>DNS &amp; service discovery</h1>
+  <p class="meta">You'll be able to build the DNS name of any Service, know when the short name works, and write connection strings that work across namespaces.</p>
+</header>
+
+<section class="step" id="s1">
+  <h2>1. Every Service gets a DNS name</h2>
+  <div class="body">
+    <p>The cluster runs its own DNS server, <b>CoreDNS</b>, in <code>kube-system</code>. Every pod is configured to use it.</p>
+    <p>For every Service, CoreDNS answers this name with the Service's ClusterIP:</p>
+    <pre>&lt;service&gt;.&lt;namespace&gt;.svc.cluster.local</pre>
+    <p>So <code>orders-api</code> in namespace <code>orders</code> is <code>orders-api.orders.svc.cluster.local</code>.</p>
+  </div>
+  <aside class="coming" data-set="A">
+    <dl>
+      <dt>Windows/IIS admin</dt><dd>Like an internal AD DNS zone that registers every Service automatically. <code>cluster.local</code> is the zone; namespaces are like subdomains.</dd>
+      <dt>Linux admin</dt><dd>Look at a pod's <code>/etc/resolv.conf</code>: the nameserver is CoreDNS's ClusterIP, with <code>search</code> domains for the namespace.</dd>
+      <dt>Developer (Compose)</dt><dd>Compose resolves service names on one network. Kubernetes does the same, scoped by namespace.</dd>
+      <dt>Other clouds</dt><dd>Identical on EKS and GKE. AKS can also forward to Azure private DNS zones (Chapter 5).</dd>
+    </dl>
+  </aside>
+</section>
+
+<section class="step" id="s2">
+  <h2>2. Short names and search domains</h2>
+  <div class="body">
+    <p>You don't have to type the full name. Each pod's <code>/etc/resolv.conf</code> has <b>search domains</b> for its own namespace, so short names get expanded:</p>
+    <ul>
+      <li>From a pod in <code>orders</code>, <code>orders-api</code> resolves (expanded to <code>orders-api.orders.svc.cluster.local</code>).</li>
+      <li>From a pod in any namespace, <code>orders-api.orders</code> resolves.</li>
+      <li>From a pod in <b>another</b> namespace, plain <code>orders-api</code> looks in <i>that</i> namespace and fails.</li>
+    </ul>
+  </div>
+  <pre class="output">$ kubectl exec -n orders web-6c8f9d7b5-h4j2k -- cat /etc/resolv.conf
+search orders.svc.cluster.local svc.cluster.local cluster.local
+nameserver 10.0.0.10
+options ndots:5</pre>
+</section>
+
+<section class="step" id="s3">
+  <h2>3. Calling across namespaces</h2>
+  <div class="body"><p>Contoso moves the <code>web</code> frontend into its own namespace, <code>web</code>. <code>orders-api</code> stays in <code>orders</code>.</p></div>
+  <div class="check" data-type="mcq">
+    <p class="q">Which base URL should <code>web</code> (namespace <code>web</code>) use to reach the <code>orders-api</code> Service (port 80, namespace <code>orders</code>)?</p>
+    <ol class="options">
+      <li><code>http://orders-api</code> <span class="why">From namespace <code>web</code>, this looks up <code>orders-api.web.svc.cluster.local</code>, which doesn't exist.</span></li>
+      <li class="correct"><code>http://orders-api.orders</code> (or the full <code>http://orders-api.orders.svc.cluster.local</code>)</li>
+      <li><code>http://orders.orders-api</code> <span class="why">The order is service first, then namespace.</span></li>
+      <li><code>http://10.244.1.12:8080</code> <span class="why">That's one pod's IP; it changes on every restart.</span></li>
+    </ol>
+    <div class="explain">Across namespaces, always include the namespace. Many teams use the full name in configuration to make it explicit.</div>
+  </div>
+</section>
+
+<section class="step" id="s4">
+  <h2>4. Ports aren't in DNS</h2>
+  <div class="body">
+    <p>DNS returns an <b>IP address</b>, not a port. The client must use the Service's <code>port</code> (80 here). <code>orders-api.orders:8080</code> would fail, because 8080 is the pod's port, not the Service's.</p>
+    <p>For a named port, the SRV record <code>_http._tcp.orders-api.orders.svc.cluster.local</code> does carry the port, but few apps use it.</p>
+  </div>
+</section>
+
+<section class="step" id="s5">
+  <h2>5. Write the connection setting</h2>
+  <div class="check" data-type="fill">
+    <p class="q">The <code>web</code> Deployment (namespace <code>web</code>) reads the API's base URL from an environment variable. Complete it.</p>
+    <pre class="code" data-file="web deployment (excerpt)">env:
+  - name: ORDERS_API_URL
+    value: "http://<span class="blank">?</span>"</pre>
+    <ul class="chips">
+      <li class="correct"><code>orders-api.orders.svc.cluster.local:80</code></li>
+      <li><code>orders-api:80</code> <span class="why">Only works from inside the <code>orders</code> namespace.</span></li>
+      <li><code>orders-api.orders.svc.cluster.local:8080</code> <span class="why">8080 is the container port; the Service listens on 80.</span></li>
+      <li><code>orders-api.svc.cluster.local:80</code> <span class="why">The namespace is missing.</span></li>
+    </ul>
+    <div class="explain">Service name, namespace, <code>svc.cluster.local</code>, and the Service's port.</div>
+  </div>
+</section>
+
+<section class="step" id="s6">
+  <h2>6. Testing DNS from inside the cluster</h2>
+  <div class="body"><p>Start a throwaway pod with DNS tools and query from there. The <code>--rm</code> flag deletes the pod when you exit.</p></div>
+  <pre class="output">$ kubectl run tmp -n web --rm -it --image=busybox:1.36 --restart=Never -- nslookup orders-api.orders
+Server:    10.0.0.10
+Address:   10.0.0.10:53
+
+Name:      orders-api.orders.svc.cluster.local
+Address:   10.0.142.17
+pod "tmp" deleted</pre>
+</section>
+
+<section class="step" id="s7">
+  <h2>7. When DNS isn't the problem</h2>
+  <div class="body">
+    <ul>
+      <li>If the name resolves but connections fail, check the Service's endpoints (lesson 2.4), its <code>targetPort</code>, and network policies (Chapter 9).</li>
+      <li>If the name doesn't resolve, check the spelling, the namespace, and whether CoreDNS pods are running: <code>kubectl get pods -n kube-system -l k8s-app=kube-dns</code>.</li>
+      <li>External names, such as <code>contosoacr.azurecr.io</code>, are forwarded by CoreDNS to the VNet's DNS. Chapter 5 covers private zones.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="step summary" id="s8">
+  <h2>DNS, sorted</h2>
+  <ul>
+    <li><code>&lt;svc&gt;.&lt;ns&gt;.svc.cluster.local</code> resolves to the Service's ClusterIP.</li>
+    <li>The short name works only within the same namespace; across namespaces use at least <code>svc.ns</code>.</li>
+    <li>DNS gives the IP; use the Service's <code>port</code>, not the container's.</li>
+    <li>Test with a throwaway busybox pod and <code>nslookup</code>.</li>
+  </ul>
+</section>
+</article>
+</body>
+</html>

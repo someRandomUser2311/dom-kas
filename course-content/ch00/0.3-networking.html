@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>0.3 · Networking you'll need</title>
+<link rel="stylesheet" href="../content.css">
+</head>
+<body>
+<article class="lesson" data-id="0.3" data-chapter="0">
+<nav class="crumbs"><a href="../index.html">Course</a> / <a href="index.html">Chapter 0</a> / 0.3</nav>
+<header>
+  <p class="kicker">Chapter 0 · Lesson 0.3 · ~8 steps · ~12 min</p>
+  <h1>Networking you'll need</h1>
+  <p class="meta">You'll be able to read CIDR ranges, plan non-overlapping subnets, and explain DNS, TLS and outbound NAT well enough to follow the AKS networking chapters.</p>
+</header>
+
+<section class="step" id="s1">
+  <h2>1. CIDR: an address and a size</h2>
+  <div class="body">
+    <p>A range like <code>10.20.0.0/16</code> is written in <b>CIDR</b> notation. The number after the slash says how many leading bits are <b>fixed</b>. The remaining bits can vary, so they decide the range's size.</p>
+    <p>An IPv4 address has 32 bits, so a <code>/N</code> range contains <b>2<sup>(32 − N)</sup></b> addresses:</p>
+    <table>
+      <tr><th>Prefix</th><th>Addresses</th><th>Typical use</th></tr>
+      <tr><td><code>/16</code></td><td>65,536</td><td>A whole VNet</td></tr>
+      <tr><td><code>/22</code></td><td>1,024</td><td>An AKS node subnet</td></tr>
+      <tr><td><code>/24</code></td><td>256</td><td>A small subnet</td></tr>
+      <tr><td><code>/27</code></td><td>32</td><td>A tiny subnet, e.g. for private endpoints</td></tr>
+      <tr><td><code>/32</code></td><td>1</td><td>A single address</td></tr>
+    </table>
+    <p>Each step down in the prefix (from <code>/24</code> to <code>/23</code>) <b>doubles</b> the size.</p>
+  </div>
+  <div class="widget" data-widget="cidr-calc">A CIDR calculator. Type a range (e.g. <code>10.20.0.0/22</code>) and see the first and last address, the total count, and the usable count in Azure (total − 5). A second input checks whether two ranges overlap and highlights the shared part on a bar. Reused in lesson 5.1.</div>
+  <aside class="coming" data-set="A">
+    <dl>
+      <dt>Windows/IIS admin</dt><dd>A <code>/24</code> is the same as the subnet mask <code>255.255.255.0</code> you've typed into network adapter settings. CIDR is just a shorter way to write the mask.</dd>
+      <dt>Linux admin</dt><dd>Same notation as <code>ip addr</code> output. The new part is Azure's reserved addresses (step 2).</dd>
+      <dt>Developer (Compose)</dt><dd>Docker Compose networks use CIDR too: the default bridge is <code>172.17.0.0/16</code>.</dd>
+      <dt>Other clouds</dt><dd>Same as AWS VPC and GCP subnet CIDRs. <b>Careful:</b> AWS also reserves 5 addresses per subnet, but GCP reserves 4.</dd>
+    </dl>
+  </aside>
+</section>
+
+<section class="step" id="s2">
+  <h2>2. Azure keeps 5 addresses in every subnet</h2>
+  <div class="body">
+    <p>In each Azure subnet you can't use 5 addresses:</p>
+    <ul>
+      <li><code>.0</code>: the network address.</li>
+      <li><code>.1</code>: the default gateway.</li>
+      <li><code>.2</code> and <code>.3</code>: Azure DNS.</li>
+      <li>The last address: broadcast.</li>
+    </ul>
+    <p>So a <code>/24</code> gives you 256 − 5 = <b>251</b> usable addresses.</p>
+    <p>This matters for AKS: depending on the network model, every node, and sometimes every pod, takes an address from the subnet. Chapter 5 shows how to size it.</p>
+  </div>
+  <div class="check" data-type="mcq">
+    <p class="q">How many usable IP addresses does an Azure subnet of <code>/27</code> have?</p>
+    <ol class="options">
+      <li>32 <span class="why">That's the total. Azure reserves 5 of them.</span></li>
+      <li>30 <span class="why">That's the classic on-premises answer (minus network and broadcast). Azure reserves three more.</span></li>
+      <li class="correct">27</li>
+      <li>25</li>
+    </ol>
+    <div class="explain">A <code>/27</code> has 2<sup>5</sup> = 32 addresses, minus Azure's 5 reserved = 27.</div>
+  </div>
+</section>
+
+<section class="step" id="s3">
+  <h2>3. A VNet and its subnets</h2>
+  <div class="body">
+    <p>A <b>virtual network (VNet)</b> owns one or more address ranges. You carve it into <b>subnets</b>, and resources such as AKS nodes, private endpoints and gateways live in a subnet.</p>
+    <p>Three rules:</p>
+    <ul>
+      <li>Subnets in a VNet <b>must not overlap</b> each other.</li>
+      <li>VNets you'll ever connect (peering, VPN to on-premises) must not overlap either.</li>
+      <li>Kubernetes has its own internal ranges, for Services and sometimes for pods. These must not overlap the VNet or anything it connects to.</li>
+    </ul>
+    <p>Private ranges you can use are <code>10.0.0.0/8</code>, <code>172.16.0.0/12</code> and <code>192.168.0.0/16</code>.</p>
+  </div>
+  <pre class="code" data-file="network-plan.txt">VNet  vnet-orders        10.20.0.0/16
+  ├─ snet-aks-nodes       10.20.0.0/22    (1,024 addresses)
+  ├─ snet-ingress         10.20.4.0/24
+  └─ snet-private-links   10.20.5.0/24
+Kubernetes Service CIDR  172.16.0.0/16   (outside the VNet, never routed)</pre>
+</section>
+
+<section class="step" id="s4">
+  <h2>4. Plan the Contoso network</h2>
+  <div class="body"><p>Contoso's VNet is <code>10.20.0.0/16</code>. Carve it up.</p></div>
+  <div class="check" data-type="custom">
+    <p class="q">In the CIDR calculator, add three subnets inside <code>10.20.0.0/16</code> and choose a Service CIDR.</p>
+    <div class="widget" data-widget="cidr-calc">Planning mode. Rows to fill in:
+      <ul>
+        <li><b>nodes:</b> at least 500 usable addresses</li>
+        <li><b>ingress:</b> at least 200</li>
+        <li><b>private-links:</b> at least 20</li>
+        <li><b>Service CIDR:</b> at least 1,000 addresses, outside the VNet</li>
+      </ul>
+      Success: every subnet is inside the VNet, no two ranges overlap, each meets its size, and the Service CIDR doesn't overlap the VNet. Overlaps are drawn in red on the address bar.</div>
+    <details class="solution"><summary>One valid answer</summary>
+      <p>nodes <code>10.20.0.0/22</code> (1,019 usable) · ingress <code>10.20.4.0/24</code> (251) · private-links <code>10.20.5.0/27</code> (27) · Service CIDR <code>172.16.0.0/22</code> or larger.</p>
+    </details>
+    <div class="explain">Sizes must cover what you need <i>after</i> Azure's 5 reserved addresses. Leave free space in the VNet for subnets you'll add later; resizing a subnet that's in use is painful.</div>
+  </div>
+</section>
+
+<section class="step" id="s5">
+  <h2>5. DNS: names to addresses</h2>
+  <div class="body">
+    <p>DNS turns names into addresses. You'll meet three record types:</p>
+    <ul>
+      <li><b>A</b>: name → IPv4 address. Example: <code>orders.contoso.com → 20.50.1.10</code>.</li>
+      <li><b>CNAME</b>: name → another name. Example: <code>www.contoso.com → contoso.azurefd.net</code>.</li>
+      <li><b>Private DNS zone</b>: a zone only resolvable inside the VNets linked to it.</li>
+    </ul>
+    <p>Private zones are how a private AKS cluster's API server or a private ACR resolves to a <code>10.x</code> address inside your network, and to nothing outside it.</p>
+    <p>Inside a cluster, Kubernetes runs its own DNS (CoreDNS), so pods can reach <code>orders-api.orders.svc.cluster.local</code>.</p>
+  </div>
+  <pre class="code" data-file="terminal">$ nslookup contosoacr.azurecr.io
+Name:    contosoacr.privatelink.azurecr.io
+Address: 10.20.5.4        # private endpoint, seen from inside the VNet</pre>
+</section>
+
+<section class="step" id="s6">
+  <h2>6. Ports, HTTP and TLS</h2>
+  <div class="body">
+    <p>A <b>port</b> picks which program on a machine receives the traffic.</p>
+    <p><b>HTTPS</b> is HTTP inside <b>TLS</b>. The server presents a <b>certificate</b> that proves it owns the name you asked for. The certificate is signed by a certificate authority your client trusts. If the name doesn't match, or the certificate has expired, clients refuse to connect.</p>
+    <p>In Kubernetes, TLS usually <b>terminates</b> at the ingress or gateway: it decrypts the traffic and forwards plain HTTP to pods inside the cluster. Chapter 8 covers this.</p>
+  </div>
+  <div class="check" data-type="match">
+    <p class="q">Match each protocol to its usual port.</p>
+    <table class="pairs">
+      <tr><td>HTTP</td><td>80</td></tr>
+      <tr><td>HTTPS</td><td>443</td></tr>
+      <tr><td>DNS</td><td>53</td></tr>
+      <tr><td>SSH</td><td>22</td></tr>
+      <tr><td>Kubernetes API server (self-managed)</td><td>6443</td></tr>
+    </table>
+    <div class="explain">AKS exposes its API server on 443. Clusters you build yourself, including kind, listen on 6443.</div>
+  </div>
+</section>
+
+<section class="step" id="s7">
+  <h2>7. NAT: how private machines reach the internet</h2>
+  <div class="body">
+    <p>Nodes and pods have <b>private</b> addresses, so they can't talk to the internet directly. On the way out, a device rewrites the source address to a public one and remembers the mapping so replies come back. That's <b>source NAT (SNAT)</b>.</p>
+    <p>In AKS, that device is the cluster's <b>load balancer</b> (the default), a <b>NAT gateway</b>, or your own <b>firewall</b>. That choice is the cluster's <code>outboundType</code>.</p>
+    <p>It decides which public IP external services see. That matters when a partner's firewall must allow-list your cluster.</p>
+  </div>
+  <div class="widget" data-widget="nat-diagram">A single picture: pod <code>10.244.1.7</code> → node → NAT gateway (source rewritten to <code>20.50.9.3</code>) → internet API. Clicking "reply" animates the return path with the address translated back.</div>
+  <aside class="more"><p>Each public IP has a limited number of SNAT ports. A busy cluster making many outbound connections can run out, which shows up as intermittent connection timeouts. A NAT gateway gives far more ports than the default load balancer setup.</p></aside>
+</section>
+
+<section class="step summary" id="s8">
+  <h2>Networking, sorted</h2>
+  <ul>
+    <li>A <code>/N</code> range has 2<sup>32−N</sup> addresses; Azure reserves 5 in every subnet.</li>
+    <li>Subnets, peered VNets and Kubernetes' internal ranges must never overlap.</li>
+    <li>A records point to IPs, CNAMEs to names, and private DNS zones resolve only inside linked VNets.</li>
+    <li>HTTPS = HTTP + TLS; certificates must match the name and be in date.</li>
+    <li>SNAT gives private machines a public source IP; in AKS, <code>outboundType</code> picks the device.</li>
+  </ul>
+</section>
+</article>
+</body>
+</html>

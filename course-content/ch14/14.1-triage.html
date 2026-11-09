@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>14.1 · A triage method</title>
+<link rel="stylesheet" href="../content.css">
+</head>
+<body>
+<article class="lesson" data-id="14.1" data-chapter="14">
+<nav class="crumbs"><a href="../index.html">Course</a> / <a href="index.html">Chapter 14</a> / 14.1</nav>
+<header>
+  <p class="kicker">Chapter 14 · Lesson 14.1 · ~10 steps · ~12 min</p>
+  <h1>A triage method</h1>
+  <p class="meta">You'll be able to work through any broken workload in the same order, every time, and use logs from crashed containers and ephemeral debug containers.</p>
+</header>
+
+<section class="step" id="s1">
+  <h2>1. Don't guess, follow the path</h2>
+  <div class="body">
+    <p>Under pressure, people restart things at random. A fixed order is faster:</p>
+    <ol>
+      <li><b>get</b>: what's the state? (<code>kubectl get deploy,rs,pods -n orders</code>)</li>
+      <li><b>describe</b>: what does Kubernetes say about it? (conditions, the last state, events)</li>
+      <li><b>events</b>: what happened recently, in order?</li>
+      <li><b>logs</b>: what did the app say? (including <code>--previous</code>)</li>
+      <li><b>exec / debug</b>: look from inside.</li>
+    </ol>
+  </div>
+  <aside class="coming" data-set="A">
+    <dl>
+      <dt>Windows/IIS admin</dt><dd>It's like Services snap-in → Event Viewer → the app's log files → RDP onto the box, in that order.</dd>
+      <dt>Linux admin</dt><dd>It's <code>systemctl status</code> → <code>journalctl</code> → app logs → <code>nsenter</code>/strace, translated to Kubernetes.</dd>
+      <dt>Developer (Compose)</dt><dd><code>docker compose ps</code> → <code>docker inspect</code> → <code>logs</code> → <code>exec</code>, plus a controller layer on top.</dd>
+      <dt>Other clouds</dt><dd>Identical on EKS and GKE. Cloud specifics only come in for image pulls, load balancers and identity.</dd>
+    </dl>
+  </aside>
+</section>
+
+<section class="step" id="s2">
+  <h2>2. Top-down: Deployment → ReplicaSet → Pod → container</h2>
+  <div class="body"><p>Start at the top. If the Deployment says <code>0/3 available</code>, check its ReplicaSets: did the new one create pods at all? Quota and admission errors show up only on the ReplicaSet (lesson 8.2). Then go to the pods, then the containers in them.</p></div>
+  <pre class="output">$ kubectl get deploy,rs,pods -n orders -l app=orders-api
+NAME                         READY   UP-TO-DATE   AVAILABLE   AGE
+deployment.apps/orders-api   2/3     1            2           12d
+
+NAME                                    DESIRED   CURRENT   READY   AGE
+replicaset.apps/orders-api-5b6f4c9d7    1         1         0       6m
+replicaset.apps/orders-api-7d9c5f6b8    2         2         2       3d
+
+NAME                              READY   STATUS             RESTARTS      AGE
+pod/orders-api-5b6f4c9d7-kx8q2    0/1     CrashLoopBackOff   5 (40s ago)   6m
+pod/orders-api-7d9c5f6b8-2xk9p    1/1     Running            0             3d
+pod/orders-api-7d9c5f6b8-q8w4m    1/1     Running            0             3d</pre>
+  <div class="body"><p>Read it: a rollout is in progress, the new ReplicaSet's single pod is crash-looping, and the old pods are still serving. Users are fine. The new version is broken.</p></div>
+</section>
+
+<section class="step" id="s3">
+  <h2>3. Events are short-lived</h2>
+  <div class="body">
+    <p>Events are kept for about an hour by default, then they're gone. Look at them early, and send them to Log Analytics (Container Insights) so they survive.</p>
+    <p><code>kubectl events</code> sorts them properly and can filter by object.</p>
+  </div>
+  <pre class="code" data-file="terminal">kubectl events -n orders --for pod/orders-api-5b6f4c9d7-kx8q2
+kubectl events -n orders --types=Warning</pre>
+</section>
+
+<section class="step" id="s4">
+  <h2>4. Logs of the container that died</h2>
+  <div class="body"><p>In a crash loop, the <i>current</i> container has just started and may have logged nothing yet. The reason it died is in the <b>previous</b> container's logs.</p></div>
+  <div class="check" data-type="command">
+    <p class="q">Show the logs of the previous (crashed) instance of pod <code>orders-api-5b6f4c9d7-kx8q2</code> in namespace <code>orders</code>.</p>
+    <p class="answer"><code>kubectl logs orders-api-5b6f4c9d7-kx8q2 -n orders --previous</code></p>
+    <p class="accept">Also accepted: <code>-p</code> for <code>--previous</code>; <code>--namespace</code>; <code>-c api</code>; flags in any order.</p>
+    <div class="explain">With several containers, add <code>-c &lt;name&gt;</code>.</div>
+  </div>
+  <pre class="output">$ kubectl logs orders-api-5b6f4c9d7-kx8q2 -n orders --previous
+2026/11/05 10:12:01 starting orders-api 1.5.0
+2026/11/05 10:12:01 FATAL: required env var PAYMENTS_URL is not set</pre>
+</section>
+
+<section class="step" id="s5">
+  <h2>5. Look from inside: <code>kubectl debug</code></h2>
+  <div class="body">
+    <p>Distroless images have no shell (lesson 1.5). <code>kubectl debug</code> adds an <b>ephemeral container</b> with tools to a running pod.</p>
+    <p>It shares the pod's network, and, with <code>--target</code>, its process namespace. You can then <code>curl localhost</code>, check DNS, and see the app's processes, without changing the image.</p>
+  </div>
+  <pre class="code" data-file="terminal">kubectl debug -it orders-api-7d9c5f6b8-2xk9p -n orders \
+  --image=busybox:1.36 --target=api -- sh
+# inside: wget -qO- localhost:8080/readyz; nslookup postgres.db; ps</pre>
+  <aside class="more"><p>For a pod that crashes too fast to attach to, <code>kubectl debug pod/x --copy-to=x-debug --container=api -- sh</code> makes a copy with a changed command. For node problems: <code>kubectl debug node/&lt;name&gt; -it --image=…</code>. Ephemeral containers need RBAC permission on <code>pods/ephemeralcontainers</code>, which you won't have in prod by default. That's good.</p></aside>
+</section>
+
+<section class="step" id="s6">
+  <h2>6. Put the steps in order</h2>
+  <div class="check" data-type="order">
+    <p class="q">A Deployment shows 0/3 available. Order your first steps.</p>
+    <ol class="options">
+      <li><code>kubectl get deploy,rs,pods</code> to see where it's stuck</li>
+      <li><code>kubectl describe</code> the failing pod (or the ReplicaSet if there are no pods)</li>
+      <li>Read the recent Warning events</li>
+      <li><code>kubectl logs --previous</code> if containers are restarting</li>
+      <li><code>kubectl debug</code> to test from inside, if still unclear</li>
+    </ol>
+    <div class="explain">Cheap, broad checks first; deeper tools only when needed.</div>
+  </div>
+</section>
+
+<section class="step" id="s7">
+  <h2>7. Know the states</h2>
+  <table>
+    <tr><th>You see</th><th>It means</th><th>Lesson</th></tr>
+    <tr><td><code>Pending</code></td><td>Not scheduled, or waiting for volumes</td><td>14.2</td></tr>
+    <tr><td><code>ImagePullBackOff</code> / <code>ErrImagePull</code></td><td>Can't get the image</td><td>14.2</td></tr>
+    <tr><td><code>CreateContainerConfigError</code></td><td>A referenced ConfigMap or Secret (key) is missing</td><td>14.2</td></tr>
+    <tr><td><code>CrashLoopBackOff</code></td><td>Starts, exits, restarts with growing delays</td><td>14.3</td></tr>
+    <tr><td><code>OOMKilled</code> (last state)</td><td>Hit its memory limit</td><td>14.3</td></tr>
+    <tr><td><code>Running</code> but <code>0/1</code> ready</td><td>Readiness failing, so no traffic</td><td>14.4</td></tr>
+  </table>
+</section>
+
+<section class="step" id="s8">
+  <h2>8. What changed?</h2>
+  <div class="body">
+    <p>Most incidents follow a change. Ask early: what was deployed, applied or upgraded recently?</p>
+    <ul>
+      <li><code>kubectl rollout history</code> and <code>helm history</code>.</li>
+      <li>The pipeline's environment deployment history.</li>
+      <li>The AKS activity log, for upgrades and node-image updates.</li>
+    </ul>
+    <p>A recent bad change is often fixed fastest by rolling it back, then investigating calmly.</p>
+  </div>
+</section>
+
+<section class="step" id="s9">
+  <h2>9. Mitigate first, then diagnose</h2>
+  <div class="body"><p>If users are affected, restore service first: roll back, scale up, or fail over. Then find the cause. Keep notes as you go (commands, times, findings); they become the post-mortem.</p></div>
+</section>
+
+<section class="step summary" id="s10">
+  <h2>Triage, sorted</h2>
+  <ul>
+    <li>get → describe → events → logs (<code>--previous</code>) → debug.</li>
+    <li>Top-down: Deployment → ReplicaSet → Pod → container.</li>
+    <li>Events expire within about an hour; ship them to Log Analytics.</li>
+    <li><code>kubectl debug</code> adds tools without changing the image.</li>
+    <li>Ask "what changed?"; mitigate, then diagnose.</li>
+  </ul>
+</section>
+</article>
+</body>
+</html>

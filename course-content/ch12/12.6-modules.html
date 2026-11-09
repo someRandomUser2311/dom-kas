@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>12.6 · Repetition &amp; modules</title>
+<link rel="stylesheet" href="../content.css">
+</head>
+<body>
+<article class="lesson" data-id="12.6" data-chapter="12">
+<nav class="crumbs"><a href="../index.html">Course</a> / <a href="index.html">Chapter 12</a> / 12.6</nav>
+<header>
+  <p class="kicker">Chapter 12 · Lesson 12.6 · ~13 steps · ~16 min</p>
+  <h1>Repetition &amp; modules</h1>
+  <p class="meta">You'll be able to create many similar resources safely with <code>for_each</code>, generate optional blocks with <code>dynamic</code>, package code as modules, use Azure Verified Modules, and lay out environments.</p>
+</header>
+
+<section class="step" id="s1">
+  <h2>1. Many node pools</h2>
+  <div class="body"><p>Contoso now wants several user pools: general, memory-heavy, and spot. Copying the resource block three times would drift. Instead, describe them in a map and let Terraform loop over it.</p></div>
+  <pre class="code" data-file="variables.tf">variable "node_pools" {
+  type = map(object({
+    vm_size   = string
+    min_count = number
+    max_count = number
+    spot      = optional(bool, false)
+  }))
+}</pre>
+  <pre class="code" data-file="prod.tfvars">node_pools = {
+  general = { vm_size = "Standard_D4ds_v5", min_count = 3, max_count = 10 }
+  memory  = { vm_size = "Standard_E8ds_v5", min_count = 0, max_count = 4 }
+}</pre>
+  <aside class="coming" data-set="C">
+    <dl>
+      <dt>Portal/ARM</dt><dd>Like ARM <code>copy</code> loops, keyed by name instead of index.</dd>
+      <dt>az CLI scripts</dt><dd>Like a <code>for</code> loop over <code>az aks nodepool add</code>, except removing an item also removes the pool.</dd>
+      <dt>CloudFormation</dt><dd>CloudFormation has no native loop (beyond the newer <code>Fn::ForEach</code> transform); Terraform's is built in.</dd>
+      <dt>Pulumi</dt><dd>A normal language loop, but keyed resources matter just as much there.</dd>
+    </dl>
+  </aside>
+</section>
+
+<section class="step" id="s2">
+  <h2>2. <code>for_each</code></h2>
+  <div class="body"><p><code>for_each</code> creates one instance per map key. Inside the block, <code>each.key</code> is the key and <code>each.value</code> the object. Each instance has an address like <code>azurerm_kubernetes_cluster_node_pool.user["memory"]</code>.</p></div>
+  <pre class="code" data-file="aks.tf">resource "azurerm_kubernetes_cluster_node_pool" "user" {
+  for_each              = var.node_pools
+  name                  = each.key
+  kubernetes_cluster_id = azurerm_kubernetes_cluster.main.id
+  mode                  = "User"
+  vm_size               = each.value.vm_size
+  zones                 = ["1", "2", "3"]
+  auto_scaling_enabled  = true
+  min_count             = each.value.min_count
+  max_count             = each.value.max_count
+  priority              = each.value.spot ? "Spot" : "Regular"
+}</pre>
+</section>
+
+<section class="step" id="s3">
+  <h2>3. Why not <code>count</code>?</h2>
+  <div class="body"><p><code>count = length(var.pools)</code> also loops, but it addresses instances by <b>position</b>: <code>[0]</code>, <code>[1]</code>, <code>[2]</code>. Remove an item from the middle of the list and everything after it shifts down one position. Terraform sees a different pool at each index and replaces them.</p></div>
+  <div class="check" data-type="predict">
+    <p class="q">Pools are defined with <code>count</code> over <code>["general", "memory", "gpu"]</code>. You remove <code>"memory"</code>. What does the plan show?</p>
+    <ol class="options">
+      <li>Destroy only the memory pool <span class="why">That's what <code>for_each</code> would do.</span></li>
+      <li class="correct"><code>[1]</code> is changed from memory to gpu (replaced, since name and size force replacement), and <code>[2]</code> is destroyed</li>
+      <li>No changes <span class="why">The list changed.</span></li>
+      <li>Everything is destroyed <span class="why"><code>[0]</code> is unchanged.</span></li>
+    </ol>
+    <div class="explain">With <code>for_each</code>, removing <code>memory</code> only plans <code>- user["memory"]</code>. Use <code>count</code> only for "0 or 1 copies" switches.</div>
+  </div>
+</section>
+
+<section class="step" id="s4">
+  <h2>4. <code>dynamic</code> blocks</h2>
+  <div class="body"><p>Some <b>nested</b> blocks are optional or repeated, like the dev-only <code>api_server_access_profile</code> in lesson 12.4. <code>dynamic "name" { for_each = … content { … } }</code> generates the block zero or more times.</p></div>
+  <pre class="code" data-file="aks.tf (excerpt)">dynamic "api_server_access_profile" {
+  for_each = local.is_prod ? [] : [1]       # one block in dev, none in prod
+  content {
+    authorized_ip_ranges = var.authorized_ip_ranges
+  }
+}</pre>
+  <aside class="more"><p>Use <code>dynamic</code> sparingly. Configuration full of dynamic blocks is hard to read; often a plain block with a conditional argument is clearer.</p></aside>
+</section>
+
+<section class="step" id="s5">
+  <h2>5. Modules: reusable packages</h2>
+  <div class="body"><p>A <b>module</b> is a folder of <code>.tf</code> files with variables (inputs) and outputs. Your root configuration calls it with a <code>module</code> block. Contoso wraps "an AKS cluster the Contoso way" into <code>modules/aks</code>, so every team gets the same baseline.</p></div>
+  <pre class="code" data-file="infra/terraform/">infra/terraform/
+├─ modules/
+│  └─ aks/
+│     ├─ main.tf        # cluster, pools, role assignments
+│     ├─ variables.tf   # name, environment, subnet_id, node_pools, …
+│     └─ outputs.tf     # cluster_id, oidc_issuer_url, kubelet_object_id
+├─ envs/
+│  ├─ dev/main.tf       # calls the module with dev values
+│  └─ prod/main.tf</pre>
+</section>
+
+<section class="step" id="s6">
+  <h2>6. Calling a module</h2>
+  <pre class="code" data-file="envs/prod/main.tf">module "aks" {
+  source       = "../../modules/aks"
+  name         = "aks-orders-prod"
+  environment  = "prod"
+  subnet_id    = azurerm_subnet.aks_nodes.id
+  acr_id       = data.azurerm_container_registry.shared.id
+  node_pools   = var.node_pools
+  admin_group  = var.aks_admin_group_id
+}
+
+output "oidc_issuer_url" {
+  value = module.aks.oidc_issuer_url
+}</pre>
+  <div class="body"><p>Hard-code the security baseline <i>inside</i> the module (Azure RBAC, local accounts off, OIDC on). Callers can't turn it off, because there's no variable for it.</p></div>
+</section>
+
+<section class="step" id="s7">
+  <h2>7. Azure Verified Modules</h2>
+  <div class="body"><p><b>Azure Verified Modules (AVM)</b> are Microsoft-maintained modules on the Terraform Registry, such as <code>Azure/avm-res-containerservice-managedcluster/azurerm</code>. They follow consistent conventions and are tested. Always <b>pin the version</b>: a module upgrade can change many resources at once.</p></div>
+  <div class="check" data-type="fill">
+    <p class="q">Pin the registry module to an exact minor version.</p>
+    <pre class="code" data-file="envs/prod/main.tf">module "aks" {
+  source  = "Azure/avm-res-containerservice-managedcluster/azurerm"
+  <span class="blank">?</span> = "0.3.1"
+  # …
+}</pre>
+    <ul class="chips">
+      <li class="correct"><code>version</code></li>
+      <li><code>ref</code> <span class="why"><code>?ref=</code> is used inside Git <code>source</code> URLs, not for registry modules.</span></li>
+      <li><code>tag</code> <span class="why">Not a module argument.</span></li>
+      <li><code>required_version</code> <span class="why">That's for Terraform itself.</span></li>
+    </ul>
+    <div class="explain">Registry modules take a <code>version</code> argument. Git modules pin with <code>?ref=v1.2.0</code> in the source. Review the changelog before bumping either.</div>
+  </div>
+</section>
+
+<section class="step" id="s8">
+  <h2>8. Your module or AVM?</h2>
+  <div class="body">
+    <ul>
+      <li><b>AVM:</b> broad, maintained, consistent, and it exposes almost every option.</li>
+      <li><b>Your own module:</b> small and opinionated, exposing only Contoso's choices.</li>
+    </ul>
+    <p>A common middle ground is a thin Contoso module that <b>wraps</b> AVM with your defaults.</p>
+  </div>
+</section>
+
+<section class="step" id="s9">
+  <h2>9. Environments: folders or workspaces?</h2>
+  <div class="body">
+    <p><b>Workspaces</b> give one configuration several state files (<code>terraform workspace select prod</code>). <b>Folders</b> give each environment its own root module and state.</p>
+    <p>Folders usually win for environments:</p>
+    <ul>
+      <li>each environment has its own backend key and permissions;</li>
+      <li>it's always obvious which one you're changing;</li>
+      <li>prod can pin a module version that dev is already testing.</li>
+    </ul>
+  </div>
+  <div class="check" data-type="mcq">
+    <p class="q">Why do most teams prefer one folder per environment over workspaces for dev and prod?</p>
+    <ol class="options">
+      <li>Workspaces are deprecated <span class="why">They're supported; they're just a poor fit for environment separation.</span></li>
+      <li class="correct">Separate state, credentials and versions per environment, and the environment you're changing is explicit in the path</li>
+      <li>Folders are faster <span class="why">Speed is the same.</span></li>
+      <li>Workspaces can't use remote state <span class="why">They can.</span></li>
+    </ol>
+    <div class="explain">A wrong <code>terraform workspace</code> is the IaC version of the wrong kubectl context (lesson 1.6).</div>
+  </div>
+</section>
+
+<section class="step" id="s10">
+  <h2>10. Module outputs and dependencies</h2>
+  <div class="body"><p>Outputs are how modules talk. A reference like <code>module.aks.kubelet_object_id</code> creates a dependency on just the resources behind that output. Keep module interfaces small: a few inputs, a few outputs.</p></div>
+</section>
+
+<section class="step" id="s11">
+  <h2>11. <code>for_each</code> over resources from another module</h2>
+  <div class="body"><p><code>for_each</code> keys must be known at plan time. A map built from values computed during apply (such as IDs of resources not created yet) gives "Invalid for_each argument". Key by static names, and look up IDs in the value.</p></div>
+</section>
+
+<section class="step" id="s12">
+  <h2>12. Version everything</h2>
+  <ul>
+    <li><code>required_version</code> for Terraform.</li>
+    <li><code>required_providers</code> with <code>~&gt;</code>, plus the committed lock file.</li>
+    <li>A pinned <code>version</code> (or <code>?ref=</code>) for every module.</li>
+    <li>Upgrades as deliberate PRs, with the plan reviewed.</li>
+  </ul>
+</section>
+
+<section class="step summary" id="s13">
+  <h2>Modules, sorted</h2>
+  <ul>
+    <li><code>for_each</code> over maps (stable keys); <code>count</code> only for on/off.</li>
+    <li><code>dynamic</code> blocks for optional nested blocks; use them sparingly.</li>
+    <li>Modules: inputs, outputs, a hard-coded baseline; AVM pinned by <code>version</code>.</li>
+    <li>One folder per environment; pin every version.</li>
+  </ul>
+</section>
+</article>
+</body>
+</html>

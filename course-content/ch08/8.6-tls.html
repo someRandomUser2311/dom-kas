@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>8.6 · TLS</title>
+<link rel="stylesheet" href="../content.css">
+</head>
+<body>
+<article class="lesson" data-id="8.6" data-chapter="8">
+<nav class="crumbs"><a href="../index.html">Course</a> / <a href="index.html">Chapter 8</a> / 8.6</nav>
+<header>
+  <p class="kicker">Chapter 8 · Lesson 8.6 · ~10 steps · ~13 min</p>
+  <h1>TLS</h1>
+  <p class="meta">You'll be able to decide where HTTPS is terminated, automate certificates with cert-manager or Key Vault, redirect HTTP to HTTPS, and recognise the fake-certificate symptom.</p>
+</header>
+
+<section class="step" id="s1">
+  <h2>1. Where does HTTPS end?</h2>
+  <div class="body">
+    <p>Traffic from the browser is HTTPS. Somewhere it gets decrypted, or <b>terminated</b>:</p>
+    <ul>
+      <li><b>At the gateway</b> (the usual choice): one certificate per hostname, managed centrally; plain HTTP inside the cluster.</li>
+      <li><b>At the gateway, then re-encrypted</b> to the pods: needed when policy says "encrypted everywhere". A service mesh with mTLS does this automatically.</li>
+      <li><b>Passthrough</b> to the pod: the gateway doesn't decrypt at all, so there's no path routing.</li>
+    </ul>
+  </div>
+  <aside class="coming" data-set="A">
+    <dl>
+      <dt>Windows/IIS admin</dt><dd>Like SSL offloading on the load balancer instead of binding certificates in IIS on every server.</dd>
+      <dt>Linux admin</dt><dd>Like terminating TLS in an nginx front end and proxying HTTP to the app servers.</dd>
+      <dt>Developer (Compose)</dt><dd>Your app listens on plain HTTP 8080; the gateway handles certificates.</dd>
+      <dt>Other clouds</dt><dd>Similar to ACM on an ALB, or Google-managed certificates on GKE Ingress.</dd>
+    </dl>
+  </aside>
+</section>
+
+<section class="step" id="s2">
+  <h2>2. Certificates as Secrets</h2>
+  <div class="body">
+    <p>Gateways and Ingresses read certificates from a <b>Secret of type <code>kubernetes.io/tls</code></b>, containing <code>tls.crt</code> and <code>tls.key</code>.</p>
+    <p>The private key must <b>never</b> be committed to Git. If it leaks, anyone can impersonate the site until the certificate is revoked. Certificates should be created and renewed by automation, not pasted in by hand.</p>
+  </div>
+</section>
+
+<section class="step" id="s3">
+  <h2>3. The TLS block</h2>
+  <div class="check" data-type="tapline" data-match="certificateRefs:">
+    <p class="q">Tap the line where the Gateway learns which certificate to present.</p>
+    <pre class="code" data-file="k8s/gateway/gateway.yaml (listeners)">listeners:
+  - name: http
+    protocol: HTTP
+    port: 80
+  - name: https
+    protocol: HTTPS
+    port: 443
+    hostname: "shop.contoso.example"
+    tls:
+      mode: Terminate
+      certificateRefs:
+        - kind: Secret
+          name: shop-contoso-tls</pre>
+    <div class="explain"><code>certificateRefs</code> points at the <code>kubernetes.io/tls</code> Secret (in an Ingress, the equivalent is <code>tls.secretName</code>).</div>
+  </div>
+</section>
+
+<section class="step" id="s4">
+  <h2>4. cert-manager and ACME</h2>
+  <div class="body">
+    <p><b>cert-manager</b> is the standard Kubernetes tool for certificates. You declare an <b>Issuer</b> (for example Let's Encrypt via ACME, or your internal CA) and a <b>Certificate</b>. cert-manager then obtains the certificate, writes the TLS Secret, and <b>renews it</b> before it expires.</p>
+    <p>With the Gateway API, an annotation on the Gateway is enough: cert-manager creates certificates for its listeners automatically.</p>
+  </div>
+  <pre class="code" data-file="k8s/gateway/issuer.yaml">apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt
+spec:
+  acme:
+    server: https://acme-v02.api.letsencrypt.org/directory
+    email: platform@contoso.example
+    privateKeySecretRef: { name: letsencrypt-account }
+    solvers:
+      - http01:
+          gatewayHTTPRoute:
+            parentRefs:
+              - { name: shop-gateway, namespace: gateway-infra, kind: Gateway }</pre>
+  <pre class="code" data-file="gateway.yaml (metadata)">metadata:
+  name: shop-gateway
+  namespace: gateway-infra
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt</pre>
+</section>
+
+<section class="step" id="s5">
+  <h2>5. Key Vault certificates</h2>
+  <div class="body">
+    <p>Many enterprises already manage certificates in <b>Azure Key Vault</b>, with renewal from their CA. Two common ways to use them:</p>
+    <ul>
+      <li>The <b>application routing add-on</b> reads a Key Vault certificate directly. Annotate the Ingress with <code>kubernetes.azure.com/tls-cert-keyvault-uri</code>, and the add-on keeps the Secret in sync.</li>
+      <li>The <b>Key Vault Secrets Store CSI driver</b> can sync a certificate into a TLS Secret for any controller (Chapter 15).</li>
+    </ul>
+    <p>Either way, the key never sits in Git.</p>
+  </div>
+</section>
+
+<section class="step" id="s6">
+  <h2>6. Redirect HTTP to HTTPS</h2>
+  <div class="body"><p>Keep an HTTP listener only to redirect. With the Gateway API, that's a standard filter, with no annotations needed.</p></div>
+  <pre class="code" data-file="k8s/gateway/redirect-route.yaml">apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: https-redirect
+  namespace: gateway-infra
+spec:
+  parentRefs:
+    - { name: shop-gateway, sectionName: http }
+  rules:
+    - filters:
+        - type: RequestRedirect
+          requestRedirect:
+            scheme: https
+            statusCode: 301</pre>
+</section>
+
+<section class="step" id="s7">
+  <h2>7. Diagnose the browser warning</h2>
+  <div class="check" data-type="diagnose">
+    <p class="q">Browsers warn "Your connection is not private" for <code>https://shop.contoso.example</code>. You inspect the certificate:</p>
+    <pre class="output">$ curl -vk https://shop.contoso.example 2&gt;&amp;1 | grep -E "subject|issuer"
+*  subject: O=Acme Co; CN=Kubernetes Ingress Controller Fake Certificate
+*  issuer: O=Acme Co; CN=Kubernetes Ingress Controller Fake Certificate
+$ kubectl get secret shop-contoso-tls -n orders
+Error from server (NotFound): secrets "shop-contoso-tls" not found</pre>
+    <ol class="options">
+      <li>The browser is out of date <span class="why">The server is presenting a placeholder certificate.</span></li>
+      <li class="correct">The TLS Secret the Ingress references doesn't exist (not issued yet, wrong name, or wrong namespace), so the NGINX controller falls back to its default fake certificate</li>
+      <li>Port 443 is blocked <span class="why">The connection succeeded and returned a certificate.</span></li>
+      <li>The Service has no endpoints <span class="why">That causes 503s after the TLS handshake, not a fake certificate.</span></li>
+    </ol>
+    <div class="explain">Check that the Secret exists in the <b>same namespace</b> as the Ingress, then check cert-manager's <code>Certificate</code> status (<code>kubectl describe certificate</code>). With Let's Encrypt, a failing HTTP-01 challenge is the usual reason.</div>
+  </div>
+</section>
+
+<section class="step" id="s8">
+  <h2>8. Checking a certificate</h2>
+  <pre class="output">$ kubectl get certificate -n gateway-infra
+NAME                READY   SECRET              AGE
+shop-contoso-tls    True    shop-contoso-tls    12d
+$ echo | openssl s_client -connect shop.contoso.example:443 -servername shop.contoso.example 2&gt;/dev/null | openssl x509 -noout -dates -subject
+notBefore=Oct 25 09:12:03 2026 GMT
+notAfter=Jan 23 09:12:02 2027 GMT
+subject=CN=shop.contoso.example</pre>
+</section>
+
+<section class="step" id="s9">
+  <h2>9. Good TLS habits</h2>
+  <div class="body">
+    <ul>
+      <li>Automate issuance and renewal; alert on certificates expiring within 14 days (Chapter 14).</li>
+      <li>Never commit keys, and keep TLS Secrets readable only by the gateway and platform team.</li>
+      <li>Use HTTP only for redirects; consider HSTS once you're confident.</li>
+      <li>Internal services: a private CA through cert-manager, or a mesh with mTLS.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="step summary" id="s10">
+  <h2>TLS, sorted</h2>
+  <ul>
+    <li>Terminate at the gateway (re-encrypt or use a mesh if policy requires).</li>
+    <li>Certificates live in <code>kubernetes.io/tls</code> Secrets, referenced by <code>certificateRefs</code> or <code>tls.secretName</code>.</li>
+    <li>cert-manager (ACME or a private CA), or Key Vault certificates, never keys in Git.</li>
+    <li>Redirect HTTP → HTTPS with a RequestRedirect filter.</li>
+    <li>A "Fake Certificate" means the Secret is missing or in the wrong place.</li>
+  </ul>
+</section>
+</article>
+</body>
+</html>

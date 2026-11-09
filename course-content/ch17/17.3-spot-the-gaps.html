@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>17.3 · Spot the gaps</title>
+<link rel="stylesheet" href="../content.css">
+</head>
+<body>
+<article class="lesson" data-id="17.3" data-chapter="17">
+<nav class="crumbs"><a href="../index.html">Course</a> / <a href="index.html">Chapter 17</a> / 17.3</nav>
+<header>
+  <p class="kicker">Chapter 17 · Lesson 17.3 · ~10 steps · ~15 min</p>
+  <h1>Spot the gaps</h1>
+  <p class="meta">You'll be able to review a colleague's first-draft repository the way the readiness review will, and find the planted problems across files.</p>
+</header>
+
+<section class="step" id="s1">
+  <h2>1. The first draft</h2>
+  <div class="body"><p>A colleague assembled a first draft of the repo. It deploys, but it has about 10 problems. Some are obvious, some subtle, and some only visible when you compare two files. Find them, file by file.</p></div>
+  <div class="widget" data-widget="multi-file-review">A file tree with tabs for each file. Every line is tappable. Tapping a planted problem marks it found (✓) with an explanation; tapping a fine line says "looks fine". A counter shows "found 0 / 10".</div>
+</section>
+
+<section class="step" id="s2">
+  <h2>2. Dockerfile</h2>
+  <div class="check" data-type="tapline" data-match="FROM golang:latest">
+    <p class="q">Tap the problem in the Dockerfile.</p>
+    <pre class="code" data-file="Dockerfile">FROM golang:latest AS build
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN CGO_ENABLED=0 go build -o /out/orders-api ./cmd/orders-api
+FROM gcr.io/distroless/static-debian12:nonroot@sha256:…
+COPY --from=build /out/orders-api /orders-api
+USER nonroot:nonroot
+ENTRYPOINT ["/orders-api"]</pre>
+    <div class="explain">An unpinned <code>:latest</code> build image means non-reproducible builds (lessons 1.1, 16.2).</div>
+  </div>
+</section>
+
+<section class="step" id="s3">
+  <h2>3. Deployment</h2>
+  <div class="check" data-type="tapline" data-match="path: /health/db">
+    <p class="q">Tap the most dangerous line.</p>
+    <pre class="code" data-file="k8s/base/deployment.yaml (container)">image: contosoacr.azurecr.io/orders-api:1.6.0
+resources:
+  requests: { cpu: 250m, memory: 256Mi }
+  limits:   { memory: 512Mi }
+readinessProbe:
+  httpGet: { path: /readyz, port: http }
+livenessProbe:
+  httpGet: { path: /health/db, port: http }
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities: { drop: ["ALL"] }</pre>
+    <div class="explain">Liveness depends on the database, the death spiral (lessons 3.3, 14.3).</div>
+  </div>
+</section>
+
+<section class="step" id="s4">
+  <h2>4. Service vs Deployment</h2>
+  <div class="check" data-type="diagnose">
+    <p class="q">Compare the two files. What's wrong?</p>
+    <pre class="code" data-file="service.yaml (spec)">selector:
+  app: orders-api
+  tier: api
+ports:
+  - port: 80
+    targetPort: http</pre>
+    <pre class="code" data-file="deployment.yaml (template labels)">labels:
+  app: orders-api
+  azure.workload.identity/use: "true"</pre>
+    <ol class="options">
+      <li class="correct">The Service selects <code>tier: api</code>, which the pods don't have, so it has no endpoints</li>
+      <li>targetPort as a name is invalid <span class="why">Named ports are valid.</span></li>
+      <li>The workload identity label breaks Services <span class="why">Extra labels don't matter.</span></li>
+    </ol>
+    <div class="explain">A cross-file problem, found by cross-ref (lessons 2.2, 2.4).</div>
+  </div>
+</section>
+
+<section class="step" id="s5">
+  <h2>5. Policies</h2>
+  <div class="check" data-type="tapline" data-match="  - {}">
+    <p class="q">Tap the line that defeats default-deny.</p>
+    <pre class="code" data-file="k8s/policies/temp-debug.yaml">apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: temp-debug
+  namespace: orders
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+  ingress:
+  - {}</pre>
+    <div class="explain">An allow-all rule left over from debugging. Policies are additive, so it opens everything (lesson 9.2).</div>
+  </div>
+</section>
+
+<section class="step" id="s6">
+  <h2>6. Secrets</h2>
+  <div class="check" data-type="tapline" data-match="PAYMENTS_API_KEY">
+    <p class="q">Tap the secret in Git.</p>
+    <pre class="code" data-file="k8s/overlays/prod/kustomization.yaml (excerpt)">configMapGenerator:
+  - name: orders-api-config
+    literals:
+      - LOG_LEVEL=warn
+      - PAYMENTS_API_KEY=pk_live_51Hx…
+      - FEATURE_EXPRESS_SHIPPING=true</pre>
+    <div class="explain">A live API key in a ConfigMap in Git. Move it to Key Vault, delivered by the SecretProviderClass (lesson 15.4), and rotate the key now.</div>
+  </div>
+</section>
+
+<section class="step" id="s7">
+  <h2>7. Infrastructure</h2>
+  <div class="check" data-type="multi">
+    <p class="q">Select the problems in this Terraform excerpt.</p>
+    <pre class="code" data-file="infra/terraform/aks.tf (excerpt)">resource "azurerm_kubernetes_cluster" "main" {
+  sku_tier                  = "Free"
+  private_cluster_enabled   = true
+  oidc_issuer_enabled       = true
+  workload_identity_enabled = true
+  local_account_disabled    = false
+  default_node_pool {
+    name       = "system"
+    vm_size    = "Standard_D4ds_v5"
+    node_count = 1
+    zones      = ["1", "2", "3"]
+  }
+}</pre>
+    <ol class="options">
+      <li class="correct">The Free tier for prod (no SLA)</li>
+      <li class="correct"><code>local_account_disabled = false</code></li>
+      <li class="correct"><code>node_count = 1</code>, so a single system node can't actually span three zones</li>
+      <li><code>private_cluster_enabled = true</code> <span class="why">Required by the brief.</span></li>
+      <li><code>oidc_issuer_enabled = true</code> <span class="why">Required for workload identity.</span></li>
+    </ol>
+    <div class="explain">Lessons 4.2, 4.5, 5.5 and 12.4.</div>
+  </div>
+</section>
+
+<section class="step" id="s8">
+  <h2>8. Pipelines</h2>
+  <div class="check" data-type="multi">
+    <p class="q">Select the problems in the release pipeline excerpt.</p>
+    <pre class="code" data-file="azure-pipelines.yml (excerpt)">- stage: DeployProd
+  dependsOn: Build
+  jobs:
+    - job: deploy
+      pool: { vmImage: ubuntu-latest }
+      steps:
+        - task: KubernetesManifest@1
+          inputs:
+            action: deploy
+            kubernetesServiceConnection: aks-prod-admin
+            manifests: $(Pipeline.Workspace)/manifests/*.yaml
+            containers: contosoacr.azurecr.io/orders-api:$(Build.BuildId)</pre>
+    <ol class="options">
+      <li class="correct">A plain <code>job</code>, not a deployment job with the <code>prod</code> environment, so there's no approval or canary</li>
+      <li class="correct">A Microsoft-hosted agent can't reach the private cluster</li>
+      <li class="correct">A Kubernetes service connection with admin credentials, instead of WIF with a namespace-scoped role</li>
+      <li class="correct">Deploys by tag rather than the signed digest; no DeployDev stage in between</li>
+      <li><code>action: deploy</code> <span class="why">That's the correct action.</span></li>
+    </ol>
+    <div class="explain">Chapters 6, 7, 10, 11, 15 and 16, all in one stage.</div>
+  </div>
+</section>
+
+<section class="step" id="s9">
+  <h2>9. What the review looks like</h2>
+  <div class="body"><p>The real capstone review runs every grader over your files and reports each failed rule with its file, line, chapter link and severity (⛔ critical or ordinary). Lesson 17.4 shows the rubric.</p></div>
+</section>
+
+<section class="step summary" id="s10">
+  <h2>Gaps, sorted</h2>
+  <ul>
+    <li>Ten planted problems across the Dockerfile, manifests, policies, overlays, IaC and pipelines.</li>
+    <li>Some only show when comparing files (selector vs labels).</li>
+    <li>Each maps to a chapter, and to a grader rule in the readiness review.</li>
+  </ul>
+</section>
+</article>
+</body>
+</html>

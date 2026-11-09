@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>0.5 · Git &amp; pull requests for pipelines</title>
+<link rel="stylesheet" href="../content.css">
+</head>
+<body>
+<article class="lesson" data-id="0.5" data-chapter="0">
+<nav class="crumbs"><a href="../index.html">Course</a> / <a href="index.html">Chapter 0</a> / 0.5</nav>
+<header>
+  <p class="kicker">Chapter 0 · Lesson 0.5 · ~6 steps · ~8 min</p>
+  <h1>Git &amp; pull requests for pipelines</h1>
+  <p class="meta">You'll be able to explain how branches, pull requests and branch policies decide what reaches production, and keep secrets and state files out of Git.</p>
+</header>
+
+<section class="step" id="s1">
+  <h2>1. <code>main</code> is what ships</h2>
+  <div class="body">
+    <p>In this course, the <code>main</code> branch is the source of truth: whatever is on <code>main</code> gets built and deployed. Nobody pushes to <code>main</code> directly.</p>
+    <p>Instead, work happens on a <b>feature branch</b> and arrives through a <b>pull request (PR)</b>. That's where review and automated checks happen.</p>
+    <p>The same flow works in Azure Repos and GitHub. Azure Pipelines can build from either.</p>
+  </div>
+  <pre class="code" data-file="terminal">git switch -c feature/add-health-probe
+# …edit k8s/base/deployment.yaml…
+git add k8s/base/deployment.yaml
+git commit -m "Add readiness probe to orders-api"
+git push -u origin feature/add-health-probe
+# then open a pull request into main</pre>
+  <aside class="coming" data-set="B">
+    <dl>
+      <dt>GitHub Actions</dt><dd>Same flow. Azure DevOps "branch policies" are the equivalent of GitHub branch protection rules and rulesets.</dd>
+      <dt>GitLab CI</dt><dd>A GitLab merge request = a pull request; protected branches = branch policies.</dd>
+      <dt>Jenkins</dt><dd>Multibranch pipelines discover branches and PRs the same way. Here the hosting service, not Jenkins, enforces the rules.</dd>
+      <dt>Classic pipelines</dt><dd>Classic build pipelines used the same branch policies; the YAML pipeline just lives in the repo now.</dd>
+    </dl>
+  </aside>
+</section>
+
+<section class="step" id="s2">
+  <h2>2. Branch policies protect <code>main</code></h2>
+  <div class="body">
+    <p>A <b>branch policy</b> (Azure Repos) or <b>branch protection rule</b> (GitHub) sets conditions a PR must meet before it can merge:</p>
+    <ul>
+      <li><b>Required reviewers</b>: at least one or two approvals, possibly from specific groups (code owners).</li>
+      <li><b>Build validation</b>: a pipeline runs on the PR and must succeed.</li>
+      <li><b>Comment resolution</b>: every review comment must be resolved.</li>
+      <li><b>Linked work item</b>: often required in Azure Boards shops.</li>
+    </ul>
+    <p>Build validation is where your pipeline earns its keep: tests, linting, <code>terraform plan</code>, image scans. They all run before a single line reaches <code>main</code>.</p>
+  </div>
+</section>
+
+<section class="step" id="s3">
+  <h2>3. Why pipelines are triggered by branches and PRs</h2>
+  <div class="body">
+    <p>Two events start most pipelines:</p>
+    <ul>
+      <li><b>A PR is opened or updated</b>: run the <i>checks</i>. Build and test, but never deploy to production.</li>
+      <li><b>A merge to <code>main</code></b>: run the full pipeline. Build, push the image, deploy to dev, then promote to prod after approval.</li>
+    </ul>
+    <p>This split keeps production changes reviewed and tested, while still giving developers fast feedback on every push to their branch.</p>
+  </div>
+  <div class="check" data-type="order">
+    <p class="q">Put the flow from idea to deployment in order.</p>
+    <ol class="options">
+      <li>Create a feature branch and commit the change</li>
+      <li>Push the branch and open a pull request into <code>main</code></li>
+      <li>The build validation pipeline runs on the PR</li>
+      <li>A reviewer approves and the PR merges into <code>main</code></li>
+      <li>The CI/CD pipeline runs on <code>main</code> and deploys</li>
+    </ol>
+    <div class="explain">Validation happens <i>before</i> the merge; deployment happens <i>after</i> it. Nothing reaches <code>main</code> without passing both review and checks.</div>
+  </div>
+</section>
+
+<section class="step" id="s4">
+  <h2>4. What must never be committed</h2>
+  <div class="body">
+    <p>Git keeps history forever. A secret committed once and deleted in the next commit is <b>still in the history</b>, and anyone with read access can find it. If a secret is ever pushed, <b>rotate it</b>; rewriting history is not enough.</p>
+    <p>Keep these out of Git with a <code>.gitignore</code>:</p>
+    <ul>
+      <li>Secrets: <code>.env</code> files, keys, kubeconfigs.</li>
+      <li>Terraform state (<code>*.tfstate</code>), which can contain secrets in plain text.</li>
+      <li>Tool caches (<code>.terraform/</code>).</li>
+    </ul>
+    <p>Do commit <code>.terraform.lock.hcl</code>: it pins provider versions.</p>
+  </div>
+  <pre class="code" data-file=".gitignore"># secrets and local config
+.env
+*.pem
+kubeconfig*
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan</pre>
+  <div class="check" data-type="multi">
+    <p class="q">Which of these must <b>never</b> be committed?</p>
+    <ol class="options">
+      <li class="correct"><code>terraform.tfstate</code></li>
+      <li class="correct"><code>.env</code> containing a database password</li>
+      <li class="correct">A kubeconfig copied from <code>~/.kube/config</code></li>
+      <li><code>.terraform.lock.hcl</code> <span class="why">Commit this one: it pins provider versions so every run uses the same ones.</span></li>
+      <li><code>azure-pipelines.yml</code> <span class="why">This is code and belongs in the repo; it should contain no secrets.</span></li>
+      <li class="correct">A service principal's client secret in a script</li>
+    </ol>
+    <div class="explain">State files, env files, kubeconfigs and secrets all grant access or reveal it. Pipelines get secrets at run time from service connections and Key Vault instead (Chapters 7 and 15).</div>
+  </div>
+</section>
+
+<section class="step" id="s5">
+  <h2>5. Commit hygiene that pipelines like</h2>
+  <div class="body">
+    <ul>
+      <li><b>Small PRs</b>: one change, easy to review, quick to validate, and easy to revert.</li>
+      <li><b>Clear messages</b>: say <i>what</i> changed and <i>why</i>. The pipeline run page shows them.</li>
+      <li><b>Path-based triggers</b> (Chapter 7) let a docs-only change skip the image build. That works best when changes are kept separate.</li>
+      <li>Enable <b>secret scanning</b> or push protection where your platform offers it (GitHub Advanced Security, or GitHub Advanced Security for Azure DevOps).</li>
+    </ul>
+  </div>
+</section>
+
+<section class="step summary" id="s6">
+  <h2>Git for pipelines, sorted</h2>
+  <ul>
+    <li>Work on a feature branch; reach <code>main</code> only through a PR.</li>
+    <li>Branch policies require reviewers and a passing build validation pipeline.</li>
+    <li>PRs run checks; merges to <code>main</code> run the deploy.</li>
+    <li>Never commit secrets, kubeconfigs or Terraform state; rotate anything that leaks.</li>
+  </ul>
+</section>
+</article>
+</body>
+</html>

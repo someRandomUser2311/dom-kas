@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chapter 13 · Practice</title>
+<link rel="stylesheet" href="../content.css">
+</head>
+<body>
+<main>
+<nav class="crumbs"><a href="../index.html">Course</a> / <a href="index.html">Chapter 13</a> / Practice</nav>
+<p class="kicker">Chapter 13 · Practice</p>
+<h1>Practice: quiz, predict, labs, try it locally</h1>
+
+<h2 id="quiz">Checkpoint quiz (12 drawn from 24; always includes 4 translate questions)</h2>
+<div class="check" data-type="mcq"><p class="q">What does Bicep compile to?</p><ol class="options"><li class="correct">ARM JSON templates</li><li>Terraform HCL</li><li>REST calls per resource</li><li>PowerShell</li></ol><div class="explain">ARM deploys the template.</div></div>
+<div class="check" data-type="mcq"><p class="q">Where is Bicep's state?</p><ol class="options"><li>A storage account</li><li class="correct">There is none; ARM reads Azure (plus deployment history)</li><li>The registry</li><li>Key Vault</li></ol><div class="explain">Stacks add a record of managed resources.</div></div>
+<div class="check" data-type="mcq"><p class="q">Which command previews changes?</p><ol class="options"><li><code>az deployment group validate</code> only</li><li class="correct"><code>az deployment group what-if</code></li><li><code>az bicep build</code></li><li><code>az stack list</code></li></ol><div class="explain">validate checks syntax and some rules; what-if predicts changes.</div></div>
+<div class="check" data-type="mcq"><p class="q">How do you refer to a resource you don't deploy?</p><ol class="options"><li>A data block</li><li class="correct">The <code>existing</code> keyword</li><li><code>import</code></li><li><code>parent</code></li></ol><div class="explain">Add <code>scope:</code> for another resource group.</div></div>
+<div class="check" data-type="mcq"><p class="q">Which decorator restricts a parameter to listed values?</p><ol class="options"><li class="correct"><code>@allowed</code></li><li><code>@secure</code></li><li><code>@minLength</code></li><li><code>@validate</code></li></ol><div class="explain"><code>@validate</code> doesn't exist.</div></div>
+<div class="check" data-type="mcq"><p class="q">Why <code>uniqueString(resourceGroup().id)</code> in a registry name?</p><ol class="options"><li>Randomness</li><li class="correct">Stable per resource group, yet globally unique</li><li>Required syntax</li><li>Hides the name</li></ol><div class="explain">Deterministic hash.</div></div>
+<div class="check" data-type="mcq"><p class="q">Where is the Bicep overlay setting?</p><ol class="options"><li><code>properties.networkMode</code></li><li class="correct"><code>properties.networkProfile.networkPluginMode</code></li><li><code>sku.overlay</code></li><li><code>agentPoolProfiles[].overlay</code></li></ol><div class="explain">camelCase ARM property names.</div></div>
+<div class="check" data-type="mcq"><p class="q">How do you add a user pool in Bicep?</p><ol class="options"><li>A second cluster resource</li><li class="correct">A <code>managedClusters/agentPools</code> child resource with <code>parent: aks</code></li><li>Only inside agentPoolProfiles</li><li>Via az CLI only</li></ol><div class="explain">The system pool is in agentPoolProfiles.</div></div>
+<div class="check" data-type="mcq"><p class="q">The kubelet object ID path is…</p><ol class="options"><li><code>aks.identity.principalId</code></li><li class="correct"><code>aks.properties.identityProfile.kubeletidentity.objectId</code></li><li><code>aks.properties.kubeletId</code></li><li><code>aks.outputs.kubelet</code></li></ol><div class="explain">That's the identity that gets AcrPull.</div></div>
+<div class="check" data-type="mcq"><p class="q">A role assignment name should be…</p><ol class="options"><li><code>newGuid()</code></li><li class="correct"><code>guid(scope, principal, role)</code></li><li>The role name</li><li>Any string</li></ol><div class="explain">Deterministic, so redeploys are no-ops.</div></div>
+<div class="check" data-type="mcq"><p class="q">A redeploy fails with RoleAssignmentExists. Likely cause?</p><ol class="options"><li>Missing principalType</li><li class="correct">The assignment name changes between deployments (e.g. <code>newGuid()</code>)</li><li>Wrong scope</li><li>Wrong API version</li></ol><div class="explain">Use guid() with stable inputs.</div></div>
+<div class="check" data-type="mcq"><p class="q">PrincipalNotFound right after creating an identity. Fix?</p><ol class="options"><li><code>dependsOn</code></li><li class="correct"><code>principalType: 'ServicePrincipal'</code></li><li>A longer timeout</li><li>Complete mode</li></ol><div class="explain">It skips the directory lookup.</div></div>
+<div class="check" data-type="mcq"><p class="q">Which makes a resource deploy only in prod?</p><ol class="options"><li><code>count: 1</code></li><li class="correct"><code>= if (isProd) { … }</code></li><li><code>@prodOnly</code></li><li>A separate file only</li></ol><div class="explain">A conditional resource.</div></div>
+<div class="check" data-type="mcq"><p class="q">What does <code>@batchSize(1)</code> on a loop do?</p><ol class="options"><li>Limits to one item</li><li class="correct">Deploys items one at a time</li><li>Caches results</li><li>Nothing</li></ol><div class="explain">Needed for federated credentials on one identity.</div></div>
+<div class="check" data-type="mcq"><p class="q">To create a resource group in Bicep you need…</p><ol class="options"><li class="correct"><code>targetScope = 'subscription'</code></li><li><code>scope: tenant()</code></li><li>Complete mode</li><li>A stack</li></ol><div class="explain">Then deploy modules into it.</div></div>
+<div class="check" data-type="mcq"><p class="q">How do you reference an Azure Verified Module?</p><ol class="options"><li><code>source = "Azure/avm…"</code></li><li class="correct"><code>'br/public:avm/res/…:&lt;version&gt;'</code></li><li><code>'avm://aks'</code></li><li><code>import avm</code></li></ol><div class="explain">Always pin the version.</div></div>
+<div class="check" data-type="mcq"><p class="q">You delete a resource from the template and redeploy (incremental). The resource…</p><ol class="options"><li>Is deleted</li><li class="correct">Stays in Azure, unmanaged</li><li>Fails the deployment</li><li>Is moved</li></ol><div class="explain">The biggest difference from Terraform.</div></div>
+<div class="check" data-type="mcq"><p class="q">Which stops portal edits to managed resources?</p><ol class="options"><li>what-if</li><li class="correct">Deployment stack deny settings</li><li>Incremental mode</li><li>The linter</li></ol><div class="explain">Exclude the pipeline identity.</div></div>
+<div class="check" data-type="mcq"><p class="q">Why re-run what-if right before deploying?</p><ol class="options"><li>Required syntax</li><li class="correct">what-if isn't a saved plan; the deploy evaluates the current state</li><li>To warm caches</li><li>For licensing</li></ol><div class="explain">Keep the gap short and lock the environment.</div></div>
+<div class="check" data-type="mcq"><p class="q">An Azure + AWS company standardising IaC should most likely pick…</p><ol class="options"><li>Bicep</li><li class="correct">Terraform / OpenTofu</li><li>ARM JSON</li><li>CLI scripts</li></ol><div class="explain">Multi-provider.</div></div>
+<div class="check" data-type="mcq" data-translate="true"><p class="q">Translate: Terraform <code>count = local.is_prod ? 1 : 0</code> →</p><ol class="options"><li class="correct">Bicep <code>= if (isProd) { … }</code></li><li><code>[for i in range(0,1)]</code></li><li><code>@count(1)</code></li><li><code>existing</code></li></ol><div class="explain">A conditional resource.</div></div>
+<div class="check" data-type="mcq" data-translate="true"><p class="q">Translate: Terraform <code>local_account_disabled = true</code> →</p><ol class="options"><li><code>aadProfile.disableLocal: true</code></li><li class="correct"><code>properties.disableLocalAccounts: true</code></li><li><code>localAccounts: 'off'</code></li><li><code>sku.local: false</code></li></ol><div class="explain">camelCase under properties.</div></div>
+<div class="check" data-type="mcq" data-translate="true"><p class="q">Translate: <code>data "azurerm_container_registry" "shared" {…}</code> →</p><ol class="options"><li class="correct"><code>resource acr '…/registries@…' existing = { name: …, scope: resourceGroup(…) }</code></li><li><code>module acr …</code></li><li><code>param acr object</code></li><li><code>import acr</code></li></ol><div class="explain">existing = read-only reference.</div></div>
+<div class="check" data-type="mcq" data-translate="true"><p class="q">Translate: Terraform <code>for_each = var.node_pools</code> →</p><ol class="options"><li><code>copy: nodePools</code></li><li class="correct"><code>[for pool in nodePools: { … }]</code></li><li><code>foreach(nodePools)</code></li><li><code>@loop</code></li></ol><div class="explain">Items are identified by their Azure names.</div></div>
+
+<h2 id="predict">Predict the outcome (4)</h2>
+<div class="check" data-type="predict"><p class="q">1 · Incremental mode: the <code>memory</code> pool is removed from the parameters; redeploy.</p><ol class="options"><li>Deleted</li><li class="correct">Still running, unmanaged (and billed)</li><li>Error</li><li>Scaled to 0</li></ol><div class="explain">Use a stack with delete, or remove it explicitly.</div></div>
+<div class="check" data-type="predict"><p class="q">2 · A role assignment named with <code>newGuid()</code>, deployed a second time.</p><ol class="options"><li>No-op</li><li class="correct">RoleAssignmentExists error</li><li>A duplicate assignment</li><li>The old one replaced</li></ol><div class="explain">Use guid().</div></div>
+<div class="check" data-type="predict"><p class="q">3 · A stack with <code>actionOnUnmanage: deleteAll</code>; the Log Analytics workspace is removed from the template; update the stack.</p><ol class="options"><li>Kept, detached</li><li class="correct">The workspace is deleted (with its data)</li><li>Error</li><li>Moved</li></ol><div class="explain">Review stack updates carefully; consider detach for data resources.</div></div>
+<div class="check" data-type="predict"><p class="q">4 · what-if on a template that only calls a module with a new AKS property.</p><ol class="options"><li>No changes shown</li><li class="correct">The nested change is shown under the cluster resource (<code>~</code>)</li><li>what-if fails for modules</li><li>Only the module deployment is shown</li></ol><div class="explain">what-if expands nested deployments (where values can be evaluated; otherwise <code>!</code>).</div></div>
+
+<h2 id="lab">Write lab A: the Contoso cluster in Bicep</h2>
+<div class="lab">
+  <p><b>Brief:</b> Write <code>main.bicep</code> (and modules if you like) plus <code>main.prod.bicepparam</code> for the Contoso platform. Graded by <b>iac-rules (Bicep)</b> with the same requirement set as Chapter 12 lab A.</p>
+  <ul class="rules">
+    <li>The <code>environment</code> parameter uses <code>@allowed(['dev','prod'])</code>.</li>
+    <li>Overlay networking: <code>networkPlugin: 'azure'</code>, <code>networkPluginMode: 'overlay'</code>.</li>
+    <li>OIDC issuer and workload identity enabled.</li>
+    <li><code>aadProfile.enableAzureRBAC: true</code>.</li>
+    <li class="critical"><code>disableLocalAccounts: true</code>.</li>
+    <li>The system pool spans zones 1, 2, 3 with at least 2 nodes and the CriticalAddonsOnly taint.</li>
+    <li>AcrPull for <code>identityProfile.kubeletidentity.objectId</code> with a deterministic <code>guid()</code> name.</li>
+    <li>A federated credential with issuer = <code>oidcIssuerProfile.issuerURL</code> and the correct subject.</li>
+    <li class="critical">Secret parameters use <code>@secure()</code>, and no secret values appear in <code>.bicepparam</code> (use <code>getSecret()</code> if needed).</li>
+  </ul>
+  <details class="solution"><summary>Reference solution</summary><p>Assemble lessons <a href="13.2-syntax.html">13.2</a> (params, network), <a href="13.3-aks.html">13.3</a> (cluster, pool), <a href="13.4-role-assignments.html">13.4</a> (identities, role assignments via a module scoped to <code>rg-orders-shared</code>), and <a href="13.5-loops-types.html#s7">13.5</a> (bicepparam).</p></details>
+</div>
+
+<h2 id="lab-b">Write lab B: translate Terraform to Bicep</h2>
+<div class="lab">
+  <p><b>Given:</b></p>
+<pre class="start" data-file="given.tf">resource "azurerm_kubernetes_cluster_node_pool" "batch" {
+  name                  = "batch"
+  kubernetes_cluster_id = azurerm_kubernetes_cluster.main.id
+  mode                  = "User"
+  vm_size               = "Standard_D4ds_v5"
+  zones                 = ["1", "2", "3"]
+  auto_scaling_enabled  = true
+  min_count             = 0
+  max_count             = 5
+  priority              = "Spot"
+  node_taints           = ["batch=true:NoSchedule"]
+}
+
+resource "azurerm_role_assignment" "kubelet_acr_pull" {
+  scope                = azurerm_container_registry.main.id
+  role_definition_name = "AcrPull"
+  principal_id         = azurerm_kubernetes_cluster.main.kubelet_identity[0].object_id
+  principal_type       = "ServicePrincipal"
+}</pre>
+  <p>Write the Bicep equivalent. Graded by matching rules (no critical rules; this is translation practice).</p>
+  <ul class="rules">
+    <li>An <code>agentPools</code> child resource with <code>parent</code> pointing at the cluster.</li>
+    <li>mode, vmSize, availabilityZones, enableAutoScaling/minCount/maxCount, <code>scaleSetPriority: 'Spot'</code> and <code>nodeTaints</code> all match.</li>
+    <li>A role assignment with <code>scope: acr</code>, the AcrPull role definition ID via <code>subscriptionResourceId</code>, the kubelet object ID, and <code>principalType</code>.</li>
+    <li>The role assignment name uses <code>guid()</code> with stable inputs.</li>
+  </ul>
+</div>
+
+<h2 id="lab-c">Write lab C: the Bicep infra pipeline</h2>
+<div class="lab">
+  <p><b>Brief:</b> Write <code>infra-pipeline.yml</code> for <code>infra/bicep</code>. Graded by <b>pipeline-rules</b>.</p>
+  <ul class="rules">
+    <li>A lint or build step (<code>az bicep lint</code> / <code>build</code>).</li>
+    <li>A what-if stage against the target resource group.</li>
+    <li>Deploy runs in a <b>deployment job</b> with an <code>environment</code>.</li>
+    <li class="critical">Deploy runs only after the approval (environment) and the what-if stage, on <code>main</code>.</li>
+    <li>Authentication uses a service connection (WIF); no client secrets in the YAML.</li>
+    <li>The deploy step uses <code>az deployment group create</code>, <code>az stack group create</code> or <code>AzureResourceManagerTemplateDeployment@3</code>.</li>
+  </ul>
+  <details class="solution"><summary>Reference solution</summary><p>Lesson <a href="13.8-pipelines.html#s3">13.8, step 3</a>.</p></details>
+</div>
+
+<h2 id="walkthrough">Walkthrough: what-if → stack deploy → portal change blocked</h2>
+<ol>
+  <li><code>az deployment group what-if</code> on prod: read the <code>+ ~ *</code> output.</li>
+  <li><code>az stack group create … --deny-settings-mode denyWriteAndDelete</code>.</li>
+  <li>In the portal, try to change the user pool's max count: "denied by deny assignment".</li>
+  <li>Change it in <code>main.prod.bicepparam</code> instead; the PR's what-if shows it; merge; the pipeline applies it.</li>
+</ol>
+
+<h2 id="try">Try it locally</h2>
+<p class="muted">No Azure needed for these. The Bicep CLI compiles and lints locally. what-if, deployments and stacks need Azure and stay as walkthroughs.</p>
+<div class="try" data-lesson="13.1"><p><b>13.1 See the ARM JSON.</b></p>
+<pre>cd lab/examples/ch13
+az bicep build --file main.bicep --stdout | head -40</pre>
+<p>Expected: an ARM template with <code>"$schema"</code>, <code>"resources"</code> and generated <code>dependsOn</code>.</p><p><b>Cleanup:</b> none.</p></div>
+<div class="try" data-lesson="13.2-13.6"><p><b>13.2–13.6 Lint and build parameters.</b></p>
+<pre>cd lab/examples/ch13
+az bicep lint --file main.bicep
+az bicep build-params --file main.prod.bicepparam --stdout | head -20
+az bicep lint --file broken/role-newguid.bicep</pre>
+<p>Expected: a clean lint, typed parameters JSON, then a compile error for the broken file: <code>newGuid()</code> may only be used as a parameter default, which is exactly why role assignment names use <code>guid()</code>.</p><p><b>Cleanup:</b> none.</p></div>
+</main>
+</body>
+</html>

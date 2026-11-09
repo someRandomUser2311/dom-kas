@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>15.5 · Hardening the cluster</title>
+<link rel="stylesheet" href="../content.css">
+</head>
+<body>
+<article class="lesson" data-id="15.5" data-chapter="15">
+<nav class="crumbs"><a href="../index.html">Course</a> / <a href="index.html">Chapter 15</a> / 15.5</nav>
+<header>
+  <p class="kicker">Chapter 15 · Lesson 15.5 · ~10 steps · ~12 min</p>
+  <h1>Hardening the cluster</h1>
+  <p class="meta">You'll be able to review an AKS cluster against a hardening checklist, explain the threat each item addresses, and enable the missing controls.</p>
+</header>
+
+<section class="step" id="s1">
+  <h2>1. The checklist</h2>
+  <table>
+    <tr><th>Control</th><th>Why</th><th>How</th></tr>
+    <tr><td>Private API server, or authorized IPs</td><td>Shrinks who can even try to authenticate</td><td>Lessons 6.4–6.5</td></tr>
+    <tr><td>Entra ID + Azure RBAC, local accounts off</td><td>Every action is a named, audited identity</td><td>Lesson 5.5</td></tr>
+    <tr><td>KMS etcd encryption with your key</td><td>Secrets in etcd encrypted with a key you control and can revoke</td><td><code>--enable-azure-keyvault-kms</code></td></tr>
+    <tr><td>Node OS auto-patching</td><td>Kernel and OS vulnerabilities fixed without anyone remembering</td><td><code>--node-os-upgrade-channel NodeImage</code> (lesson 4.4)</td></tr>
+    <tr><td>Defender for Containers</td><td>Runtime threat detection, vulnerability assessment, posture recommendations</td><td><code>--enable-defender</code> / the Defender plan</td></tr>
+    <tr><td>Azure Policy add-on</td><td>Admission rules: allowed registries, no privileged pods, limits required</td><td><code>az aks enable-addons -a azure-policy</code> (Chapter 16)</td></tr>
+    <tr><td>Image cleaner</td><td>Removes unused, vulnerable images from nodes</td><td><code>--enable-image-cleaner</code></td></tr>
+    <tr><td>No host networking, hostPath or privileged pods in app namespaces</td><td>Pods can't break out to the node</td><td>Pod Security restricted (lesson 15.3)</td></tr>
+    <tr><td>Workload identity, no secrets in pods</td><td>Nothing to steal from manifests or images</td><td>Lessons 5.6, 15.4</td></tr>
+    <tr><td>Default-deny NetworkPolicy</td><td>Limits lateral movement</td><td>Chapter 9</td></tr>
+  </table>
+  <aside class="coming" data-set="A">
+    <dl>
+      <dt>Windows/IIS admin</dt><dd>Like a CIS benchmark or security baseline GPO, translated to cluster settings.</dd>
+      <dt>Linux admin</dt><dd>The CIS Kubernetes Benchmark covers much of this; AKS handles the control-plane items for you.</dd>
+      <dt>Developer (Compose)</dt><dd>Most items are cluster-level; yours are the pod-level ones (Pod Security, no secrets).</dd>
+      <dt>Other clouds</dt><dd>The equivalents are GuardDuty EKS protection, GKE Security Posture, and so on. The categories are the same.</dd>
+    </dl>
+  </aside>
+</section>
+
+<section class="step" id="s2">
+  <h2>2. Enabling the Azure-side controls</h2>
+  <pre class="code" data-file="harden.sh">az aks update -g rg-orders-prod -n aks-orders-prod \
+  --enable-defender \
+  --enable-image-cleaner \
+  --enable-azure-keyvault-kms --azure-keyvault-kms-key-id "$KMS_KEY_ID" \
+  --azure-keyvault-kms-key-vault-network-access Private --azure-keyvault-kms-key-vault-resource-id "$KV_ID"
+az aks enable-addons -g rg-orders-prod -n aks-orders-prod -a azure-policy</pre>
+  <div class="body"><p>In practice, all of these are arguments in the Terraform or Bicep definition (Chapters 12–13), not one-off commands.</p></div>
+</section>
+
+<section class="step" id="s3">
+  <h2>3. Find the gaps</h2>
+  <div class="check" data-type="multi">
+    <p class="q">A prod cluster review shows the following. Select every gap.</p>
+    <pre class="code" data-file="review">apiServerAccessProfile: { enablePrivateCluster: false, authorizedIPRanges: [] }
+disableLocalAccounts: true
+aadProfile: { enableAzureRBAC: true }
+autoUpgradeProfile: { upgradeChannel: patch, nodeOSUpgradeChannel: None }
+securityProfile: { defender: { securityMonitoring: { enabled: false } }, workloadIdentity: { enabled: true } }
+addonProfiles: { azurepolicy: { enabled: false } }
+namespace orders labels: pod-security.kubernetes.io/warn=restricted</pre>
+    <ol class="options">
+      <li class="correct">A public API server with no authorized IP ranges</li>
+      <li class="correct">Node OS upgrade channel <code>None</code> (no OS patching)</li>
+      <li class="correct">Defender for Containers off</li>
+      <li class="correct">The Azure Policy add-on off</li>
+      <li class="correct">Pod Security only in <code>warn</code> mode for <code>orders</code></li>
+      <li>Local accounts disabled <span class="why">That's correct.</span></li>
+      <li>Workload identity enabled <span class="why">That's correct.</span></li>
+    </ol>
+    <div class="explain">Five gaps, each one config line in IaC.</div>
+  </div>
+</section>
+
+<section class="step" id="s4">
+  <h2>4. Threat → control</h2>
+  <div class="check" data-type="match">
+    <p class="q">Match each threat to the control that addresses it.</p>
+    <table class="pairs">
+      <tr><td>A leaked admin kubeconfig</td><td>Local accounts disabled</td></tr>
+      <tr><td>A container escapes to the node</td><td>Pod Security restricted + patched nodes</td></tr>
+      <tr><td>A compromised pod scans the network for the database</td><td>Default-deny NetworkPolicy</td></tr>
+      <tr><td>Someone deploys an image from Docker Hub</td><td>An admission policy for allowed registries (Azure Policy / Kyverno)</td></tr>
+      <tr><td>A crypto-miner starts inside a pod</td><td>Defender for Containers runtime detection</td></tr>
+      <tr><td>A disk or backup of etcd is stolen</td><td>KMS etcd encryption with your key</td></tr>
+    </table>
+    <div class="explain">Layers: prevent (identity, policy, network), harden (pod security, patching), detect (Defender), protect data (KMS).</div>
+  </div>
+</section>
+
+<section class="step" id="s5">
+  <h2>5. Keep up with upgrades</h2>
+  <div class="body"><p>An unsupported Kubernetes version stops getting security fixes. Patch automatically (the patch channel plus node images) and upgrade minor versions regularly (lesson 4.4). Defender flags clusters on outdated versions.</p></div>
+</section>
+
+<section class="step" id="s6">
+  <h2>6. Defender for Containers</h2>
+  <div class="body">
+    <ul>
+      <li><b>Vulnerability assessment</b> of images in ACR and running images.</li>
+      <li><b>Runtime threat detection</b> on nodes: suspicious processes, crypto-mining, privilege escalation.</li>
+      <li><b>Posture recommendations</b> that map to this checklist.</li>
+    </ul>
+    <p>Alerts go to Defender for Cloud and can trigger your incident process.</p>
+  </div>
+</section>
+
+<section class="step" id="s7">
+  <h2>7. Secure score as a tracker</h2>
+  <div class="body"><p>Defender for Cloud's recommendations for each cluster form a to-do list. Contoso reviews them monthly, fixes them in IaC, and treats a new high-severity recommendation like a bug.</p></div>
+</section>
+
+<section class="step" id="s8">
+  <h2>8. Node access</h2>
+  <div class="body"><p>Nobody should SSH to nodes routinely. Disable SSH access on node pools where supported, and use <code>kubectl debug node/…</code> for rare investigations. That's audited, and needs explicit RBAC.</p></div>
+</section>
+
+<section class="step" id="s9">
+  <h2>9. Encode the baseline</h2>
+  <div class="body"><p>Put every checklist item into the Terraform or Bicep cluster module (lesson 12.6), and add Azure Policy at the subscription level to <b>audit or deny</b> clusters that don't comply. Then a new cluster is hardened by default.</p></div>
+</section>
+
+<section class="step summary" id="s10">
+  <h2>Hardening, sorted</h2>
+  <ul>
+    <li>Restrict API access; Entra ID + RBAC; no local accounts.</li>
+    <li>KMS encryption, node OS patching, regular upgrades.</li>
+    <li>Defender for Containers, the Azure Policy add-on, image cleaner.</li>
+    <li>Pod Security enforce, default-deny networking, workload identity.</li>
+    <li>Encode it in IaC and audit with Azure Policy.</li>
+  </ul>
+</section>
+</article>
+</body>
+</html>

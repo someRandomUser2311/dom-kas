@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>7.4 · Service connections, service principals &amp; ACR</title>
+<link rel="stylesheet" href="../content.css">
+</head>
+<body>
+<article class="lesson" data-id="7.4" data-chapter="7">
+<nav class="crumbs"><a href="../index.html">Course</a> / <a href="index.html">Chapter 7</a> / 7.4</nav>
+<header>
+  <p class="kicker">Chapter 7 · Lesson 7.4 · ~11 steps · built in app-preview (content/ch07/l4.js)</p>
+  <h1>Service connections, service principals &amp; ACR</h1>
+  <p class="meta">Converted from the built preview lesson. Interactive panels are kept as their rendered HTML inside <code>.widget</code> blocks.</p>
+</header>
+
+<section class="step" id="s1">
+  <h2>1. How does a pipeline prove who it is?</h2>
+  <div class="body"><p>Your pipeline needs to <em>push</em> to ACR and <em>deploy</em> to AKS. Both are protected Azure resources.</p><p>The tempting shortcut is on the right. Every person who can read the repo can now use that password, and it lives in Git history <b>forever</b>.</p></div>
+  <pre class="code" data-file="azure-pipelines.yml"># ❌ please never do this
+variables:
+  AZ_CLIENT_ID: 6f1c…
+  AZ_CLIENT_SECRET: 'Q8~kz.Yt2-…'
+
+steps:
+  - script: az login --service-principal -u $(AZ_CLIENT_ID) -p $(AZ_CLIENT_SECRET) --tenant …</pre>
+  <aside class="more"><p>The fix is a chain of three ideas: an <b>identity</b> in Entra ID, a <b>service connection</b> in Azure DevOps that uses it, and <b>RBAC roles</b> on the resources. That's this lesson.</p></aside>
+</section>
+
+<section class="step" id="s2">
+  <h2>2. The identity: who is the pipeline?</h2>
+  <div class="body"><p>Four terms you'll hear constantly. The key one: <b>RBAC roles are assigned to a service principal</b> (or a managed identity, which is just an SP whose credentials Azure manages).</p></div>
+  <div class="widget" data-widget="l4-step2"><div class="table-wrap"><table class="table">
+        <tr><th>Term</th><th>What it is</th></tr>
+        <tr><td><b>App registration</b></td><td>Global definition of an app in Entra ID: client ID, credentials, federated credentials</td></tr>
+        <tr><td><b>Service principal</b></td><td>The app's identity <em>in your tenant</em>; what RBAC roles attach to</td></tr>
+        <tr><td><b>Managed identity</b></td><td>An SP whose credentials Azure rotates for you</td></tr>
+        <tr><td><b>Service connection</b></td><td>Azure DevOps object that knows <em>how</em> to authenticate as one of the above</td></tr></table></div></div>
+</section>
+
+<section class="step" id="s3">
+  <h2>3. Reference it by name</h2>
+  <div class="body"><p>With a service connection, the YAML only contains its <b>name</b>. Azure DevOps handles authentication at runtime, and admins control which pipelines may use it.</p></div>
+  <pre class="code" data-file="azure-pipelines.yml">steps:
+  - task: AzureCLI@2
+    inputs:
+      azureSubscription: azure-orders-dev   # service connection name
+      scriptType: bash
+      scriptLocation: inlineScript
+      inlineScript: az aks list -o table</pre>
+  <aside class="coming" data-set="B">
+    <dl>
+      <dt>GitHub Actions</dt><dd>Like <code>azure/login@v2</code> with OIDC (<code>id-token: write</code>), except the trust config lives in an Azure DevOps object instead of repo secrets.</dd>
+      <dt>GitLab CI</dt><dd>Like <code>id_tokens:</code> + <code>az login --federated-token</code>, packaged up so you don't script it.</dd>
+      <dt>Jenkins</dt><dd>Like a Credentials-plugin entry bound with <code>withCredentials</code>, but secretless when you use federation.</dd>
+      <dt>Classic pipelines</dt><dd>The same service connections you selected in Classic task dropdowns.</dd>
+    </dl>
+  </aside>
+</section>
+
+<section class="step" id="s4">
+  <h2>4. How the token flows (secretless)</h2>
+  <div class="body"><p><b>Workload identity federation</b> is the recommended default. Step through what happens when a task needs Azure.</p><p>Notice that no secret appears anywhere.</p></div>
+  <div class="widget" data-widget="l4-step4"><p><i>Interactive in the preview (onShow handler).</i></p><div class="card"><div class="seq">
+    <div class="seq-actors">
+      <div class="seq-actor" data-a="agent"><span class="sa-ico">🖥️</span>Agent / task</div>
+      <div class="seq-actor" data-a="ado"><span class="sa-ico">🔷</span>Azure DevOps</div>
+      <div class="seq-actor" data-a="entra"><span class="sa-ico">🪪</span>Entra ID</div>
+      <div class="seq-actor" data-a="azure"><span class="sa-ico">☁️</span>ACR / AKS</div></div>
+    <div class="seq-msg" id="smsg"></div>
+    <div style="display:flex;gap:10px;align-items:center"><button class="btn btn-sm" id="sprev">← Back</button><button class="btn btn-sm btn-primary" id="snext">Next →</button><span class="subtle" id="scount" style="margin-left:auto"></span></div></div></div></div>
+</section>
+
+<section class="step" id="s5">
+  <h2>5. Compare: the old client-secret way</h2>
+  <div class="body"><p>Same five steps, but now a long-lived secret exists. Step through and spot where the risk enters.</p></div>
+  <div class="widget" data-widget="l4-step5"><p><i>Interactive in the preview (onShow handler).</i></p><div class="card"><div class="seq">
+    <div class="seq-actors">
+      <div class="seq-actor" data-a="agent"><span class="sa-ico">🖥️</span>Agent / task</div>
+      <div class="seq-actor" data-a="ado"><span class="sa-ico">🔷</span>Azure DevOps</div>
+      <div class="seq-actor" data-a="entra"><span class="sa-ico">🪪</span>Entra ID</div>
+      <div class="seq-actor" data-a="azure"><span class="sa-ico">☁️</span>ACR / AKS</div></div>
+    <div class="seq-msg" id="smsg"></div>
+    <div style="display:flex;gap:10px;align-items:center"><button class="btn btn-sm" id="sprev">← Back</button><button class="btn btn-sm btn-primary" id="snext">Next →</button><span class="subtle" id="scount" style="margin-left:auto"></span></div></div></div></div>
+</section>
+
+<section class="step" id="s6">
+  <h2>6. Quick check</h2>
+  <div class="body"><p>You're creating a new Azure Resource Manager service connection for a team.</p></div>
+  <pre class="code" data-file="azure-pipelines.yml">steps:
+  - task: AzureCLI@2
+    inputs:
+      azureSubscription: azure-orders-dev   # service connection name
+      scriptType: bash
+      scriptLocation: inlineScript
+      inlineScript: az aks list -o table</pre>
+  <div class="check" data-type="mcq">
+    <p class="q">Which credential should it use?</p>
+    <ol class="options">
+      <li>Client secret with 24-month expiry <span class="why">It works, but it's a long-lived secret that will eventually leak or expire at 2 a.m.</span></li>
+      <li class="correct">Workload identity federation</li>
+      <li>A personal access token (PAT) <span class="why">PATs authenticate <em>people</em> to Azure DevOps, not pipelines to Azure.</span></li>
+      <li>The subscription owner's username and password <span class="why">Never use a human's credentials for automation.</span></li>
+    </ol>
+    <div class="explain">Federation uses short-lived OIDC tokens, so there's no secret to store, leak or rotate.</div>
+  </div>
+</section>
+
+<section class="step" id="s7">
+  <h2>7. Least-privilege RBAC</h2>
+  <div class="body"><p>An identity with no roles can sign in but do nothing. Give each identity <b>exactly</b> what it needs, scoped as narrowly as possible.</p><p>Notice there are <b>two</b> identities: the pipeline pushes, the cluster pulls.</p></div>
+  <div class="widget" data-widget="l4-step7"><div class="table-wrap"><table class="table">
+        <tr><th>Who</th><th>Role</th><th>Scope</th></tr>
+        <tr><td>Pipeline SP</td><td><code>AcrPush</code></td><td>the ACR</td></tr>
+        <tr><td>Pipeline SP</td><td><code>AKS Cluster User Role</code></td><td>the cluster</td></tr>
+        <tr><td>Pipeline SP</td><td><code>AKS RBAC Writer</code></td><td>namespace <code>orders</code></td></tr>
+        <tr><td>AKS kubelet identity</td><td><code>AcrPull</code></td><td>the ACR</td></tr></table></div>
+        <div class="callout danger" style="margin:0"><span class="c-ico">🚫</span><div>Anti-pattern: one SP with <b>Owner</b> on the subscription, shared by every pipeline, with a 2-year secret.</div></div></div>
+</section>
+
+<section class="step" id="s8">
+  <h2>8. Quick check: ImagePullBackOff</h2>
+  <div class="body"><p>The pipeline pushed the image successfully, but pods are stuck in <code>ImagePullBackOff</code> with <i>401 Unauthorized</i> from <code>contosoacr.azurecr.io</code>.</p></div>
+  <pre class="code" data-file="azure-pipelines.yml">steps:
+  - task: AzureCLI@2
+    inputs:
+      azureSubscription: azure-orders-dev   # service connection name
+      scriptType: bash
+      scriptLocation: inlineScript
+      inlineScript: az aks list -o table</pre>
+  <div class="check" data-type="mcq">
+    <p class="q">What's most likely missing?</p>
+    <ol class="options">
+      <li><code>AcrPush</code> for the pipeline SP <span class="why">The push already worked, so the pipeline side is fine.</span></li>
+      <li>A Docker Registry service connection <span class="why">Service connections are for the pipeline. Pods don't use them.</span></li>
+      <li>Workload identity federation on the connection <span class="why">That affects how the pipeline signs in, not how nodes pull.</span></li>
+      <li class="correct"><code>AcrPull</code> for the AKS kubelet identity</li>
+    </ol>
+    <div class="explain">Pulling is done by the <b>nodes</b>, which authenticate as the kubelet identity. It needs <code>AcrPull</code>, e.g. via <code>az aks update --attach-acr</code>.</div>
+  </div>
+</section>
+
+<section class="step" id="s9">
+  <h2>9. Your turn: create the connection</h2>
+  <div class="body"><p>Create an Azure Resource Manager connection named <code>azure-orders-dev</code> that uses <b>workload identity federation</b>, is scoped to resource group <code>rg-orders-dev</code> in subscription <code>KubeQuest-Dev</code>, and is <b>not</b> available to every pipeline.</p></div>
+  <div class="widget" data-widget="l4-step9"><p><i>Interactive in the preview (onShow handler).</i></p><div class="ado-form"><div class="ado-head">🔷 New Azure service connection</div><div class="ado-body">
+        <div class="field"><label>Identity type</label><select class="input" id="f-identity"><option value="">Select…</option><option value="auto">App registration (automatic)</option><option value="manual">App registration or managed identity (manual)</option><option value="mi">Managed identity</option></select></div>
+        <div class="field"><label>Credential</label><div class="radio-cards">
+          <label class="radio-card"><input type="radio" name="cred" value="wif"><span><span class="rc-title">Workload identity federation</span><br><span class="rc-sub">Short-lived OIDC tokens, no secret</span></span></label>
+          <label class="radio-card"><input type="radio" name="cred" value="secret"><span><span class="rc-title">Secret</span><br><span class="rc-sub">Stored client secret, must be rotated</span></span></label></div></div>
+        <div class="field"><label>Subscription</label><select class="input" id="f-sub"><option value="">Select…</option><option>KubeQuest-Dev</option><option>KubeQuest-Prod</option></select></div>
+        <div class="field"><label>Resource group</label><select class="input" id="f-rg"><option value="">(none: entire subscription)</option><option>rg-orders-dev</option><option>rg-orders-prod</option></select></div>
+        <div class="field"><label>Service connection name</label><input class="input mono" id="f-name" placeholder="e.g. azure-orders-dev"></div>
+        <label class="checkline"><input type="checkbox" id="f-all" checked> Grant access permission to all pipelines</label>
+        <button class="btn btn-primary" id="f-save">Save</button></div></div></div>
+  <div class="check" data-type="custom">
+    <p class="q">Fill in the form on the right and press <b>Save</b>.</p>
+    <p class="muted">Completed through the widget above (see the preview's onShow handler for the success condition).</p>
+    <div class="explain">A least-privilege, secretless connection: narrow scope, no shared access.</div>
+  </div>
+</section>
+
+<section class="step" id="s10">
+  <h2>10. ACR in one screen</h2>
+  <div class="body"><p>Azure Container Registry is a private Docker registry. Its <b>login server</b> is <code>&lt;name&gt;.azurecr.io</code>.</p><p>These are the commands a pipeline runs under the hood. You'll type them yourself against the local floci-az emulator in the terminal lab.</p></div>
+  <pre class="code" data-file="bash"># create a registry and let the cluster pull from it
+az acr create -g rg-orders-dev -n contosoacr --sku Standard
+az aks update -g rg-orders-dev -n aks-orders-dev --attach-acr contosoacr
+
+# what Docker@2 buildAndPush does for you
+az acr login -n contosoacr
+docker build -t contosoacr.azurecr.io/orders-api:1427 .
+docker push contosoacr.azurecr.io/orders-api:1427</pre>
+  <div class="check" data-type="tapline" data-match="--attach-acr">
+    <p class="q">Tap the command that gives AKS permission to <b>pull</b> from the registry.</p>
+    <div class="explain"><code>--attach-acr</code> assigns <code>AcrPull</code> on the registry to the cluster's kubelet identity.</div>
+  </div>
+</section>
+
+<section class="step summary" id="s11">
+  <h2>Secretless, least-privilege delivery</h2>
+  <div class="body">Pipelines authenticate through service connections, ideally with workload identity federation. RBAC gives the pipeline AcrPush and the cluster AcrPull, each scoped as narrowly as possible.</div>
+  <div class="widget" data-widget="l4-step11"><div class="card"><ul class="list-check" style="font-size:15px"><li>Never put credentials in YAML</li><li>Service connection = named, permissioned way to authenticate</li><li>Prefer workload identity federation</li><li>Pipeline pushes (AcrPush); kubelet pulls (AcrPull)</li><li>Scope to a resource group; don't grant to all pipelines</li></ul></div></div>
+</section>
+</article>
+</body>
+</html>

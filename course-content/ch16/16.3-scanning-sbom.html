@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>16.3 · Scanning &amp; SBOM in the pipeline</title>
+<link rel="stylesheet" href="../content.css">
+</head>
+<body>
+<article class="lesson" data-id="16.3" data-chapter="16">
+<nav class="crumbs"><a href="../index.html">Course</a> / <a href="index.html">Chapter 16</a> / 16.3</nav>
+<header>
+  <p class="kicker">Chapter 16 · Lesson 16.3 · ~12 steps · ~15 min</p>
+  <h1>Scanning &amp; SBOM in the pipeline</h1>
+  <p class="meta">You'll be able to scan images in the pipeline with a fail policy people can live with, generate an SBOM, and attach it to the image in ACR.</p>
+</header>
+
+<section class="step" id="s1">
+  <h2>1. Where to scan</h2>
+  <div class="body">
+    <ul>
+      <li><b>In the pipeline</b>, after the image is built and before it can be deployed. That's fast feedback, and it blocks bad builds.</li>
+      <li><b>In the registry</b>, continuously (Defender for Containers): new vulnerabilities found in old images.</li>
+      <li><b>In the cluster</b>, running images (Defender): what's actually exposed right now.</li>
+    </ul>
+  </div>
+  <aside class="coming" data-set="B">
+    <dl>
+      <dt>GitHub Actions</dt><dd><code>aquasecurity/trivy-action</code> or Microsoft Defender for DevOps; the same fail-threshold thinking.</dd>
+      <dt>GitLab CI</dt><dd>GitLab's container scanning template, using Trivy underneath.</dd>
+      <dt>Jenkins</dt><dd>A Trivy or Grype stage with a quality gate.</dd>
+      <dt>Classic pipelines</dt><dd>The same scanner as a command-line task in the build pipeline.</dd>
+    </dl>
+  </aside>
+</section>
+
+<section class="step" id="s2">
+  <h2>2. A Trivy scan step</h2>
+  <pre class="code" data-file="(Build job steps)">- task: Docker@2
+  displayName: Build
+  inputs: { command: build, containerRegistry: acr-connection, repository: orders-api, tags: $(Build.BuildId) }
+- script: |
+    trivy image --exit-code 1 --severity HIGH,CRITICAL --ignore-unfixed \
+      --format table contosoacr.azurecr.io/orders-api:$(Build.BuildId)
+  displayName: Scan image (fail on fixable HIGH/CRITICAL)
+- task: Docker@2
+  displayName: Push
+  inputs: { command: push, containerRegistry: acr-connection, repository: orders-api, tags: $(Build.BuildId) }</pre>
+</section>
+
+<section class="step" id="s3">
+  <h2>3. The fail policy</h2>
+  <div class="check" data-type="fill">
+    <p class="q">Fail the build only for high and critical findings.</p>
+    <pre class="code" data-file="(script)">trivy image --exit-code 1 <span class="blank">?</span> HIGH,CRITICAL --ignore-unfixed contosoacr.azurecr.io/orders-api:$(Build.BuildId)</pre>
+    <ul class="chips">
+      <li class="correct"><code>--severity</code></li>
+      <li><code>--level</code> <span class="why">Not a Trivy flag.</span></li>
+      <li><code>--fail-on</code> <span class="why">Not Trivy's flag (some other scanners use it).</span></li>
+      <li><code>--exit-code</code> <span class="why">Already set; it decides the exit status when findings match.</span></li>
+    </ul>
+    <div class="explain"><code>--ignore-unfixed</code> skips findings with no fix yet. Failing on something nobody can fix only teaches people to disable the scan. Track those separately.</div>
+  </div>
+</section>
+
+<section class="step" id="s4">
+  <h2>4. Read a scan</h2>
+  <div class="check" data-type="diagnose">
+    <p class="q">The scan step failed. What's the right fix?</p>
+    <pre class="output">contosoacr.azurecr.io/orders-api:20261105.3 (debian 12.7)
+Total: 2 (HIGH: 1, CRITICAL: 1)
+┌────────────┬────────────────┬──────────┬───────────────────┬───────────────┬─────────────────────────────┐
+│  Library   │ Vulnerability  │ Severity │ Installed Version │ Fixed Version │            Title            │
+├────────────┼────────────────┼──────────┼───────────────────┼───────────────┼─────────────────────────────┤
+│ libssl3    │ CVE-2026-1234  │ CRITICAL │ 3.0.14-1~deb12u1  │ 3.0.15-1~deb12u1 │ openssl: buffer overread │
+│ curl       │ CVE-2026-2345  │ HIGH     │ 7.88.1-10+deb12u6 │ 7.88.1-10+deb12u8 │ curl: header injection  │
+└────────────┴────────────────┴──────────┴───────────────────┴───────────────┴─────────────────────────────┘</pre>
+    <ol class="options">
+      <li>Add both CVEs to an ignore list <span class="why">Fixes exist; ignoring is for unfixable or not-applicable findings, with a reason and an expiry date.</span></li>
+      <li class="correct">Rebuild on an updated base image, and better, move the runtime stage to distroless, which has no curl or full OpenSSL package at all</li>
+      <li>Remove the scan step <span class="why">That's how vulnerable images reach prod.</span></li>
+      <li>Lower the severity threshold <span class="why">That hides real risk.</span></li>
+    </ol>
+    <div class="explain">Both are OS packages from a Debian-based runtime image. That's a sign the multi-stage distroless pattern isn't in use.</div>
+  </div>
+</section>
+
+<section class="step" id="s5">
+  <h2>5. Exceptions done right</h2>
+  <div class="body"><p>When a finding doesn't apply (the vulnerable function is never used) or can't be fixed yet, record it in <code>.trivyignore</code> with the CVE, a reason and a review date. Review the list in PRs, like code.</p></div>
+  <pre class="code" data-file=".trivyignore">CVE-2026-3456  # stdlib net/http2 issue; orders-api doesn't serve HTTP/2 — review 2026-12-31</pre>
+</section>
+
+<section class="step" id="s6">
+  <h2>6. Scan before or after push?</h2>
+  <div class="body">
+    <p>Two valid orders:</p>
+    <ul>
+      <li><b>build → scan → push → sign</b>: nothing failing ever reaches the registry.</li>
+      <li><b>build → push → scan → sign</b>: the image is in the registry (e.g. a quarantine repository) but unsigned. Admission policy (16.4) stops unsigned images being deployed.</li>
+    </ul>
+    <p>Either way, <b>sign only after the scan passes</b>, and deploy only signed digests.</p>
+  </div>
+  <div class="check" data-type="custom">
+    <p class="q">Arrange the Build stage steps for Contoso (scan before push).</p>
+    <div class="widget" data-widget="stage-sim">Draggable step cards: "go test", "docker build", "trivy scan (fail on fixable HIGH/CRITICAL)", "docker push (capture digest)", "generate &amp; attach SBOM", "notation sign digest", plus a decoy "sign before scan". Success: test → build → scan → push → SBOM → sign, with the decoy discarded. Placing push before scan is also accepted if sign is after scan.</div>
+    <div class="explain">The signature means "this passed our checks". It must come last.</div>
+  </div>
+</section>
+
+<section class="step" id="s7">
+  <h2>7. Generate an SBOM</h2>
+  <pre class="code" data-file="(script)">trivy image --format spdx-json --output sbom.spdx.json contosoacr.azurecr.io/orders-api@$(imageDigest)
+# or: syft contosoacr.azurecr.io/orders-api@$(imageDigest) -o spdx-json=sbom.spdx.json</pre>
+  <div class="body"><p>SPDX and CycloneDX are the two common formats. Keep the SBOM with the image, not just as a pipeline artifact that expires.</p></div>
+</section>
+
+<section class="step" id="s8">
+  <h2>8. Attach it to the image in ACR</h2>
+  <div class="body"><p>OCI registries support <b>referrers</b>: artifacts linked to an image digest. Attach the SBOM, the signature and the provenance to the image, so they travel with it and can be listed and verified later.</p></div>
+  <pre class="code" data-file="(script)">oras attach --artifact-type application/spdx+json \
+  contosoacr.azurecr.io/orders-api@$(imageDigest) sbom.spdx.json
+oras discover contosoacr.azurecr.io/orders-api@$(imageDigest) -o tree</pre>
+  <pre class="output">contosoacr.azurecr.io/orders-api@sha256:3f5a9c0d…
+├── application/spdx+json
+│   └── sha256:8c1e…
+└── application/vnd.cncf.notary.signature
+    └── sha256:b77d…</pre>
+</section>
+
+<section class="step" id="s9">
+  <h2>9. Defender for Containers</h2>
+  <div class="body"><p>With the Defender plan on, images in ACR are scanned on push and re-assessed regularly. Running images are mapped to their findings. Results appear as recommendations, and can feed a gate ("block deploy if the image has critical findings").</p></div>
+</section>
+
+<section class="step" id="s10">
+  <h2>10. Dependencies, before the image</h2>
+  <div class="body"><p>Scan source dependencies in PRs too: <code>govulncheck</code> for Go, Dependabot alerts, or GitHub Advanced Security for Azure DevOps dependency scanning. Catching a vulnerable module in a PR is cheaper than in an image.</p></div>
+</section>
+
+<section class="step" id="s11">
+  <h2>11. Pin the scanner</h2>
+  <div class="body"><p>The scanner is part of your supply chain too. Pin its version or digest, and update its vulnerability database in the job, or mirror it for private agents.</p></div>
+</section>
+
+<section class="step summary" id="s12">
+  <h2>Scanning &amp; SBOM, sorted</h2>
+  <ul>
+    <li>Scan in the pipeline (block), in the registry and cluster (continuous).</li>
+    <li><code>--severity HIGH,CRITICAL --ignore-unfixed --exit-code 1</code>; exceptions with reasons and expiry.</li>
+    <li>Sign only after the scan passes; deploy only signed digests.</li>
+    <li>SBOM (SPDX/CycloneDX) attached to the image as an OCI referrer.</li>
+  </ul>
+</section>
+</article>
+</body>
+</html>

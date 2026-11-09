@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>16.5 · Policy-as-code</title>
+<link rel="stylesheet" href="../content.css">
+</head>
+<body>
+<article class="lesson" data-id="16.5" data-chapter="16">
+<nav class="crumbs"><a href="../index.html">Course</a> / <a href="index.html">Chapter 16</a> / 16.5</nav>
+<header>
+  <p class="kicker">Chapter 16 · Lesson 16.5 · ~12 steps · ~15 min</p>
+  <h1>Policy-as-code</h1>
+  <p class="meta">You'll be able to enforce cluster-wide rules (allowed registries, no <code>:latest</code>, limits required, no privileged containers) with Azure Policy or Kyverno, roll them out safely, and run the same checks in CI.</p>
+</header>
+
+<section class="step" id="s1">
+  <h2>1. Admission control</h2>
+  <div class="body">
+    <p>Every create or update passes through <b>admission controllers</b> before it's stored. <b>Policy engines</b> plug in as admission webhooks, and can:</p>
+    <ul>
+      <li><b>validate</b>: allow or deny, with a reason;</li>
+      <li><b>mutate</b>: add defaults, such as labels or a securityContext.</li>
+    </ul>
+    <p>Writing these rules as files in Git is <b>policy-as-code</b>.</p>
+  </div>
+  <aside class="coming" data-set="A">
+    <dl>
+      <dt>Windows/IIS admin</dt><dd>Like Group Policy plus AppLocker for the cluster: rules applied centrally, whatever people try to deploy.</dd>
+      <dt>Linux admin</dt><dd>Like an approval hook on every config change, with rules in code.</dd>
+      <dt>Developer (Compose)</dt><dd>Your manifest may be rejected with a clear message; the same rules run in CI, so you find out earlier.</dd>
+      <dt>Other clouds</dt><dd>Gatekeeper and Kyverno run on any cluster; Azure Policy is the Azure-managed way to distribute Gatekeeper rules.</dd>
+    </dl>
+  </aside>
+</section>
+
+<section class="step" id="s2">
+  <h2>2. Azure Policy for AKS</h2>
+  <div class="body">
+    <p>The <b>Azure Policy add-on</b> installs Gatekeeper (OPA) in the cluster and syncs policy assignments from Azure. Use built-in policies and initiatives, such as:</p>
+    <ul>
+      <li>"Kubernetes cluster containers should only use allowed images";</li>
+      <li>"… should not run privileged containers";</li>
+      <li>"… CPU and memory resource limits should not exceed …";</li>
+      <li>the Pod Security baseline and restricted initiatives.</li>
+    </ul>
+    <p>Each assignment has an <b>effect</b>: <code>audit</code> or <code>deny</code>. Compliance shows in Azure Policy, next to every other Azure resource.</p>
+  </div>
+  <pre class="code" data-file="terminal">az aks enable-addons -g rg-orders-prod -n aks-orders-prod -a azure-policy
+az policy assignment create --name aks-allowed-images --scope "$AKS_ID" \
+  --policy "&lt;built-in: allowed images&gt;" \
+  --params '{"allowedContainerImagesRegex":{"value":"^contosoacr\\.azurecr\\.io/.+$"},"effect":{"value":"deny"}}'</pre>
+</section>
+
+<section class="step" id="s3">
+  <h2>3. Kyverno</h2>
+  <div class="body">
+    <p><b>Kyverno</b> is a Kubernetes-native policy engine. Policies are plain YAML resources, and it can validate, mutate, generate resources and verify image signatures.</p>
+    <p>Teams often find it easier to read and write than Rego. You install and run it yourself (Helm); it isn't an AKS-managed add-on.</p>
+  </div>
+</section>
+
+<section class="step" id="s4">
+  <h2>4. Write an allowed-registries rule</h2>
+  <div class="check" data-type="custom">
+    <p class="q">Write a Kyverno <code>ClusterPolicy</code> that denies any Pod whose containers (and init containers) use images outside <code>contosoacr.azurecr.io/</code>.</p>
+    <div class="widget" data-widget="policy-rules">A YAML editor for the policy, plus six sample pods it's evaluated against:
+      <ul>
+        <li>orders-api from contosoacr: admit</li>
+        <li>nginx from docker.io: deny</li>
+        <li>an init container from quay.io: deny</li>
+        <li><code>contosoacr.azurecr.io.evil.com/x</code>: deny</li>
+        <li>a pod in kube-system: excluded</li>
+        <li>an ephemeral debug container from contosoacr: admit</li>
+      </ul>
+      Success when every expectation matches.</div>
+    <details class="solution"><summary>Solution</summary>
+<pre>apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: allowed-registries
+spec:
+  validationFailureAction: Enforce
+  background: true
+  rules:
+    - name: only-contosoacr
+      match:
+        any:
+          - resources:
+              kinds: [Pod]
+      exclude:
+        any:
+          - resources:
+              namespaces: [kube-system]
+      validate:
+        message: "Images must come from contosoacr.azurecr.io/"
+        pattern:
+          spec:
+            =(initContainers):
+              - image: "contosoacr.azurecr.io/*"
+            =(ephemeralContainers):
+              - image: "contosoacr.azurecr.io/*"
+            containers:
+              - image: "contosoacr.azurecr.io/*"</pre></details>
+    <div class="explain">Note the trailing <code>/</code>. A prefix without it would allow <code>contosoacr.azurecr.io.evil.com</code>. <code>=(field)</code> means "if present".</div>
+  </div>
+</section>
+
+<section class="step" id="s5">
+  <h2>5. Contoso's baseline policy set</h2>
+  <table>
+    <tr><th>Rule</th><th>Why</th></tr>
+    <tr><td>Images only from <code>contosoacr.azurecr.io/</code></td><td>Everything is mirrored, scanned and signed there</td></tr>
+    <tr><td>No <code>:latest</code> or untagged images</td><td>Deploys are reproducible (lesson 1.1)</td></tr>
+    <tr><td>CPU and memory requests, plus a memory limit</td><td>Scheduling and noisy-neighbour safety (lesson 3.1)</td></tr>
+    <tr><td>No privileged containers, host namespaces or hostPath</td><td>Node protection (lesson 15.3)</td></tr>
+    <tr><td>Readiness and liveness probes required</td><td>Safe rollouts (lesson 3.3)</td></tr>
+    <tr><td>Images must be signed by the release key (prod)</td><td>Provenance (lesson 16.4)</td></tr>
+  </table>
+</section>
+
+<section class="step" id="s6">
+  <h2>6. Audit, then deny</h2>
+  <div class="check" data-type="mcq">
+    <p class="q">Contoso is adding the "probes required" rule to a cluster with 40 existing apps. What's the safest rollout?</p>
+    <ol class="options">
+      <li>Deny immediately everywhere <span class="why">The next deploy of any non-compliant app fails, often during an incident fix.</span></li>
+      <li class="correct">Audit in all environments, publish the violation report, fix the apps, then deny in dev, then in prod</li>
+      <li>Never enforce, only audit <span class="why">Audit alone doesn't stop new violations.</span></li>
+      <li>Enforce only in prod <span class="why">Developers then discover rules for the first time in prod.</span></li>
+    </ol>
+    <div class="explain">Same pattern as Pod Security (warn/audit → enforce). Communicate dates, and give teams the CI check (step 8) first.</div>
+  </div>
+</section>
+
+<section class="step" id="s7">
+  <h2>7. Mutation: fix it for them</h2>
+  <div class="body"><p>Some rules are better as <b>mutations</b>. Kyverno can add <code>seccompProfile: RuntimeDefault</code> or a default label if missing. Use mutation for safe defaults, and validation for things the team must decide (resources, image source).</p></div>
+</section>
+
+<section class="step" id="s8">
+  <h2>8. Shift left: the same rules in CI</h2>
+  <div class="body"><p>Run the policies against rendered manifests in the PR pipeline. Developers see the violation in their PR, not at deploy time.</p></div>
+  <pre class="code" data-file="(PR pipeline step)">kubectl kustomize k8s/overlays/prod &gt; rendered.yaml
+kyverno apply k8s/policies/cluster/ --resource rendered.yaml --policy-report
+# or for Gatekeeper constraints: gator test, or conftest with Rego</pre>
+</section>
+
+<section class="step" id="s9">
+  <h2>9. Policy exceptions</h2>
+  <div class="body"><p>Sometimes a workload legitimately needs an exception, such as a monitoring agent needing hostPath. Use the engine's exception mechanism (Kyverno <code>PolicyException</code>, or exclusions in the Azure Policy assignment), scoped to that workload, with an owner and a review date. Never weaken the rule itself.</p></div>
+</section>
+
+<section class="step" id="s10">
+  <h2>10. Policy for Azure resources too</h2>
+  <div class="body"><p>Azure Policy also governs the Azure side:</p>
+    <ul>
+      <li>clusters must have local accounts disabled;</li>
+      <li>registries must not allow public access;</li>
+      <li>Defender must be on.</li>
+    </ul>
+    <p>Assigned at the management group, these rules catch IaC mistakes in every subscription.</p></div>
+</section>
+
+<section class="step" id="s11">
+  <h2>11. See it decide</h2>
+  <div class="widget" data-widget="policy-rules">The policy-rules widget with Contoso's baseline set applied to a bundle of six manifests. Each shows admit or deny, with the exact messages; editing a manifest re-evaluates live.</div>
+</section>
+
+<section class="step summary" id="s12">
+  <h2>Policy-as-code, sorted</h2>
+  <ul>
+    <li>Admission policies validate and mutate every object.</li>
+    <li>Azure Policy add-on (Gatekeeper, managed via Azure) or Kyverno (YAML policies, signature checks).</li>
+    <li>Baseline: allowed registries, no latest, resources, no privileged, probes, signed images.</li>
+    <li>Audit → fix → deny; the same rules in CI; scoped, owned exceptions.</li>
+  </ul>
+</section>
+</article>
+</body>
+</html>

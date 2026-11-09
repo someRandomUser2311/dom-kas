@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>13.6 · Modules &amp; registries</title>
+<link rel="stylesheet" href="../content.css">
+</head>
+<body>
+<article class="lesson" data-id="13.6" data-chapter="13">
+<nav class="crumbs"><a href="../index.html">Course</a> / <a href="index.html">Chapter 13</a> / 13.6</nav>
+<header>
+  <p class="kicker">Chapter 13 · Lesson 13.6 · ~11 steps · ~14 min</p>
+  <h1>Modules &amp; registries</h1>
+  <p class="meta">You'll be able to split Bicep into modules, deploy across resource groups and at subscription scope, use Azure Verified Modules, and publish your own modules to ACR.</p>
+</header>
+
+<section class="step" id="s1">
+  <h2>1. A module is just a Bicep file</h2>
+  <div class="body">
+    <p>Any <code>.bicep</code> file can be used as a module. Its <code>param</code>s are the inputs and its <code>output</code>s the results.</p>
+    <p>The caller uses a <code>module</code> declaration, and each module becomes a <b>nested deployment</b> in the history.</p>
+  </div>
+  <pre class="code" data-file="main.bicep">module network './modules/network.bicep' = {
+  name: 'network-${environment}'
+  params: {
+    nameSuffix: nameSuffix
+    location: location
+  }
+}
+
+module cluster './modules/aks.bicep' = {
+  name: 'aks-${environment}'
+  params: {
+    nameSuffix: nameSuffix
+    subnetId: network.outputs.aksSubnetId
+    isProd: isProd
+  }
+}</pre>
+  <aside class="coming" data-set="TF">
+    <dl>
+      <dt>Terraform</dt><dd>Same idea as <code>module "aks" { source = "./modules/aks" }</code>. <code>network.outputs.aksSubnetId</code> ↔ <code>module.network.aks_subnet_id</code>, and it creates the dependency.</dd>
+    </dl>
+  </aside>
+</section>
+
+<section class="step" id="s2">
+  <h2>2. Scope: another resource group</h2>
+  <div class="body"><p>A module can deploy into a <b>different</b> resource group with <code>scope:</code>. That's how the AcrPull assignment on the shared registry works (lesson 13.4).</p></div>
+  <pre class="code" data-file="main.bicep">module acrPull './modules/acr-pull.bicep' = {
+  name: 'acrpull-${environment}'
+  scope: resourceGroup('rg-orders-shared')
+  params: {
+    acrName: 'contosoacr'
+    principalId: cluster.outputs.kubeletObjectId
+  }
+}</pre>
+</section>
+
+<section class="step" id="s3">
+  <h2>3. <code>targetScope</code></h2>
+  <div class="body">
+    <p>By default a file deploys to a resource group. To create the resource group <b>itself</b>, the file must deploy at <b>subscription</b> scope.</p>
+    <p>Other scopes are <code>managementGroup</code> and <code>tenant</code>.</p>
+  </div>
+  <div class="check" data-type="fill">
+    <p class="q">Make this file deploy at subscription level so it can create the resource group.</p>
+    <pre class="code" data-file="main.bicep"><span class="blank">?</span>
+
+resource rg 'Microsoft.Resources/resourceGroups@2024-03-01' = {
+  name: 'rg-orders-${environment}'
+  location: location
+}
+
+module platform './platform.bicep' = {
+  name: 'platform-${environment}'
+  scope: rg
+  params: { environment: environment }
+}</pre>
+    <ul class="chips">
+      <li class="correct"><code>targetScope = 'subscription'</code></li>
+      <li><code>scope = subscription()</code> <span class="why">That's how you <i>reference</i> a scope; the file's own scope is set with <code>targetScope</code>.</span></li>
+      <li><code>@scope('subscription')</code> <span class="why">Not a decorator.</span></li>
+      <li><code>deploymentScope: 'subscription'</code> <span class="why">Not Bicep.</span></li>
+    </ul>
+    <div class="explain">Deploy it with <code>az deployment sub create -l westeurope -f main.bicep -p …</code>. Then the module deploys into the new group.</div>
+  </div>
+</section>
+
+<section class="step" id="s4">
+  <h2>4. Azure Verified Modules</h2>
+  <div class="body">
+    <p><b>Azure Verified Modules (AVM)</b> are Microsoft-maintained modules in the public Bicep registry, referenced as <code>br/public:avm/…:&lt;version&gt;</code>.</p>
+    <p>The AKS one wraps every <code>managedClusters</code> option with tested defaults.</p>
+  </div>
+  <pre class="code" data-file="main.bicep">module aks 'br/public:avm/res/container-service/managed-cluster:0.10.0' = {
+  name: 'aks-${environment}'
+  params: {
+    name: 'aks-${nameSuffix}'
+    primaryAgentPoolProfiles: [ /* … */ ]
+    disableLocalAccounts: true
+    enableOidcIssuerProfile: true
+    enableWorkloadIdentity: true
+    // …
+  }
+}</pre>
+  <aside class="more"><p>The version shown is illustrative. Check the AVM index for the current version and parameter names, and pin exactly that.</p></aside>
+</section>
+
+<section class="step" id="s5">
+  <h2>5. Pin the version</h2>
+  <div class="check" data-type="tapline" data-match="module aks 'br/public:avm/res/container-service/managed-cluster:0.10.0' = {">
+    <p class="q">In step 4's code, tap the line that fixes which module version is used.</p>
+    <div class="explain">The <code>:0.10.0</code> tag in the module reference. Bicep has no "latest". An upgrade is a deliberate edit, reviewed with what-if.</div>
+  </div>
+  <div class="check" data-type="mcq">
+    <p class="q">Why pin AVM module versions and upgrade them deliberately?</p>
+    <ol class="options">
+      <li>Unpinned references are slower <span class="why">Speed isn't the issue.</span></li>
+      <li class="correct">A new module version can change defaults or parameters, and with them many resource properties. Review it with what-if first</li>
+      <li>AVM is unsupported <span class="why">It's supported and maintained.</span></li>
+      <li>Pinning is required by ACR <span class="why">Unrelated.</span></li>
+    </ol>
+    <div class="explain">The same reason you pin Terraform providers and modules (lesson 12.6).</div>
+  </div>
+</section>
+
+<section class="step" id="s6">
+  <h2>6. Your own module registry in ACR</h2>
+  <div class="body"><p>Publish Contoso's modules to ACR, the same registry as images and Helm charts. Every team can then use <code>br:contosoacr.azurecr.io/bicep/modules/aks:1.2.0</code>.</p></div>
+  <pre class="code" data-file="terminal">az bicep publish --file modules/aks.bicep \
+  --target br:contosoacr.azurecr.io/bicep/modules/aks:1.2.0 \
+  --documentation-uri https://dev.azure.com/contoso/platform/_wiki/aks-module</pre>
+</section>
+
+<section class="step" id="s7">
+  <h2>7. Aliases in bicepconfig.json</h2>
+  <pre class="code" data-file="bicepconfig.json">{
+  "moduleAliases": {
+    "br": {
+      "contoso": {
+        "registry": "contosoacr.azurecr.io",
+        "modulePath": "bicep/modules"
+      }
+    }
+  },
+  "analyzers": {
+    "core": {
+      "rules": {
+        "no-hardcoded-env-urls": { "level": "error" },
+        "secure-parameter-default": { "level": "error" },
+        "use-recent-api-versions": { "level": "warning" }
+      }
+    }
+  }
+}</pre>
+  <pre class="code" data-file="main.bicep">module cluster 'br/contoso:aks:1.2.0' = { … }</pre>
+</section>
+
+<section class="step" id="s8">
+  <h2>8. Template specs</h2>
+  <div class="body"><p><b>Template specs</b> are another way to share templates. They're stored as Azure resources, versioned, and controlled with RBAC. Bicep registries in ACR are generally preferred for module sharing, because they're OCI artifacts like everything else.</p></div>
+</section>
+
+<section class="step" id="s9">
+  <h2>9. Nested deployment names</h2>
+  <div class="body"><p>Each module call's <code>name</code> becomes a deployment in history and must be unique within the scope for concurrent runs. Include the environment (and, for loops, an index): <code>'aks-${environment}'</code>. Names over 64 characters fail.</p></div>
+</section>
+
+<section class="step" id="s10">
+  <h2>10. Module outputs and secrets</h2>
+  <div class="body"><p>Module outputs are stored in deployment history, so never output secrets from a module. To pass a secret between modules, use a <code>@secure()</code> output (supported in recent Bicep), or have the consumer read it from Key Vault itself.</p></div>
+</section>
+
+<section class="step summary" id="s11">
+  <h2>Modules, sorted</h2>
+  <ul>
+    <li>Any Bicep file is a module; <code>module x './file.bicep' = { name, params }</code>; read <code>x.outputs</code>.</li>
+    <li><code>scope: resourceGroup('…')</code> for other groups; <code>targetScope = 'subscription'</code> to create groups.</li>
+    <li>AVM from <code>br/public:avm/…:&lt;pinned version&gt;</code>.</li>
+    <li>Publish your own to ACR with <code>az bicep publish</code>; aliases and linter rules in <code>bicepconfig.json</code>.</li>
+  </ul>
+</section>
+</article>
+</body>
+</html>

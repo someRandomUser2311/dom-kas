@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chapter 0 · Placement quiz</title>
+<link rel="stylesheet" href="../content.css">
+</head>
+<body>
+<main>
+<nav class="crumbs"><a href="../index.html">Course</a> / <a href="index.html">Chapter 0</a> / Placement quiz</nav>
+<p class="kicker">Chapter 0 · Practice</p>
+<h1>Placement quiz</h1>
+<p>About 15 questions, about 8 minutes. Not scored toward the course. Each section is scored on its own:</p>
+<ul>
+  <li><b>All correct:</b> "✓ You're set".</li>
+  <li><b>Otherwise:</b> "Take refresher 0.x", linking to the lesson.</li>
+</ul>
+<p>The Kubernetes section decides whether to offer the <b>test-out path</b> for Chapters 1–3. The quiz can be retaken; the latest result is stored.</p>
+
+<h2>Results rules</h2>
+<table>
+  <tr><th>Section</th><th>Questions</th><th>Below full marks →</th></tr>
+  <tr><td>YAML</td><td>3</td><td><a href="0.1-yaml.html">0.1</a></td></tr>
+  <tr><td>Shell</td><td>2</td><td><a href="0.2-shell.html">0.2</a></td></tr>
+  <tr><td>Networking</td><td>3</td><td><a href="0.3-networking.html">0.3</a></td></tr>
+  <tr><td>Azure</td><td>3</td><td><a href="0.4-azure.html">0.4</a></td></tr>
+  <tr><td>Git</td><td>1</td><td><a href="0.5-git.html">0.5</a></td></tr>
+  <tr><td>Kubernetes basics</td><td>3</td><td>3/3 offers test-out: take the Chapter 1–3 quizzes directly. Passing one (≥ 80%) marks that chapter <b>Completed</b>. Reaching <b>Passed</b> still needs that chapter's lab and predict set.</td></tr>
+</table>
+<p>0.6 (local lab) is always offered as optional, whatever the score.</p>
+
+<h2>Questions</h2>
+
+<h3>YAML</h3>
+<div class="check" data-type="mcq" data-section="yaml">
+  <p class="q">Which line is <b>not</b> valid YAML indentation?</p>
+  <pre class="code">metadata:
+  name: web
+	labels: {}</pre>
+  <ol class="options">
+    <li>Line 1</li>
+    <li>Line 2</li>
+    <li class="correct">Line 3</li>
+  </ol>
+  <div class="explain">Line 3 is indented with a tab. YAML never allows tabs for indentation.</div>
+</div>
+<div class="check" data-type="mcq" data-section="yaml">
+  <p class="q">In this file, how many containers are defined?</p>
+  <pre class="code">containers:
+  - name: api
+    image: orders-api:1.0
+  - name: proxy
+    image: envoy:1.31
+    ports:
+      - containerPort: 8080</pre>
+  <ol class="options"><li>1</li><li class="correct">2</li><li>3</li><li>4</li></ol>
+  <div class="explain">Two items start with <code>- name:</code> at the same indentation. The nested <code>- containerPort</code> belongs to the second container's <code>ports</code> list.</div>
+</div>
+<div class="check" data-type="mcq" data-section="yaml">
+  <p class="q">An environment variable must hold the text <code>8080</code>. Which line is correct?</p>
+  <ol class="options">
+    <li><code>value: 8080</code> <span class="why">Unquoted, this is a number; Kubernetes rejects non-string env values.</span></li>
+    <li class="correct"><code>value: "8080"</code></li>
+    <li><code>value: [8080]</code> <span class="why">That's a list.</span></li>
+  </ol>
+  <div class="explain">Quote values that must stay strings.</div>
+</div>
+
+<h3>Shell</h3>
+<div class="check" data-type="mcq" data-section="shell">
+  <p class="q">What does <code>set -e</code> do in a Bash script?</p>
+  <ol class="options">
+    <li>Prints each command before running it <span class="why">That's <code>set -x</code>.</span></li>
+    <li class="correct">Stops the script when a command fails</li>
+    <li>Exports every variable <span class="why">That's <code>set -a</code>.</span></li>
+  </ol>
+  <div class="explain">Pipelines should always use <code>set -euo pipefail</code> so failures stop the step.</div>
+</div>
+<div class="check" data-type="mcq" data-section="shell">
+  <p class="q">After <code>ID=$(az group show -n rg-orders-dev --query id -o tsv)</code>, what does <code>$ID</code> contain?</p>
+  <ol class="options">
+    <li>The full JSON of the resource group</li>
+    <li class="correct">Just the resource group's ID, as plain text</li>
+    <li>The text <code>az group show …</code></li>
+  </ol>
+  <div class="explain"><code>$(…)</code> captures output; <code>--query id -o tsv</code> makes that output one bare value.</div>
+</div>
+
+<h3>Networking</h3>
+<div class="check" data-type="mcq" data-section="network">
+  <p class="q">How many addresses are in <code>10.0.0.0/22</code>?</p>
+  <ol class="options"><li>256</li><li>512</li><li class="correct">1,024</li><li>4,096</li></ol>
+  <div class="explain">2<sup>(32−22)</sup> = 2<sup>10</sup> = 1,024.</div>
+</div>
+<div class="check" data-type="mcq" data-section="network">
+  <p class="q">Do <code>10.1.0.0/16</code> and <code>10.1.4.0/24</code> overlap?</p>
+  <ol class="options"><li class="correct">Yes, the /24 is inside the /16</li><li>No, they have different prefixes</li></ol>
+  <div class="explain">The /16 covers 10.1.0.0–10.1.255.255, which includes 10.1.4.0–10.1.4.255.</div>
+</div>
+<div class="check" data-type="mcq" data-section="network">
+  <p class="q">A private DNS zone <code>privatelink.azurecr.io</code> is linked to your VNet. Who can resolve names in it?</p>
+  <ol class="options">
+    <li>Anyone on the internet</li>
+    <li class="correct">Only clients using Azure DNS from VNets linked to the zone</li>
+    <li>Only the registry itself</li>
+  </ol>
+  <div class="explain">Private zones resolve only inside linked VNets, or through a DNS forwarder that points to them.</div>
+</div>
+
+<h3>Azure</h3>
+<div class="check" data-type="order" data-section="azure">
+  <p class="q">Order these from the broadest scope to the narrowest.</p>
+  <ol class="options"><li>Management group</li><li>Subscription</li><li>Resource group</li><li>Resource</li></ol>
+  <div class="explain">Access assigned at a scope is inherited by everything below it.</div>
+</div>
+<div class="check" data-type="mcq" data-section="azure">
+  <p class="q">Which role can create resources in a resource group but <b>can't</b> grant access to others?</p>
+  <ol class="options"><li>Owner</li><li class="correct">Contributor</li><li>Reader</li><li>User Access Administrator</li></ol>
+  <div class="explain">Contributor has full resource management but no <code>Microsoft.Authorization/*/write</code>.</div>
+</div>
+<div class="check" data-type="mcq" data-section="azure">
+  <p class="q">Which identity type needs <b>no secret</b> and is deleted along with the resource it belongs to?</p>
+  <ol class="options"><li>Service principal with a client secret</li><li class="correct">System-assigned managed identity</li><li>User-assigned managed identity</li><li>A user account</li></ol>
+  <div class="explain">A user-assigned managed identity also needs no secret, but it lives on independently of any resource.</div>
+</div>
+
+<h3>Git</h3>
+<div class="check" data-type="multi" data-section="git">
+  <p class="q">Which should be in <code>.gitignore</code> for a Terraform repo?</p>
+  <ol class="options">
+    <li class="correct"><code>.terraform/</code></li>
+    <li class="correct"><code>*.tfstate</code></li>
+    <li><code>.terraform.lock.hcl</code> <span class="why">Commit the lock file.</span></li>
+    <li><code>main.tf</code></li>
+  </ol>
+  <div class="explain">Ignore caches and state; commit code and the lock file.</div>
+</div>
+
+<h3>Kubernetes basics</h3>
+<div class="check" data-type="mcq" data-section="k8s">
+  <p class="q">Which object keeps a set number of identical pods running and replaces them when they fail?</p>
+  <ol class="options"><li>Service</li><li class="correct">Deployment (through a ReplicaSet)</li><li>ConfigMap</li><li>Namespace</li></ol>
+  <div class="explain">A Deployment manages ReplicaSets, which keep the desired number of pods running.</div>
+</div>
+<div class="check" data-type="mcq" data-section="k8s">
+  <p class="q">How does a Service decide which pods receive its traffic?</p>
+  <ol class="options"><li>By pod name</li><li class="correct">By a label selector</li><li>By the node the pods run on</li><li>By the image tag</li></ol>
+  <div class="explain">The Service's <code>selector</code> must match the pods' labels.</div>
+</div>
+<div class="check" data-type="mcq" data-section="k8s">
+  <p class="q">A pod shows <code>CrashLoopBackOff</code>. What is the first command you'd run?</p>
+  <ol class="options">
+    <li><code>kubectl delete node</code></li>
+    <li class="correct"><code>kubectl logs &lt;pod&gt; --previous</code> (and <code>kubectl describe pod</code>)</li>
+    <li><code>kubectl scale --replicas=0</code></li>
+  </ol>
+  <div class="explain">The container keeps crashing; the previous container's logs and the pod's events usually say why.</div>
+</div>
+
+<h2>Persona questions (not scored)</h2>
+<div class="check" data-type="mcq" data-sets="persona.A">
+  <p class="q">What's your background?</p>
+  <ol class="options"><li>Windows/IIS admin</li><li>Linux admin</li><li>Developer (Docker Compose)</li><li>Other clouds (EKS/GKE)</li><li>None</li></ol>
+  <div class="explain">Sets the "Coming from: Background" tabs. "None" hides them. Can be changed on any step.</div>
+</div>
+<div class="check" data-type="mcq" data-sets="persona.B">
+  <p class="q">Which CI tool have you used most?</p>
+  <ol class="options"><li>GitHub Actions</li><li>GitLab CI</li><li>Jenkins</li><li>Classic Azure Pipelines</li><li>None</li></ol>
+  <div class="explain">Sets the "Coming from: CI/CD tool" tabs. If the quiz is skipped, the defaults are Developer and GitHub Actions.</div>
+</div>
+</main>
+</body>
+</html>

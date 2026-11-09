@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>1.1 · Containers in 10 minutes</title>
+<link rel="stylesheet" href="../content.css">
+</head>
+<body>
+<article class="lesson" data-id="1.1" data-chapter="1">
+<nav class="crumbs"><a href="../index.html">Course</a> / <a href="index.html">Chapter 1</a> / 1.1</nav>
+<header>
+  <p class="kicker">Chapter 1 · Lesson 1.1 · ~10 steps · ~12 min</p>
+  <h1>Containers in 10 minutes</h1>
+  <p class="meta">You'll be able to explain images, containers, layers, registries, tags and digests, and read a multi-stage Dockerfile for <code>orders-api</code>.</p>
+</header>
+
+<section class="step" id="s1">
+  <h2>1. "It works on my machine"</h2>
+  <div class="body">
+    <p>Contoso's <code>orders-api</code> is a small web API written in Go. It listens on port 8080 and stores orders in a database.</p>
+    <p>To run it, a server needs the right runtime, the right libraries and the right config. Get one wrong and it fails, typically only in production.</p>
+    <p>A <b>container image</b> packages the app <i>with</i> everything it needs to run: its files, libraries and default settings. If it runs from the image on your laptop, it runs from the same image on any machine with a container runtime.</p>
+  </div>
+  <aside class="coming" data-set="A">
+    <dl>
+      <dt>Windows/IIS admin</dt><dd>Instead of installing IIS, the .NET runtime and the app on each server and hoping they match, you ship one sealed package. <b>Careful:</b> almost all Kubernetes workloads are <b>Linux</b> containers. Windows containers exist (AKS supports Windows node pools) but are a special case.</dd>
+      <dt>Linux admin</dt><dd>A container is an ordinary Linux process isolated with namespaces and limited with cgroups. It is not a VM: there's no separate kernel.</dd>
+      <dt>Developer (Compose)</dt><dd>You know this part already. Skim it for the vocabulary (layers, digests) the rest of the course uses.</dd>
+      <dt>Other clouds</dt><dd>Same OCI images you'd push to ECR or Artifact Registry. On Azure the registry is ACR (Chapter 6).</dd>
+    </dl>
+  </aside>
+</section>
+
+<section class="step" id="s2">
+  <h2>2. Image vs container</h2>
+  <div class="body">
+    <p>An <b>image</b> is a read-only template: a filesystem plus metadata (which command to run, which port, which user). It's built once.</p>
+    <p>A <b>container</b> is a running instance of an image, with its own thin writable layer on top. You can run many containers from one image.</p>
+    <p>When a container is removed, its writable layer goes with it. Anything the app wrote inside the container is <b>gone</b>. That's why data lives in databases and volumes (Chapter 3), never in the container.</p>
+  </div>
+  <pre class="code" data-file="terminal">docker build -t orders-api:1.0.0 .     # image: built once
+docker run -d -p 8080:8080 orders-api:1.0.0   # container #1
+docker run -d -p 8081:8080 orders-api:1.0.0   # container #2, same image</pre>
+</section>
+
+<section class="step" id="s3">
+  <h2>3. A Dockerfile, line by line</h2>
+  <div class="body">
+    <p>A <b>Dockerfile</b> is the recipe for an image. Each instruction does one thing:</p>
+    <ul>
+      <li><code>FROM</code>: the base image to start from.</li>
+      <li><code>WORKDIR</code>: the directory later instructions run in.</li>
+      <li><code>COPY</code>: files from your project into the image.</li>
+      <li><code>RUN</code>: a command executed <i>at build time</i>.</li>
+      <li><code>EXPOSE</code>: documents the port the app listens on.</li>
+      <li><code>USER</code>: which user the app runs as.</li>
+      <li><code>CMD</code> or <code>ENTRYPOINT</code>: what runs when the container starts.</li>
+    </ul>
+  </div>
+  <pre class="code" data-file="Dockerfile">FROM golang:1.23
+WORKDIR /src
+COPY . .
+RUN go build -o /orders-api ./cmd/orders-api
+EXPOSE 8080
+CMD ["/orders-api"]</pre>
+  <div class="check" data-type="fill">
+    <p class="q">Which instruction picks the starting image?</p>
+    <pre class="code" data-file="Dockerfile"><span class="blank">?</span> golang:1.23
+WORKDIR /src</pre>
+    <ul class="chips">
+      <li class="correct"><code>FROM</code></li>
+      <li><code>RUN</code> <span class="why"><code>RUN</code> executes a command inside the image being built.</span></li>
+      <li><code>COPY</code> <span class="why"><code>COPY</code> adds files; it needs an image to copy into.</span></li>
+      <li><code>CMD</code> <span class="why"><code>CMD</code> is the start command, used at run time.</span></li>
+    </ul>
+    <div class="explain">Every Dockerfile starts with <code>FROM</code> (a build may have several, one per stage).</div>
+  </div>
+</section>
+
+<section class="step" id="s4">
+  <h2>4. Layers and the build cache</h2>
+  <div class="body">
+    <p>Each instruction that changes files (<code>COPY</code>, <code>RUN</code>, <code>ADD</code>) creates a <b>layer</b>. Layers are cached: if an instruction and everything before it are unchanged, the build reuses the cached layer instead of re-running it.</p>
+    <p>Once one layer changes, <b>every layer after it is rebuilt</b>.</p>
+    <p>So order matters. Copy the files that change rarely, such as the dependency list (<code>go.mod</code>, <code>go.sum</code>), and download dependencies <i>first</i>. Copy the source code <i>last</i>.</p>
+  </div>
+  <div class="widget" data-widget="layer-stack">The Dockerfile drawn as a stack of layers, each with a "cached" or "rebuilt" badge. The learner can "edit a source file" or "add a dependency" and watch which layers turn orange (rebuilt), with an estimated build time. A toggle switches between the naïve order (<code>COPY . .</code> first) and the cache-friendly order.</div>
+  <pre class="code" data-file="Dockerfile">FROM golang:1.23
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download          # cached until go.mod/go.sum change
+COPY . .                     # source changes only rebuild from here
+RUN go build -o /orders-api ./cmd/orders-api</pre>
+</section>
+
+<section class="step" id="s5">
+  <h2>5. Find the cache breaker</h2>
+  <div class="check" data-type="tapline" data-match="COPY . .">
+    <p class="q">Every code change makes this build download all dependencies again. Tap the line responsible.</p>
+    <pre class="code" data-file="Dockerfile">FROM golang:1.23
+WORKDIR /src
+COPY . .
+RUN go mod download
+RUN go build -o /orders-api ./cmd/orders-api</pre>
+    <div class="explain"><code>COPY . .</code> copies <i>all</i> source before <code>go mod download</code>. Any file change invalidates that layer, and so every layer after it, including the dependency download. Copy <code>go.mod</code>/<code>go.sum</code> first.</div>
+  </div>
+</section>
+
+<section class="step" id="s6">
+  <h2>6. Multi-stage builds: small, safe images</h2>
+  <div class="body">
+    <p>The <code>golang</code> image has a compiler, a shell and package tools, and is hundreds of megabytes. None of that is needed to <i>run</i> the binary, and every extra tool is something an attacker could use.</p>
+    <p>A <b>multi-stage build</b> compiles in one stage and copies only the result into a minimal final stage. Here the final stage is a <b>distroless</b> image: no shell, no package manager, and it runs as a non-root user.</p>
+  </div>
+  <pre class="code" data-file="Dockerfile"># build stage
+FROM golang:1.23 AS build
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN CGO_ENABLED=0 go build -o /out/orders-api ./cmd/orders-api
+
+# runtime stage
+FROM gcr.io/distroless/static-debian12:nonroot
+COPY --from=build /out/orders-api /orders-api
+EXPOSE 8080
+USER nonroot:nonroot
+ENTRYPOINT ["/orders-api"]</pre>
+  <aside class="more"><p><code>CGO_ENABLED=0</code> produces a statically linked binary that needs no C libraries, so it runs on the <code>static</code> distroless image. Chapter 16 adds image scanning and signing on top of this.</p></aside>
+</section>
+
+<section class="step" id="s7">
+  <h2>7. Registries, repositories and tags</h2>
+  <div class="body">
+    <p>Images are stored in a <b>registry</b>. An image reference has up to four parts:</p>
+    <pre>contosoacr.azurecr.io / orders-api : 1.4.2
+      registry             repository    tag</pre>
+    <p>With no registry, Docker assumes Docker Hub. With no tag, it assumes <code>latest</code>.</p>
+    <p>A <b>tag</b> is just a label that points to an image, and it can be moved. Pushing a new image as <code>1.4.2</code> silently replaces what <code>1.4.2</code> meant.</p>
+    <p><code>latest</code> is not special: it's simply the default tag name. Nothing guarantees it's the newest image.</p>
+  </div>
+  <pre class="code" data-file="terminal">docker tag orders-api:1.0.0 contosoacr.azurecr.io/orders-api:1.0.0
+docker push contosoacr.azurecr.io/orders-api:1.0.0</pre>
+</section>
+
+<section class="step" id="s8">
+  <h2>8. Digests: the name that can't change</h2>
+  <div class="body">
+    <p>Every image also has a <b>digest</b>: a SHA-256 hash of its content, such as <code>sha256:3f5a…</code>. Change one byte and the digest changes.</p>
+    <p>A reference like <code>orders-api@sha256:3f5a…</code> always means exactly the same image, byte for byte. That's why production manifests and base images are often pinned by digest.</p>
+  </div>
+  <pre class="code" data-file="deployment.yaml">image: contosoacr.azurecr.io/orders-api:1.4.2@sha256:3f5a9c0d…   # tag for humans, digest for the runtime</pre>
+  <div class="check" data-type="mcq">
+    <p class="q">Why is <code>image: orders-api@sha256:…</code> safer in production than <code>image: orders-api:latest</code>?</p>
+    <ol class="options">
+      <li>Digests download faster <span class="why">Download speed is the same; the bytes are identical.</span></li>
+      <li class="correct">The digest always refers to the same image content; <code>latest</code> can be repointed at any time</li>
+      <li><code>latest</code> is always an old image <span class="why"><code>latest</code> is whatever was last pushed with that tag, which could be anything.</span></li>
+      <li>Kubernetes refuses <code>latest</code> <span class="why">It accepts it, but it also changes the default pull policy to <code>Always</code>.</span></li>
+    </ol>
+    <div class="explain">With a digest, every node and every restart runs exactly the image you tested. With <code>latest</code>, two pods in the same Deployment can end up running different code.</div>
+  </div>
+</section>
+
+<section class="step" id="s9">
+  <h2>9. Where containers fit in this course</h2>
+  <div class="body">
+    <p>From here on, <code>orders-api</code> is an image in a registry. In Chapter 6 that registry is <b>Azure Container Registry</b>, and in Chapter 7 a pipeline builds and pushes the image on every merge.</p>
+    <p>Kubernetes never builds images. It <b>pulls</b> them and runs containers from them. Its job, as the next lesson shows, is everything that happens <i>after</i> <code>docker run</code>.</p>
+  </div>
+</section>
+
+<section class="step summary" id="s10">
+  <h2>Containers, sorted</h2>
+  <ul>
+    <li>Image = read-only template; container = a running instance with a throwaway writable layer.</li>
+    <li>Each file-changing instruction makes a cached layer; once one changes, every later layer rebuilds. Copy the dependency list first and the source last.</li>
+    <li>Multi-stage builds ship only the binary, in a minimal non-root image.</li>
+    <li>registry/repository:tag; tags can move, and <code>latest</code> is just a name.</li>
+    <li>A digest pins the exact image content.</li>
+  </ul>
+</section>
+</article>
+</body>
+</html>

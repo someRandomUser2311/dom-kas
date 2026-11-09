@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>6.2 · Letting AKS pull</title>
+<link rel="stylesheet" href="../content.css">
+</head>
+<body>
+<article class="lesson" data-id="6.2" data-chapter="6">
+<nav class="crumbs"><a href="../index.html">Course</a> / <a href="index.html">Chapter 6</a> / 6.2</nav>
+<header>
+  <p class="kicker">Chapter 6 · Lesson 6.2 · ~9 steps · ~11 min</p>
+  <h1>Letting AKS pull</h1>
+  <p class="meta">You'll be able to connect a cluster to ACR so images pull without any secrets, and diagnose an <code>ImagePullBackOff</code> in under a minute.</p>
+</header>
+
+<section class="step" id="s1">
+  <h2>1. Who pulls the image?</h2>
+  <div class="body">
+    <p>Lesson 5.4 answered this: the <b>kubelet</b> on each node pulls images, using the cluster's <b>kubelet identity</b>. So that identity needs <b>AcrPull</b> on the registry.</p>
+    <p>No passwords, no <code>imagePullSecrets</code>, nothing in your manifests.</p>
+  </div>
+  <aside class="coming" data-set="A">
+    <dl>
+      <dt>Windows/IIS admin</dt><dd>Like giving a server's computer account read access to a file share, instead of mapping the share with a stored password.</dd>
+      <dt>Linux admin</dt><dd>The node authenticates to the registry with its own managed identity token, much like an instance-profile credential helper.</dd>
+      <dt>Developer (Compose)</dt><dd>No <code>docker login</code> on the nodes. Azure handles it per node.</dd>
+      <dt>Other clouds</dt><dd>Like the EKS node role having ECR read permissions, or the GKE node service account reading Artifact Registry.</dd>
+    </dl>
+  </aside>
+</section>
+
+<section class="step" id="s2">
+  <h2>2. <code>--attach-acr</code></h2>
+  <div class="body">
+    <p>One command assigns <b>AcrPull</b> on the registry to the cluster's kubelet identity. You need permission to create role assignments on the registry (Owner, User Access Administrator, or RBAC Administrator).</p>
+  </div>
+  <pre class="code" data-file="attach.sh">az aks update -g rg-orders-dev -n aks-orders-dev --attach-acr contosoacr
+
+# equivalent explicit role assignment (what IaC does in Chapters 12–13)
+KUBELET_ID=$(az aks show -g rg-orders-dev -n aks-orders-dev --query identityProfile.kubeletidentity.objectId -o tsv)
+ACR_ID=$(az acr show -n contosoacr --query id -o tsv)
+az role assignment create --assignee-object-id "$KUBELET_ID" --assignee-principal-type ServicePrincipal \
+  --role AcrPull --scope "$ACR_ID"</pre>
+  <div class="body"><p>Verify it with <code>az aks check-acr -g rg-orders-dev -n aks-orders-dev --acr contosoacr.azurecr.io</code>, which runs a pull test from a node.</p></div>
+</section>
+
+<section class="step" id="s3">
+  <h2>3. Why not imagePullSecrets?</h2>
+  <div class="body">
+    <p><code>imagePullSecrets</code> work on any Kubernetes, but they're a stored credential, per namespace, that expires and leaks.</p>
+    <p>On AKS with ACR, managed-identity pulls are simpler and safer. Keep image pull secrets for third-party registries that support nothing else.</p>
+  </div>
+</section>
+
+<section class="step" id="s4">
+  <h2>4. Diagnose the pull failure</h2>
+  <div class="check" data-type="diagnose">
+    <p class="q">A new cluster can't start <code>orders-api</code>. What's wrong?</p>
+    <pre class="output">$ kubectl get pods -n orders
+NAME                         READY   STATUS             RESTARTS   AGE
+orders-api-6d8f7c9b5-x2kq7   0/1     ImagePullBackOff   0          3m
+$ kubectl describe pod orders-api-6d8f7c9b5-x2kq7 -n orders | tail -5
+  Warning  Failed     2m (x4 over 3m)  kubelet  Failed to pull image "contosoacr.azurecr.io/orders-api:1.4.2":
+           failed to authorize: failed to fetch anonymous token: unexpected status from GET request to
+           https://contosoacr.azurecr.io/oauth2/token?scope=repository%3Aorders-api%3Apull: 401 Unauthorized
+  Warning  Failed     2m (x4 over 3m)  kubelet  Error: ErrImagePull
+  Normal   BackOff    1m (x6 over 3m)  kubelet  Back-off pulling image "contosoacr.azurecr.io/orders-api:1.4.2"</pre>
+    <ol class="options">
+      <li>The tag <code>1.4.2</code> doesn't exist <span class="why">A missing tag gives "not found" / "manifest unknown", not 401.</span></li>
+      <li class="correct">The kubelet identity has no AcrPull on <code>contosoacr</code>, so the pull is unauthorised</li>
+      <li>The registry is down <span class="why">The registry answered, with a 401.</span></li>
+      <li>DNS for the registry fails <span class="why">DNS worked: there was an HTTP response.</span></li>
+    </ol>
+    <div class="explain">401 = authentication/authorisation; "not found" = wrong name or tag; "no such host" or timeouts = DNS or network (often private endpoints, lesson 6.3).</div>
+  </div>
+</section>
+
+<section class="step" id="s5">
+  <h2>5. The fix</h2>
+  <div class="check" data-type="mcq">
+    <p class="q">What fixes the error above?</p>
+    <ol class="options">
+      <li>Add an imagePullSecret with your personal credentials <span class="why">It would work, with your credentials, until you leave the company.</span></li>
+      <li class="correct"><code>az aks update -g rg-orders-dev -n aks-orders-dev --attach-acr contosoacr</code></li>
+      <li>Enable the ACR admin user <span class="why">That creates a shared password, which is the opposite of what we want.</span></li>
+      <li>Give your user AcrPull <span class="why">Your user isn't the one pulling.</span></li>
+    </ol>
+    <div class="explain">After the role assignment propagates (a minute or two), the kubelet's next retry succeeds, with no redeploy needed.</div>
+  </div>
+</section>
+
+<section class="step" id="s6">
+  <h2>6. Pull errors at a glance</h2>
+  <table>
+    <tr><th>Message contains</th><th>Usual cause</th></tr>
+    <tr><td><code>401 Unauthorized</code></td><td>No AcrPull for the kubelet identity</td></tr>
+    <tr><td><code>not found</code> / <code>manifest unknown</code></td><td>Wrong repository or tag, or the image was never pushed</td></tr>
+    <tr><td><code>no such host</code></td><td>Typo in the registry name, or private DNS not resolving (private endpoint)</td></tr>
+    <tr><td><code>i/o timeout</code> / <code>403</code> from the data endpoint</td><td>Network blocked: firewall, public access disabled with no private path</td></tr>
+    <tr><td><code>no match for platform in manifest</code></td><td>Image built for arm64 on an amd64 node, or vice versa</td></tr>
+  </table>
+</section>
+
+<section class="step" id="s7">
+  <h2>7. Across subscriptions and tenants</h2>
+  <div class="body">
+    <ul>
+      <li><b>Another subscription, same tenant:</b> fine. Assign AcrPull on the registry; <code>--attach-acr</code> accepts the registry's resource ID.</li>
+      <li><b>Another tenant:</b> managed identities can't cross tenants. Use a multi-tenant app registration with an image pull secret, or replicate images into a registry in your own tenant. Avoid it when you can.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="step" id="s8">
+  <h2>8. Pull performance</h2>
+  <div class="body">
+    <ul>
+      <li>Keep the registry in the cluster's region, or geo-replicate it (Premium).</li>
+      <li>Small images pull faster. Remember the multi-stage build from lesson 1.1.</li>
+      <li><code>imagePullPolicy: IfNotPresent</code> (the default for non-<code>latest</code> tags) reuses images already on the node.</li>
+      <li>Artifact Streaming (Premium) can start large containers before the whole image is downloaded.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="step summary" id="s9">
+  <h2>Pulling, sorted</h2>
+  <ul>
+    <li>The kubelet identity pulls; give it AcrPull with <code>--attach-acr</code> or IaC.</li>
+    <li>No imagePullSecrets for ACR.</li>
+    <li>401 = permission; not found = name or tag; no such host or timeout = DNS or network.</li>
+    <li><code>az aks check-acr</code> tests it end to end.</li>
+  </ul>
+</section>
+</article>
+</body>
+</html>

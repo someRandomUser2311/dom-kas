@@ -1,0 +1,229 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>13.3 · Building AKS in Bicep</title>
+<link rel="stylesheet" href="../content.css">
+</head>
+<body>
+<article class="lesson" data-id="13.3" data-chapter="13">
+<nav class="crumbs"><a href="../index.html">Course</a> / <a href="index.html">Chapter 13</a> / 13.3</nav>
+<header>
+  <p class="kicker">Chapter 13 · Lesson 13.3 · ~15 steps · ~20 min</p>
+  <h1>Building AKS in Bicep</h1>
+  <p class="meta">You'll be able to write Contoso's cluster as a <code>Microsoft.ContainerService/managedClusters</code> resource, property by property, and map each one to its Terraform argument and CLI flag.</p>
+</header>
+
+<section class="step" id="s1">
+  <h2>1. The skeleton</h2>
+  <pre class="code" data-file="aks.bicep">resource aks 'Microsoft.ContainerService/managedClusters@2024-09-01' = {
+  name: 'aks-${nameSuffix}'
+  location: location
+  tags: tags
+  sku: {
+    name: 'Base'
+    tier: isProd ? 'Standard' : 'Free'
+  }
+  properties: {
+    dnsPrefix: 'aks-${nameSuffix}'
+    nodeResourceGroup: 'rg-${nameSuffix}-nodes'
+  }
+}</pre>
+  <aside class="coming" data-set="TF">
+    <dl>
+      <dt>Terraform</dt><dd>One resource, like <code>azurerm_kubernetes_cluster</code>, but property names follow the ARM API (camelCase, nested under <code>properties</code>) instead of the provider's snake_case. A side-by-side table is at step 13.</dd>
+    </dl>
+  </aside>
+</section>
+
+<section class="step" id="s2">
+  <h2>2. The cluster's identity</h2>
+  <pre class="code" data-file="aks.bicep" data-diff>+  identity: {
++    type: 'UserAssigned'
++    userAssignedIdentities: {
++      '${aksIdentity.id}': {}
++    }
++  }</pre>
+  <div class="body"><p>The odd-looking map, keyed by the identity's resource ID with an empty object, is simply how ARM represents user-assigned identities.</p></div>
+</section>
+
+<section class="step" id="s3">
+  <h2>3. The system pool</h2>
+  <pre class="code" data-file="aks.bicep (properties)" data-diff>+    agentPoolProfiles: [
++      {
++        name: 'system'
++        mode: 'System'
++        vmSize: 'Standard_D4ds_v5'
++        count: 3
++        availabilityZones: [ '1', '2', '3' ]
++        nodeTaints: [ 'CriticalAddonsOnly=true:NoSchedule' ]
++        vnetSubnetID: aksSubnetId
++        osSKU: 'AzureLinux'
++        upgradeSettings: { maxSurge: '33%' }
++      }
++    ]</pre>
+</section>
+
+<section class="step" id="s4">
+  <h2>4. Networking</h2>
+  <div class="check" data-type="fill">
+    <p class="q">Complete the overlay setting.</p>
+    <pre class="code" data-file="aks.bicep (properties)">    networkProfile: {
+      networkPlugin: 'azure'
+      <span class="blank">?</span>: 'overlay'
+      networkDataplane: 'cilium'
+      networkPolicy: 'cilium'
+      podCidr: '192.168.0.0/16'
+      serviceCidr: '172.16.0.0/16'
+      dnsServiceIP: '172.16.0.10'
+      outboundType: 'loadBalancer'
+    }</pre>
+    <ul class="chips">
+      <li class="correct"><code>networkPluginMode</code></li>
+      <li><code>network_plugin_mode</code> <span class="why">That's the Terraform spelling; ARM properties are camelCase.</span></li>
+      <li><code>networkMode</code> <span class="why">A different, legacy property.</span></li>
+      <li><code>overlayMode</code> <span class="why">Not a property.</span></li>
+    </ul>
+    <div class="explain">Same setting, three spellings: <code>--network-plugin-mode</code> (CLI), <code>network_plugin_mode</code> (Terraform), <code>networkPluginMode</code> (Bicep/ARM).</div>
+  </div>
+</section>
+
+<section class="step" id="s5">
+  <h2>5. OIDC and workload identity</h2>
+  <pre class="code" data-file="aks.bicep (properties)" data-diff>+    oidcIssuerProfile: { enabled: true }
++    securityProfile: {
++      workloadIdentity: { enabled: true }
++    }</pre>
+</section>
+
+<section class="step" id="s6">
+  <h2>6. Entra ID, Azure RBAC, no local accounts</h2>
+  <pre class="code" data-file="aks.bicep (properties)" data-diff>+    aadProfile: {
++      managed: true
++      enableAzureRBAC: true
++      adminGroupObjectIDs: [ aksAdminGroupId ]
++    }
++    disableLocalAccounts: true</pre>
+  <div class="check" data-type="tapline" data-match="disableLocalAccounts: true">
+    <p class="q">Tap the property that removes the static admin credential.</p>
+    <div class="explain"><code>disableLocalAccounts: true</code>, which is <code>local_account_disabled</code> in Terraform and <code>--disable-local-accounts</code> on the CLI.</div>
+  </div>
+</section>
+
+<section class="step" id="s7">
+  <h2>7. API server access</h2>
+  <pre class="code" data-file="aks.bicep (properties)" data-diff>+    apiServerAccessProfile: isProd ? {
++      enablePrivateCluster: true
++      privateDNSZone: privateDnsZoneId
++    } : {
++      enablePrivateCluster: false
++      authorizedIPRanges: authorizedIpRanges
++    }</pre>
+  <div class="body"><p>A ternary between two objects gives one clear shape per environment. In Terraform this needed a <code>dynamic</code> block.</p></div>
+</section>
+
+<section class="step" id="s8">
+  <h2>8. Upgrades</h2>
+  <pre class="code" data-file="aks.bicep (properties)" data-diff>+    autoUpgradeProfile: {
++      upgradeChannel: 'patch'
++      nodeOSUpgradeChannel: 'NodeImage'
++    }</pre>
+  <div class="body"><p>Maintenance windows are a separate child resource, <code>Microsoft.ContainerService/managedClusters/maintenanceConfigurations</code>, named <code>aksManagedNodeOSUpgradeSchedule</code> (lesson 4.4).</p></div>
+</section>
+
+<section class="step" id="s9">
+  <h2>9. Monitoring add-on</h2>
+  <pre class="code" data-file="aks.bicep (properties)" data-diff>+    addonProfiles: {
++      omsagent: {
++        enabled: true
++        config: {
++          logAnalyticsWorkspaceResourceID: law.id
++          useAADAuth: 'true'
++        }
++      }
++    }</pre>
+</section>
+
+<section class="step" id="s10">
+  <h2>10. The user pool: a child resource</h2>
+  <pre class="code" data-file="aks.bicep">resource userPool 'Microsoft.ContainerService/managedClusters/agentPools@2024-09-01' = {
+  parent: aks
+  name: 'user'
+  properties: {
+    mode: 'User'
+    vmSize: 'Standard_D4ds_v5'
+    availabilityZones: [ '1', '2', '3' ]
+    vnetSubnetID: aksSubnetId
+    osSKU: 'AzureLinux'
+    enableAutoScaling: true
+    minCount: isProd ? 3 : 1
+    maxCount: userPoolMaxCount
+    count: isProd ? 3 : 1
+  }
+}</pre>
+  <aside class="more"><p>Like Terraform's <code>ignore_changes</code> on node counts, be careful re-deploying <code>count</code> on an autoscaled pool. The autoscaler adjusts it within min and max, and a deployment can reset it. Many teams omit <code>count</code> on updates, or set it equal to <code>minCount</code>.</p></aside>
+</section>
+
+<section class="step" id="s11">
+  <h2>11. Private in prod, via a parameter</h2>
+  <div class="check" data-type="custom">
+    <p class="q">The cluster currently has <code>enablePrivateCluster: false</code> hard-coded. Make it private only when <code>environment</code> is <code>prod</code>.</p>
+    <div class="widget" data-widget="iac-editor">A Bicep editor. Graded by iac-rules (Bicep) with environment=dev and =prod: prod compiles to <code>enablePrivateCluster: true</code> (no authorized IP ranges); dev compiles to false with the ranges. Using <code>isProd</code> or comparing <code>environment</code> directly both pass.</div>
+    <div class="explain">Derive environment switches from the one <code>environment</code> parameter, as step 7 does.</div>
+  </div>
+</section>
+
+<section class="step" id="s12">
+  <h2>12. Read cluster values for other resources</h2>
+  <pre class="code" data-file="aks.bicep (usage)">var kubeletObjectId = aks.properties.identityProfile.kubeletidentity.objectId
+var oidcIssuerUrl   = aks.properties.oidcIssuerProfile.issuerURL
+
+output aksName string = aks.name
+output oidcIssuerUrl string = oidcIssuerUrl</pre>
+</section>
+
+<section class="step" id="s13">
+  <h2>13. CLI → Terraform → Bicep</h2>
+  <table>
+    <tr><th>CLI flag</th><th>Terraform</th><th>Bicep (under <code>properties</code> unless noted)</th></tr>
+    <tr><td><code>--tier standard</code></td><td><code>sku_tier</code></td><td><code>sku.tier</code> (top level)</td></tr>
+    <tr><td><code>--zones 1 2 3</code></td><td><code>zones</code></td><td><code>agentPoolProfiles[].availabilityZones</code></td></tr>
+    <tr><td><code>--nodepool-taints CriticalAddonsOnly…</code></td><td><code>only_critical_addons_enabled</code></td><td><code>nodeTaints</code></td></tr>
+    <tr><td><code>--network-plugin-mode overlay</code></td><td><code>network_plugin_mode</code></td><td><code>networkProfile.networkPluginMode</code></td></tr>
+    <tr><td><code>--network-dataplane cilium</code></td><td><code>network_data_plane</code></td><td><code>networkProfile.networkDataplane</code></td></tr>
+    <tr><td><code>--enable-oidc-issuer</code></td><td><code>oidc_issuer_enabled</code></td><td><code>oidcIssuerProfile.enabled</code></td></tr>
+    <tr><td><code>--enable-workload-identity</code></td><td><code>workload_identity_enabled</code></td><td><code>securityProfile.workloadIdentity.enabled</code></td></tr>
+    <tr><td><code>--enable-azure-rbac</code></td><td><code>azure_rbac_enabled</code></td><td><code>aadProfile.enableAzureRBAC</code></td></tr>
+    <tr><td><code>--disable-local-accounts</code></td><td><code>local_account_disabled</code></td><td><code>disableLocalAccounts</code></td></tr>
+    <tr><td><code>--enable-private-cluster</code></td><td><code>private_cluster_enabled</code></td><td><code>apiServerAccessProfile.enablePrivateCluster</code></td></tr>
+    <tr><td><code>--auto-upgrade-channel</code></td><td><code>automatic_upgrade_channel</code></td><td><code>autoUpgradeProfile.upgradeChannel</code></td></tr>
+  </table>
+</section>
+
+<section class="step" id="s14">
+  <h2>14. what-if before deploy</h2>
+  <pre class="output">$ az deployment group what-if -g rg-orders-dev -f main.bicep -p main.dev.bicepparam
+Resource changes: 4 to create.
+  + Microsoft.ContainerService/managedClusters/aks-orders-dev [2024-09-01]
+      properties.disableLocalAccounts:                         true
+      properties.networkProfile.networkPluginMode:             "overlay"
+      properties.oidcIssuerProfile.enabled:                    true
+      ...
+  + Microsoft.ContainerService/managedClusters/aks-orders-dev/agentPools/user [2024-09-01]
+  + Microsoft.ManagedIdentity/userAssignedIdentities/id-aks-orders-dev [2023-01-31]
+  + Microsoft.OperationalInsights/workspaces/log-orders-dev [2023-09-01]</pre>
+</section>
+
+<section class="step summary" id="s15">
+  <h2>AKS in Bicep, sorted</h2>
+  <ul>
+    <li><code>managedClusters</code>: <code>sku.tier</code>, user-assigned identity, a system <code>agentPoolProfiles</code> entry with zones and taints.</li>
+    <li><code>networkProfile</code> (overlay, Cilium), <code>oidcIssuerProfile</code>, <code>securityProfile.workloadIdentity</code>.</li>
+    <li><code>aadProfile.enableAzureRBAC</code> + <code>disableLocalAccounts</code>; <code>apiServerAccessProfile</code> per environment.</li>
+    <li>User pools as <code>agentPools</code> children; watch autoscaled counts.</li>
+  </ul>
+</section>
+</article>
+</body>
+</html>

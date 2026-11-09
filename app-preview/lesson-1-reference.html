@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CI/CD and Azure Pipelines · Lesson 1</title>
+<link rel="stylesheet" href="assets/styles.css">
+</head>
+<body data-page="l1">
+<header id="topbar"></header>
+<div class="lesson-shell">
+<aside class="curriculum" id="curriculum"></aside>
+<main class="reader"><div class="reader-inner">
+
+  <div class="breadcrumb"><a href="index.html">Home</a><span class="sep">/</span><a href="chapter.html">Ch 7 · Azure Pipelines</a><span class="sep">/</span><span>Lesson 1</span></div>
+  <div class="lesson-head">
+    <span class="badge badge-accent">Lesson 1 · Reference view</span> <a class="badge badge-violet" href="lesson.html?l=ch07/l1">▶ Take the guided version</a>
+    <h1 style="margin-top:10px">CI/CD and where Azure Pipelines fits</h1>
+    <div class="meta"><span>⏱ 12 min</span><span>·</span><span>1 interactive diagram</span><span>·</span><span>1 knowledge check</span></div>
+  </div>
+
+  <p>In earlier chapters you deployed to AKS by hand with <code>docker build</code>, <code>docker push</code> and <code>kubectl apply</code>. That works for a single change on a quiet afternoon. It falls apart when ten engineers push twenty changes a day: someone forgets to run the tests, someone tags an image <code>latest</code>, and someone deploys from their laptop with uncommitted code.</p>
+  <p><strong>CI/CD</strong> turns those manual steps into an automated, repeatable and auditable process that runs on every change.</p>
+
+  <div class="grid grid-3" style="margin:22px 0">
+    <div class="card card-tight"><div class="kicker">CI</div><strong>Continuous Integration</strong><p class="subtle" style="margin:6px 0 0">Every push is built and tested automatically, so broken code is caught within minutes, not at release time.</p></div>
+    <div class="card card-tight"><div class="kicker">CD</div><strong>Continuous Delivery</strong><p class="subtle" style="margin:6px 0 0">Every green build produces a deployable artifact (for us, a container image in ACR). Going to production is a <em>button press</em>.</p></div>
+    <div class="card card-tight"><div class="kicker">CD</div><strong>Continuous Deployment</strong><p class="subtle" style="margin:6px 0 0">Same as delivery, but with no human button. Every green build goes all the way to production automatically.</p></div>
+  </div>
+
+  <h2>Follow one commit to production</h2>
+  <p>Step through what happens after <code>git push</code>. Each box is something you already did by hand; the pipeline just does it for you, every time, the same way.</p>
+
+  <div class="card">
+    <div class="flow" id="flow"></div>
+    <div class="seq-msg" id="flow-msg" style="margin-top:14px"></div>
+    <div style="display:flex;gap:10px;margin-top:14px;align-items:center">
+      <button class="btn btn-sm" id="flow-prev">← Back</button>
+      <button class="btn btn-sm btn-primary" id="flow-next">Next step →</button>
+      <button class="btn btn-sm btn-ghost" id="flow-play">▶ Auto-play</button>
+      <span class="subtle" style="margin-left:auto" id="flow-count"></span>
+    </div>
+  </div>
+
+  <h2>Azure DevOps in one minute</h2>
+  <p>Azure Pipelines is one service inside <strong>Azure DevOps</strong>, a separate product from the Azure portal. An Azure DevOps <em>organization</em> holds <em>projects</em>, and each project can use these services:</p>
+  <div class="table-wrap">
+    <table class="table">
+      <tr><th>Service</th><th>What it does</th><th>Used in this course?</th></tr>
+      <tr><td><strong>Repos</strong></td><td>Git hosting (GitHub works just as well)</td><td><span class="badge">Mentioned</span></td></tr>
+      <tr><td><strong>Pipelines</strong></td><td>Builds, tests and deploys your code: CI/CD</td><td><span class="badge badge-accent">This chapter</span></td></tr>
+      <tr><td><strong>Artifacts</strong></td><td>Package feeds (npm, NuGet, Maven, pip)</td><td><span class="badge">Mentioned</span></td></tr>
+      <tr><td><strong>Boards</strong></td><td>Work items, sprints, Kanban</td><td><span class="badge">No</span></td></tr>
+      <tr><td><strong>Test Plans</strong></td><td>Manual & exploratory testing</td><td><span class="badge">No</span></td></tr>
+    </table>
+  </div>
+
+  <div class="callout">
+    <span class="c-ico">💡</span>
+    <div><strong>No Azure subscription needed to <em>use</em> Azure DevOps.</strong> An Azure DevOps organization only needs a Microsoft account and is free for small teams. The Azure subscription only matters for what your pipeline <em>deploys to</em> (AKS, ACR…). In this course, those targets are emulated locally by <code>floci-az</code>.</div>
+  </div>
+
+  <h2>Classic pipelines vs YAML pipelines</h2>
+  <p>Azure Pipelines has two ways to define a pipeline. You will see both in real companies, but every new pipeline should be YAML.</p>
+  <div class="compare">
+    <div class="card">
+      <div class="card-title">🖱️ Classic (UI designer)</div>
+      <ul style="margin:0;padding-left:18px;font-size:14px" class="muted">
+        <li>Built by clicking in the web UI</li>
+        <li>Separate "Build" and "Release" pipelines</li>
+        <li>Hard to review, diff or reuse</li>
+        <li>Still common in older projects</li>
+      </ul>
+    </div>
+    <div class="card sel">
+      <div class="card-title">📄 YAML (pipeline as code) <span class="badge badge-success">Recommended</span></div>
+      <ul style="margin:0;padding-left:18px;font-size:14px" class="muted">
+        <li>Lives in your repo as <code>azure-pipelines.yml</code></li>
+        <li>Reviewed in pull requests, versioned with the code</li>
+        <li>Build <em>and</em> deploy in one multi-stage file</li>
+        <li>Reusable through templates</li>
+      </ul>
+    </div>
+  </div>
+
+  <h2>The smallest useful pipeline</h2>
+  <p>Here's a taste. Next lesson takes it apart line by line.</p>
+  <div id="mini"></div>
+
+  <div class="check-card" data-answer="c">
+    <div class="kicker">Check your knowledge</div>
+    <strong>Your team's pipeline builds and tests every commit and pushes a tagged image to ACR, but a lead must click "Approve" before it reaches production AKS. What is this?</strong>
+    <div class="options">
+      <button class="option" data-v="a"><span class="key">A</span><span>Continuous Integration only</span></button>
+      <button class="option" data-v="b"><span class="key">B</span><span>Continuous Deployment</span></button>
+      <button class="option" data-v="c"><span class="key">C</span><span>Continuous Delivery</span></button>
+      <button class="option" data-v="d"><span class="key">D</span><span>A Classic release pipeline</span></button>
+    </div>
+    <div class="check-result" data-ok="Every green build is deployable (the image is in ACR), but a human gate decides when it goes to production. That's Continuous <em>Delivery</em>. Remove the approval and it becomes Continuous <em>Deployment</em>."></div>
+  </div>
+
+  <div id="lesson-nav"></div>
+</div></main>
+</div>
+
+<script src="assets/app.js"></script>
+<script src="assets/yaml.js"></script>
+<script>
+  const STEPS = [
+    { ico: "👩‍💻", t: "git push", d: "<b>Developer pushes</b> to <code>main</code> (or opens a pull request). Azure Pipelines watches the repo, and the <code>trigger:</code> section of the YAML decides whether this push starts a run." },
+    { ico: "⚡", t: "Trigger", d: "<b>A run is queued.</b> Azure DevOps reads <code>azure-pipelines.yml</code> <em>from the commit that was pushed</em>, so pipeline changes are versioned with your code." },
+    { ico: "🖥️", t: "Agent", d: "<b>An agent picks up the job.</b> It's a VM or container with the build tools installed. It can be Microsoft-hosted (e.g. <code>ubuntu-latest</code>) or self-hosted. Lesson 3 goes deep on this." },
+    { ico: "🧪", t: "Build & test", d: "<b>CI happens here.</b> The agent checks out the code, restores dependencies, compiles and runs unit tests. If tests fail, the run stops and nothing ships." },
+    { ico: "📦", t: "Push to ACR", d: "<b>The image is built and pushed</b> to Azure Container Registry with an immutable tag like <code>$(Build.BuildId)</code>. The pipeline authenticates through a <em>service connection</em> (lesson 4)." },
+    { ico: "🛑", t: "Approval", d: "<b>Optional human gate.</b> A deployment to the <code>prod</code> <em>environment</em> waits for an approver. This is the line between Continuous Delivery and Continuous Deployment (lesson 5)." },
+    { ico: "☸️", t: "Deploy to AKS", d: "<b>Manifests are applied</b> to the AKS cluster (<code>KubernetesManifest@1</code> or <code>kubectl</code>) with the new image tag. AKS pulls the image from ACR using its <code>AcrPull</code> permission, and the rollout begins." },
+  ];
+  let cur = 0, timer = null;
+  const flow = document.getElementById("flow");
+  flow.innerHTML = STEPS.map((s, i) => `${i ? '<span class="flow-arrow">→</span>' : ""}<div class="flow-step" data-i="${i}"><span class="fs-ico">${s.ico}</span>${s.t}</div>`).join("");
+  function show() {
+    flow.querySelectorAll(".flow-step").forEach((el, i) => { el.classList.toggle("on", i === cur); el.classList.toggle("done", i < cur); });
+    document.getElementById("flow-msg").innerHTML = `<div class="sm-arrow">STEP ${cur + 1} · ${STEPS[cur].t.toUpperCase()}</div>${STEPS[cur].d}`;
+    document.getElementById("flow-count").textContent = `${cur + 1} / ${STEPS.length}`;
+    document.getElementById("flow-prev").disabled = cur === 0;
+    document.getElementById("flow-next").textContent = cur === STEPS.length - 1 ? "Restart ↺" : "Next step →";
+  }
+  document.getElementById("flow-next").onclick = () => { cur = cur === STEPS.length - 1 ? 0 : cur + 1; show(); };
+  document.getElementById("flow-prev").onclick = () => { if (cur > 0) { cur--; show(); } };
+  flow.addEventListener("click", e => { const s = e.target.closest(".flow-step"); if (s) { cur = +s.dataset.i; show(); } });
+  document.getElementById("flow-play").onclick = function () {
+    if (timer) { clearInterval(timer); timer = null; this.textContent = "▶ Auto-play"; return; }
+    this.textContent = "⏸ Pause";
+    timer = setInterval(() => { cur = (cur + 1) % STEPS.length; show(); }, 2200);
+  };
+  show();
+
+  KQY.block(document.getElementById("mini"), `# azure-pipelines.yml
+trigger:
+  - main
+
+pool:
+  vmImage: ubuntu-latest
+
+steps:
+  - script: echo "Hello from the pipeline on $(Agent.OS)"
+    displayName: Say hello`, { title: "azure-pipelines.yml" });
+</script>
+</body>
+</html>

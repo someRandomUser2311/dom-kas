@@ -1,0 +1,219 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>3.4 · Storage</title>
+<link rel="stylesheet" href="../content.css">
+</head>
+<body>
+<article class="lesson" data-id="3.4" data-chapter="3">
+<nav class="crumbs"><a href="../index.html">Course</a> / <a href="index.html">Chapter 3</a> / 3.4</nav>
+<header>
+  <p class="kicker">Chapter 3 · Lesson 3.4 · ~11 steps · ~14 min</p>
+  <h1>Storage</h1>
+  <p class="meta">You'll be able to request persistent storage with a PVC, pick a StorageClass and access mode, predict what happens to the data when things are deleted, and know when a StatefulSet is needed.</p>
+</header>
+
+<section class="step" id="s1">
+  <h2>1. Containers forget</h2>
+  <div class="body">
+    <p>A container's filesystem disappears with the container (lesson 1.1). Pods get rescheduled to other nodes. So anything that must survive needs storage that lives <b>outside</b> the pod.</p>
+    <p><code>orders-api</code> itself is stateless; its data lives in a managed database. But Contoso also runs a small queue that needs a disk, so let's learn how.</p>
+  </div>
+  <aside class="coming" data-set="A">
+    <dl>
+      <dt>Windows/IIS admin</dt><dd>Like attaching a separate data disk to a VM, or mapping an SMB share, instead of writing to <code>C:</code>.</dd>
+      <dt>Linux admin</dt><dd>A PVC is a request for a block device or NFS/SMB mount, which the kubelet mounts into the container.</dd>
+      <dt>Developer (Compose)</dt><dd>Named volumes in Compose live on one host. A PVC's disk can follow the pod to another node (within limits).</dd>
+      <dt>Other clouds</dt><dd>Azure Disk ≈ EBS / Persistent Disk; Azure Files ≈ EFS / Filestore.</dd>
+    </dl>
+  </aside>
+</section>
+
+<section class="step" id="s2">
+  <h2>2. Volumes inside a pod</h2>
+  <div class="body">
+    <p>A <b>volume</b> is declared in the pod spec and mounted into containers. Some volume types live only as long as the pod:</p>
+    <ul>
+      <li><code>emptyDir</code>: scratch space shared by the pod's containers, deleted with the pod.</li>
+      <li><code>configMap</code> and <code>secret</code>: config as files (Chapter 2).</li>
+    </ul>
+    <p>For data that outlives pods, the volume points to a <b>PersistentVolumeClaim</b>.</p>
+  </div>
+</section>
+
+<section class="step" id="s3">
+  <h2>3. PV, PVC and StorageClass</h2>
+  <div class="body">
+    <ul>
+      <li><b>PersistentVolumeClaim (PVC)</b>: your <i>request</i>, for example "10 GiB, single-writer, premium". It belongs to a namespace.</li>
+      <li><b>PersistentVolume (PV)</b>: an actual piece of storage, such as an Azure managed disk. It's cluster-wide.</li>
+      <li><b>StorageClass</b>: a template for creating PVs on demand. It names the CSI driver and its parameters (disk SKU, reclaim policy, binding mode).</li>
+    </ul>
+    <p>With <b>dynamic provisioning</b>, creating a PVC causes the CSI driver to create a matching disk and PV automatically.</p>
+  </div>
+  <pre class="code" data-file="pvc.yaml">apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: queue-data
+  namespace: orders
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: managed-csi-premium
+  resources:
+    requests:
+      storage: 32Gi</pre>
+  <pre class="code" data-file="pod spec">volumes:
+  - name: data
+    persistentVolumeClaim:
+      claimName: queue-data</pre>
+</section>
+
+<section class="step" id="s4">
+  <h2>4. Access modes</h2>
+  <div class="body">
+    <ul>
+      <li><b>ReadWriteOnce (RWO)</b>: mounted read-write by <b>one node</b> at a time. Block storage such as Azure Disk.</li>
+      <li><b>ReadWriteOncePod (RWOP)</b>: one <i>pod</i> only. That's stricter still.</li>
+      <li><b>ReadOnlyMany (ROX)</b>: many nodes, read-only.</li>
+      <li><b>ReadWriteMany (RWX)</b>: many nodes read-write at once. File shares such as Azure Files (SMB/NFS) or Azure NetApp Files.</li>
+    </ul>
+  </div>
+  <div class="check" data-type="match">
+    <p class="q">Match the need to the storage on AKS.</p>
+    <table class="pairs">
+      <tr><td>A database's data directory, one replica</td><td>Azure Disk (RWO)</td></tr>
+      <tr><td>Uploaded images shared by 5 web pods on different nodes</td><td>Azure Files (RWX)</td></tr>
+      <tr><td>Scratch space for one pod's two containers</td><td><code>emptyDir</code></td></tr>
+      <tr><td>A disk that must never be mounted by two pods, even on one node</td><td>Azure Disk with ReadWriteOncePod</td></tr>
+    </table>
+    <div class="explain">Disks are fast and single-writer; file shares are shared but slower. Pick by the access pattern.</div>
+  </div>
+</section>
+
+<section class="step" id="s5">
+  <h2>5. One disk, many replicas?</h2>
+  <div class="check" data-type="mcq">
+    <p class="q">A Deployment with 3 replicas mounts one RWO Azure Disk PVC. The pods are spread across 3 nodes. What happens?</p>
+    <ol class="options">
+      <li>All 3 share the disk <span class="why">RWO allows only one node to attach it.</span></li>
+      <li class="correct">The pod on the node that has the disk runs; the others are stuck in ContainerCreating with a "Multi-Attach error"</li>
+      <li>Kubernetes creates 3 disks automatically <span class="why">Only StatefulSet <code>volumeClaimTemplates</code> do that.</span></li>
+      <li>The PVC is rejected <span class="why">The PVC is fine; the problem appears when pods try to mount it.</span></li>
+    </ol>
+    <div class="explain">For per-replica disks, use a StatefulSet. For shared data, use RWX (Azure Files). Better still, keep the app stateless and put state in a managed service.</div>
+  </div>
+</section>
+
+<section class="step" id="s6">
+  <h2>6. AKS storage classes</h2>
+  <div class="body">
+    <p>AKS ships these StorageClasses (CSI drivers are on by default):</p>
+    <ul>
+      <li><code>managed-csi</code> (the default): Standard SSD.</li>
+      <li><code>managed-csi-premium</code>: Premium SSD.</li>
+      <li><code>azurefile-csi</code> and <code>azurefile-csi-premium</code>: Azure Files.</li>
+    </ul>
+    <p>The disk classes use <code>volumeBindingMode: WaitForFirstConsumer</code>. The disk is only created once a pod is scheduled, so it lands in that pod's <b>zone</b>.</p>
+    <p>A locally redundant (LRS) disk is <b>zonal</b>: a pod using it can only run in that zone. A zone-redundant (ZRS) disk SKU can attach from any zone.</p>
+  </div>
+  <pre class="output">$ kubectl get storageclass
+NAME                    PROVISIONER          RECLAIMPOLICY   VOLUMEBINDINGMODE      ALLOWVOLUMEEXPANSION
+azurefile-csi           file.csi.azure.com   Delete          Immediate              true
+azurefile-csi-premium   file.csi.azure.com   Delete          Immediate              true
+managed-csi (default)   disk.csi.azure.com   Delete          WaitForFirstConsumer   true
+managed-csi-premium     disk.csi.azure.com   Delete          WaitForFirstConsumer   true</pre>
+</section>
+
+<section class="step" id="s7">
+  <h2>7. Reclaim policy: what happens to the data</h2>
+  <div class="body">
+    <p>When a PVC is deleted, its PV's <b>reclaim policy</b> decides the disk's fate:</p>
+    <ul>
+      <li><code>Delete</code> (the default for AKS classes): the Azure disk is <b>deleted</b> too.</li>
+      <li><code>Retain</code>: the disk is kept, and an admin must clean up or reuse it manually.</li>
+    </ul>
+    <p>For important data, use a class with <code>Retain</code>, and back up with snapshots or Azure Backup for AKS.</p>
+  </div>
+  <div class="check" data-type="predict">
+    <p class="q">You run <code>kubectl delete namespace orders</code>. The <code>queue-data</code> PVC used <code>managed-csi-premium</code>. What happens to the queue's data?</p>
+    <ol class="options">
+      <li>Kept in Azure as an orphaned disk <span class="why">Only with the <code>Retain</code> policy.</span></li>
+      <li class="correct">The PVC, the PV and the Azure disk are all deleted, and the data is gone</li>
+      <li>The namespace can't be deleted while a PVC exists <span class="why">Namespace deletion removes everything in it.</span></li>
+      <li>The disk is moved to the default namespace <span class="why">PVs don't move between namespaces like that.</span></li>
+    </ol>
+    <div class="explain">Deleting a namespace is one of the easiest ways to lose data on Kubernetes. Use <code>Retain</code> for data you care about, protect production namespaces with RBAC, and take backups.</div>
+  </div>
+</section>
+
+<section class="step" id="s8">
+  <h2>8. StatefulSets: a disk per replica</h2>
+  <div class="body">
+    <p>A <b>StatefulSet</b> gives each replica:</p>
+    <ul>
+      <li>a stable name (<code>queue-0</code>, <code>queue-1</code>);</li>
+      <li>a stable DNS name through a headless Service;</li>
+      <li>its <b>own PVC</b>, made from <code>volumeClaimTemplates</code>.</li>
+    </ul>
+    <p>Pods start and stop in order. If <code>queue-1</code> is rescheduled, it reattaches its own disk.</p>
+  </div>
+  <pre class="code" data-file="statefulset.yaml (excerpt)">apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: queue
+spec:
+  serviceName: queue
+  replicas: 3
+  selector:
+    matchLabels: { app: queue }
+  template:
+    metadata:
+      labels: { app: queue }
+    spec:
+      containers:
+        - name: queue
+          image: contosoacr.azurecr.io/queue:2.1.0
+          volumeMounts:
+            - { name: data, mountPath: /var/lib/queue }
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: [ReadWriteOnce]
+        storageClassName: managed-csi-premium
+        resources:
+          requests:
+            storage: 32Gi</pre>
+</section>
+
+<section class="step" id="s9">
+  <h2>9. Should you run databases on AKS?</h2>
+  <div class="body">
+    <p>You <i>can</i>, with StatefulSets and operators. For most teams, a managed service is the better choice: Azure Database for PostgreSQL, Azure SQL or Cosmos DB. Backups, patching, failover and zone redundancy are then someone else's job.</p>
+    <p>That's what Contoso does for its orders database. Keep AKS for the stateless parts.</p>
+  </div>
+</section>
+
+<section class="step" id="s10">
+  <h2>10. Growing a volume</h2>
+  <div class="body">
+    <p>If the class has <code>allowVolumeExpansion: true</code>, increase <code>spec.resources.requests.storage</code> on the PVC and apply. Azure Disk can be expanded online, while it's in use, for most disk types.</p>
+    <p>You can't <b>shrink</b> a volume.</p>
+  </div>
+</section>
+
+<section class="step summary" id="s11">
+  <h2>Storage, sorted</h2>
+  <ul>
+    <li>PVC = request; PV = actual storage; StorageClass = how to create it on demand.</li>
+    <li>RWO = one node (Azure Disk); RWX = many nodes (Azure Files).</li>
+    <li>AKS disk classes wait for the first pod, so the disk lands in its zone; LRS disks are zonal.</li>
+    <li>Reclaim <code>Delete</code> removes the disk with the PVC; use <code>Retain</code> and backups for real data.</li>
+    <li>StatefulSets give each replica its own disk; prefer managed databases.</li>
+  </ul>
+</section>
+</article>
+</body>
+</html>

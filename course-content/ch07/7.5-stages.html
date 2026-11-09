@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>7.5 · Stages, conditions, environments &amp; approvals</title>
+<link rel="stylesheet" href="../content.css">
+</head>
+<body>
+<article class="lesson" data-id="7.5" data-chapter="7">
+<nav class="crumbs"><a href="../index.html">Course</a> / <a href="index.html">Chapter 7</a> / 7.5</nav>
+<header>
+  <p class="kicker">Chapter 7 · Lesson 7.5 · ~11 steps · built in app-preview (content/ch07/l5.js)</p>
+  <h1>Stages, conditions, environments &amp; approvals</h1>
+  <p class="meta">Converted from the built preview lesson. Interactive panels are kept as their rendered HTML inside <code>.widget</code> blocks.</p>
+</header>
+
+<section class="step" id="s1">
+  <h2>1. Stages run in order by default</h2>
+  <div class="body"><p>Without any extra keys, each stage <b>implicitly depends on the one above it</b> and only runs if that one succeeded.</p><p>Good for a simple Build → Deploy. Real pipelines need more shape.</p></div>
+  <pre class="code" data-file="azure-pipelines.yml">stages:
+  - stage: Build
+    jobs: [ ... ]
+
+  - stage: Deploy        # implicitly: dependsOn: Build
+    jobs: [ ... ]</pre>
+  <aside class="coming" data-set="B">
+    <dl>
+      <dt>GitHub Actions</dt><dd>Like jobs chained with <code>needs:</code>, except here the chain is implicit.</dd>
+      <dt>GitLab CI</dt><dd>Identical to stage ordering in <code>stages:</code>.</dd>
+      <dt>Jenkins</dt><dd>Sequential <code>stage</code> blocks.</dd>
+      <dt>Classic pipelines</dt><dd>Release stages triggered "after previous stage".</dd>
+    </dl>
+  </aside>
+</section>
+
+<section class="step" id="s2">
+  <h2>2. Run things in parallel</h2>
+  <div class="body"><p>A security scan doesn't need the build to finish. <code>dependsOn: []</code> removes the implicit dependency so <code>Scan</code> starts immediately, <b>alongside</b> Build.</p></div>
+  <pre class="code" data-file="azure-pipelines.yml">stages:
+  - stage: Build
+    jobs: [ ... ]
+
+  - stage: Scan
+    dependsOn: []         # no dependencies, so it starts right away
+    jobs: [ ... ]</pre>
+  <aside class="coming" data-set="B">
+    <dl>
+      <dt>GitHub Actions</dt><dd>A job without <code>needs:</code>.</dd>
+      <dt>GitLab CI</dt><dd>Put both jobs in the same stage, or use <code>needs: []</code>.</dd>
+      <dt>Jenkins</dt><dd>A <code>parallel { }</code> block.</dd>
+      <dt>Classic pipelines</dt><dd>Parallel release stages.</dd>
+    </dl>
+  </aside>
+</section>
+
+<section class="step" id="s3">
+  <h2>3. Fan in: wait for both</h2>
+  <div class="body"><p>Give <code>dependsOn</code> a list and the stage waits for <b>all</b> of them. Deploy-dev now needs Build <em>and</em> Scan to succeed.</p></div>
+  <pre class="code" data-file="azure-pipelines.yml">stages:
+  - stage: Build
+    jobs: [ ... ]
+
+  - stage: Scan
+    dependsOn: []         # no dependencies, so it starts right away
+    jobs: [ ... ]
+
+  - stage: DeployDev
+    dependsOn: [Build, Scan]
+    jobs: [ ... ]</pre>
+  <aside class="more"><p>The run view draws this as a graph: Build and Scan side by side, both feeding DeployDev. You'll see it in the simulator in two steps.</p></aside>
+</section>
+
+<section class="step" id="s4">
+  <h2>4. Conditions decide whether a stage runs</h2>
+  <div class="body"><p><code>condition</code> is evaluated after dependencies finish. The default is <code>succeeded()</code>.</p><p>Prod should deploy only from <code>main</code>. ⚠️ A custom condition <b>replaces</b> the default, so include <code>succeeded()</code> yourself.</p></div>
+  <pre class="code" data-file="azure-pipelines.yml">stages:
+  - stage: Build
+    jobs: [ ... ]
+
+  - stage: Scan
+    dependsOn: []         # no dependencies, so it starts right away
+    jobs: [ ... ]
+
+  - stage: DeployDev
+    dependsOn: [Build, Scan]
+    jobs: [ ... ]
+
+  - stage: DeployProd
+    dependsOn: DeployDev
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+    jobs: [ ... ]</pre>
+  <aside class="coming" data-set="B">
+    <dl>
+      <dt>GitHub Actions</dt><dd><code>if: github.ref == 'refs/heads/main'</code>. In Actions, <code>success()</code> is implicitly ANDed; in Azure it's <b>replaced</b>.</dd>
+      <dt>GitLab CI</dt><dd><code>rules: - if: $CI_COMMIT_BRANCH == "main"</code>.</dd>
+      <dt>Jenkins</dt><dd><code>when { branch 'main' }</code>.</dd>
+      <dt>Classic pipelines</dt><dd>Stage trigger filters / custom conditions.</dd>
+    </dl>
+  </aside>
+  <aside class="more"><p>Other useful functions: <code>failed()</code>, <code>succeededOrFailed()</code> (not when cancelled), <code>always()</code>, <code>ne(variables['Build.Reason'], 'PullRequest')</code> to never deploy from PRs.</p></aside>
+</section>
+
+<section class="step" id="s5">
+  <h2>5. Quick check: the dangerous condition</h2>
+  <div class="body"><p>Someone writes <code>condition: eq(variables['Build.SourceBranch'], 'refs/heads/main')</code> on DeployProd. On <code>main</code>, the tests <b>fail</b>.</p></div>
+  <pre class="code" data-file="azure-pipelines.yml">stages:
+  - stage: Build
+    jobs: [ ... ]
+
+  - stage: Scan
+    dependsOn: []         # no dependencies, so it starts right away
+    jobs: [ ... ]
+
+  - stage: DeployDev
+    dependsOn: [Build, Scan]
+    jobs: [ ... ]
+
+  - stage: DeployProd
+    dependsOn: DeployDev
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+    jobs: [ ... ]</pre>
+  <div class="check" data-type="mcq">
+    <p class="q">What happens to DeployProd?</p>
+    <ol class="options">
+      <li>Skipped, because a dependency failed <span class="why">That's what <code>succeeded()</code> would do, but this condition doesn't include it.</span></li>
+      <li class="correct">It runs and deploys the broken build</li>
+      <li>The pipeline fails to compile <span class="why">The expression is valid; it's just wrong.</span></li>
+    </ol>
+    <div class="explain">The custom condition replaced <code>succeeded()</code>, so it only checks the branch. A broken build ships to prod! Always write <code>and(succeeded(), …)</code>.</div>
+  </div>
+</section>
+
+<section class="step" id="s6">
+  <h2>6. Play with the full pipeline</h2>
+  <div class="body"><p>Here are Build ∥ Scan → Deploy dev → Deploy prod (main only, approval required) → Notify (<code>failed()</code>).</p><p>Flip the switches and watch which stages run, skip, wait or fail.</p></div>
+  <div class="widget" data-widget="l5-step6"><p><i>Interactive in the preview (onShow handler).</i></p><div class="card">
+    <div style="display:flex;flex-wrap:wrap;gap:12px 18px;align-items:center;padding-bottom:12px;border-bottom:1px solid var(--border);margin-bottom:10px">
+      <label class="toggle"><input type="checkbox" id="s-build"><span class="track"></span>Tests fail</label>
+      <label class="toggle"><input type="checkbox" id="s-scan"><span class="track"></span>Scan fails</label>
+      <div class="tabs" id="s-branch"><button class="tab active" data-v="main">main</button><button class="tab" data-v="feature/cart">feature/cart</button></div>
+      <div class="tabs" id="s-appr"><button class="tab active" data-v="pending">⏸ Pending</button><button class="tab" data-v="approved">✓ Approved</button><button class="tab" data-v="rejected">✕ Rejected</button></div>
+    </div>
+    <div id="graph"></div>
+    <div class="seq-msg" id="sim-msg" style="min-height:0;margin-top:8px"></div></div></div>
+</section>
+
+<section class="step" id="s7">
+  <h2>7. Your turn: skipped, not failed</h2>
+  <div class="body"><p>The difference between <b>skipped</b> and <b>failed</b> matters: skipped stages don't trigger <code>failed()</code> alerts.</p></div>
+  <div class="widget" data-widget="l5-step7"><p><i>Interactive in the preview (onShow handler).</i></p><div class="card">
+    <div style="display:flex;flex-wrap:wrap;gap:12px 18px;align-items:center;padding-bottom:12px;border-bottom:1px solid var(--border);margin-bottom:10px">
+      <label class="toggle"><input type="checkbox" id="s-build"><span class="track"></span>Tests fail</label>
+      <label class="toggle"><input type="checkbox" id="s-scan"><span class="track"></span>Scan fails</label>
+      <div class="tabs" id="s-branch"><button class="tab active" data-v="main">main</button><button class="tab" data-v="feature/cart">feature/cart</button></div>
+      <div class="tabs" id="s-appr"><button class="tab active" data-v="pending">⏸ Pending</button><button class="tab" data-v="approved">✓ Approved</button><button class="tab" data-v="rejected">✕ Rejected</button></div>
+    </div>
+    <div id="graph"></div>
+    <div class="seq-msg" id="sim-msg" style="min-height:0;margin-top:8px"></div></div></div>
+  <div class="check" data-type="custom">
+    <p class="q">Make <b>Deploy · prod</b> skipped while <b>nothing fails</b> and <b>dev still deploys</b>.</p>
+    <p class="muted">Completed through the widget above (see the preview's onShow handler for the success condition).</p>
+    <div class="explain">A feature branch with green tests: dev gets the build, prod's branch condition is false so it's skipped, and Notify stays quiet.</div>
+  </div>
+</section>
+
+<section class="step" id="s8">
+  <h2>8. Environments hold the gates</h2>
+  <div class="body"><p><code>environment: prod</code> on a deployment job targets an <b>environment</b> object in Azure DevOps. It records history (which commit is live?) and runs <b>checks</b> before any job targeting it starts.</p></div>
+  <div class="widget" data-widget="l5-step8"><div class="grid grid-2" style="gap:10px">
+        <div class="card card-tight"><b>✅ Approvals</b><p class="subtle" style="margin:4px 0 0">Named people or groups must approve</p></div>
+        <div class="card card-tight"><b>🌿 Branch control</b><p class="subtle" style="margin:4px 0 0">Only <code>main</code> may deploy</p></div>
+        <div class="card card-tight"><b>🕘 Business hours</b><p class="subtle" style="margin:4px 0 0">No Friday-night deploys</p></div>
+        <div class="card card-tight"><b>🔒 Exclusive lock</b><p class="subtle" style="margin:4px 0 0">One deployment at a time</p></div>
+        <div class="card card-tight"><b>🌐 REST / Function</b><p class="subtle" style="margin:4px 0 0">Ask an external system first</p></div>
+        <div class="card card-tight"><b>📋 Required template</b><p class="subtle" style="margin:4px 0 0">Only approved templates deploy</p></div></div></div>
+  <aside class="coming" data-set="B">
+    <dl>
+      <dt>GitHub Actions</dt><dd>Environment protection rules (required reviewers, wait timer, branch rules).</dd>
+      <dt>GitLab CI</dt><dd>Protected environments + deployment approvals.</dd>
+      <dt>Jenkins</dt><dd><code>input</code> steps, but defined <em>inside</em> the Jenkinsfile.</dd>
+      <dt>Classic pipelines</dt><dd>Pre-deployment approvals and gates on a release stage.</dd>
+    </dl>
+  </aside>
+</section>
+
+<section class="step" id="s9">
+  <h2>9. Quick check: why not in YAML?</h2>
+  <div class="body"><p>Approvals and checks are configured on the environment in the Azure DevOps UI, not in <code>azure-pipelines.yml</code>.</p></div>
+  <pre class="code" data-file="azure-pipelines.yml">stages:
+  - stage: Build
+    jobs: [ ... ]
+
+  - stage: Scan
+    dependsOn: []         # no dependencies, so it starts right away
+    jobs: [ ... ]
+
+  - stage: DeployDev
+    dependsOn: [Build, Scan]
+    jobs: [ ... ]
+
+  - stage: DeployProd
+    dependsOn: DeployDev
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+    jobs: [ ... ]</pre>
+  <div class="check" data-type="mcq">
+    <p class="q">Why?</p>
+    <ol class="options">
+      <li>YAML doesn't support approvals yet <span class="why">It's a deliberate design choice, not a missing feature.</span></li>
+      <li class="correct">So that people who can edit the pipeline can't remove the gate</li>
+      <li>It's faster to evaluate checks in the UI <span class="why">Performance has nothing to do with it.</span></li>
+    </ol>
+    <div class="explain">Anyone who can push a branch can edit YAML. Checks owned by the environment's admins can't be removed by the people they're meant to control.</div>
+  </div>
+</section>
+
+<section class="step" id="s10">
+  <h2>10. Deployment strategies</h2>
+  <div class="body"><p><code>runOnce</code> is the common choice on AKS, because the Kubernetes Deployment already does a <b>rolling update</b>.</p><p><code>canary</code> sends a slice of traffic to the new version first, then you <b>promote</b> or <b>reject</b>. (<code>rolling</code> in Azure Pipelines is for VM environments.)</p></div>
+  <div class="widget" data-widget="l5-step10"><p><i>Interactive in the preview (onShow handler).</i></p><div class="tabs" id="str"><button class="tab active" data-s="once">runOnce</button><button class="tab" data-s="canary">canary</button></div><div id="str-code"></div></div>
+</section>
+
+<section class="step summary" id="s11">
+  <h2>You can shape a delivery pipeline</h2>
+  <div class="body">Parallel stages, fan-in, conditions that keep <code>succeeded()</code>, gates owned by environments, and the right deployment strategy for AKS.</div>
+  <div class="widget" data-widget="l5-step11"><div class="card"><ul class="list-check" style="font-size:15px"><li><code>dependsOn: []</code> → parallel</li><li><code>dependsOn: [A, B]</code> → fan-in</li><li>Custom conditions replace <code>succeeded()</code></li><li>Approvals &amp; checks live on environments</li><li>AKS: <code>runOnce</code> + Deployment rolling update, or <code>canary</code></li></ul></div></div>
+</section>
+</article>
+</body>
+</html>

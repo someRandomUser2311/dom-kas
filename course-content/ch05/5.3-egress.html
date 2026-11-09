@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>5.3 · Egress</title>
+<link rel="stylesheet" href="../content.css">
+</head>
+<body>
+<article class="lesson" data-id="5.3" data-chapter="5">
+<nav class="crumbs"><a href="../index.html">Course</a> / <a href="index.html">Chapter 5</a> / 5.3</nav>
+<header>
+  <p class="kicker">Chapter 5 · Lesson 5.3 · ~9 steps · ~12 min</p>
+  <h1>Egress</h1>
+  <p class="meta">You'll be able to choose an AKS outbound type, recognise SNAT port exhaustion, and send all cluster egress through a firewall when security requires it.</p>
+</header>
+
+<section class="step" id="s1">
+  <h2>1. Traffic going out</h2>
+  <div class="body">
+    <p>Pods call things outside the cluster all the time:</p>
+    <ul>
+      <li>payment APIs</li>
+      <li>package mirrors</li>
+      <li>Microsoft Entra ID</li>
+      <li>ACR</li>
+    </ul>
+    <p>Nodes need outbound access too: AKS nodes must reach certain Azure endpoints to work at all.</p>
+    <p>How that traffic leaves the VNet, and with which public IP, is the cluster's <b>outbound type</b> (<code>--outbound-type</code>).</p>
+  </div>
+  <aside class="coming" data-set="A">
+    <dl>
+      <dt>Windows/IIS admin</dt><dd>It's the same decision as "which proxy or firewall do servers use to reach the internet?"</dd>
+      <dt>Linux admin</dt><dd>It's your default route plus a NAT device; the choices differ in capacity and control.</dd>
+      <dt>Developer (Compose)</dt><dd>On one VM, outbound just used the VM's IP. A cluster needs a deliberate choice.</dd>
+      <dt>Other clouds</dt><dd>Like choosing between a NAT gateway and routing through a firewall appliance in your VPC.</dd>
+    </dl>
+  </aside>
+</section>
+
+<section class="step" id="s2">
+  <h2>2. The outbound types</h2>
+  <table>
+    <tr><th><code>--outbound-type</code></th><th>How it works</th><th>When to use it</th></tr>
+    <tr><td><code>loadBalancer</code> (default)</td><td>Outbound rules on the cluster's Azure Load Balancer, with its public IP(s)</td><td>Simple clusters, moderate outbound traffic</td></tr>
+    <tr><td><code>managedNATGateway</code></td><td>AKS creates and manages a NAT gateway</td><td>Lots of outbound connections</td></tr>
+    <tr><td><code>userAssignedNATGateway</code></td><td>Your own NAT gateway, already attached to the node subnet</td><td>When a central network team owns it</td></tr>
+    <tr><td><code>userDefinedRouting</code></td><td>Your route table sends <code>0.0.0.0/0</code> to a firewall (e.g. Azure Firewall); AKS creates no outbound IP</td><td>Security requires inspecting and allow-listing all egress</td></tr>
+  </table>
+  <aside class="more"><p>Changing the outbound type of an existing cluster is supported for some combinations, but it's disruptive. Decide early.</p></aside>
+</section>
+
+<section class="step" id="s3">
+  <h2>3. SNAT ports: the hidden limit</h2>
+  <div class="body">
+    <p>Each outbound connection from behind a public IP uses a <b>SNAT port</b> on that IP. Ports are limited, about 64,000 per IP, and with the load balancer they're shared out between nodes in fixed blocks.</p>
+    <p>An app that opens many short-lived connections to the same destination, without connection reuse, can use up its node's allocation. New connections then wait and time out, <b>intermittently</b>, and only under load.</p>
+    <p>A <b>NAT gateway</b> allocates ports on demand and supports more IPs, which makes exhaustion much rarer.</p>
+  </div>
+</section>
+
+<section class="step" id="s4">
+  <h2>4. Diagnose the intermittent timeout</h2>
+  <div class="check" data-type="diagnose">
+    <p class="q">At peak, about 3% of calls from <code>orders-api</code> to the payment provider time out. At night there are no errors. Here's what you find:</p>
+    <pre class="output">orders-api log:  dial tcp 52.168.10.20:443: i/o timeout   (x 1,284 in 10 min)
+Azure Monitor → Load Balancer "kubernetes" → SNAT Connection Count (Failed): rising at peak
+Cluster: --outbound-type loadBalancer, 1 outbound public IP, 40 nodes
+App code: new HttpClient per request, no keep-alive</pre>
+    <ol class="options">
+      <li>The payment provider is rate-limiting <span class="why">That would give HTTP 429s, not TCP connect timeouts tied to the LB's SNAT metric.</span></li>
+      <li class="correct">SNAT port exhaustion: many short-lived connections from each node use up its share of the outbound IP's ports</li>
+      <li>DNS is failing <span class="why">The error shows an IP address, so DNS already worked.</span></li>
+      <li>A network policy is blocking egress <span class="why">That would block every call, all the time.</span></li>
+    </ol>
+    <div class="explain">Fix both sides: reuse connections in the app (one shared HTTP client with keep-alive), and add capacity by moving to a NAT gateway or adding outbound IPs.</div>
+  </div>
+</section>
+
+<section class="step" id="s5">
+  <h2>5. All egress through a firewall</h2>
+  <div class="body">
+    <p>Many organisations require every outbound connection to be <b>inspected and allow-listed</b>. With <code>userDefinedRouting</code>:</p>
+    <ol>
+      <li>The node subnet has a <b>route table</b> sending <code>0.0.0.0/0</code> to Azure Firewall's private IP.</li>
+      <li>The firewall allows only what's needed: AKS's required endpoints (the <code>AzureKubernetesService</code> FQDN tag covers most), plus your app's destinations.</li>
+      <li>Everything else is denied and logged.</li>
+    </ol>
+    <p>In a hub-and-spoke design, the firewall lives in the hub VNet (Chapter 17's architecture).</p>
+  </div>
+  <div class="check" data-type="mcq">
+    <p class="q">Security says: "All traffic leaving the cluster must pass through Azure Firewall." Which outbound type?</p>
+    <ol class="options">
+      <li><code>loadBalancer</code> with network policies <span class="why">Policies control pod-to-pod traffic; egress still leaves through the LB's public IP, not the firewall.</span></li>
+      <li><code>managedNATGateway</code> <span class="why">A NAT gateway doesn't inspect or filter traffic.</span></li>
+      <li class="correct"><code>userDefinedRouting</code>, with a route table pointing <code>0.0.0.0/0</code> at the firewall</li>
+      <li>A private cluster <span class="why">Private clusters make the API server private; outbound traffic still needs a path.</span></li>
+    </ol>
+    <div class="explain">UDR hands egress to your network design. Remember to allow AKS's required endpoints, or nodes won't even register.</div>
+  </div>
+</section>
+
+<section class="step" id="s6">
+  <h2>6. What AKS itself needs to reach</h2>
+  <div class="body">
+    <p>With a locked-down firewall, allow at least the documented required outbound rules. The main ones:</p>
+    <ul>
+      <li>the cluster's API server address (<code>*.hcp.&lt;region&gt;.azmk8s.io</code>, or its private endpoint);</li>
+      <li><code>mcr.microsoft.com</code> and <code>*.data.mcr.microsoft.com</code> for system images;</li>
+      <li><code>management.azure.com</code> and <code>login.microsoftonline.com</code>;</li>
+      <li><code>packages.aks.azure.com</code> (and related package endpoints) for node binaries;</li>
+      <li>your ACR and its data endpoints.</li>
+    </ul>
+    <p>The exact list changes over time; take it from the AKS "outbound network and FQDN rules" docs, or use the firewall's <code>AzureKubernetesService</code> tag.</p>
+  </div>
+</section>
+
+<section class="step" id="s7">
+  <h2>7. Private endpoints instead of the internet</h2>
+  <div class="body">
+    <p>For Azure services, such as ACR, Key Vault, Storage and databases, use <b>private endpoints</b>. Traffic then stays on the Microsoft backbone, through your VNet, instead of going out to public IPs.</p>
+    <p>That needs fewer firewall rules and gives a smaller attack surface. Chapter 6 does this for ACR.</p>
+  </div>
+</section>
+
+<section class="step" id="s8">
+  <h2>8. Egress at the pod level</h2>
+  <div class="body">
+    <p>The outbound type controls traffic at the <b>cluster</b> level. To restrict which <b>pods</b> may talk to the internet at all, use <b>egress NetworkPolicies</b> (Chapter 9). With Cilium, FQDN-based policies are also possible through Advanced Container Networking Services.</p>
+  </div>
+</section>
+
+<section class="step summary" id="s9">
+  <h2>Egress, sorted</h2>
+  <ul>
+    <li><code>--outbound-type</code>: loadBalancer (default), managedNATGateway / userAssignedNATGateway, userDefinedRouting.</li>
+    <li>SNAT port exhaustion = intermittent outbound timeouts under load; reuse connections and use a NAT gateway.</li>
+    <li>Firewall-inspected egress = UDR + Azure Firewall + AKS's required FQDNs.</li>
+    <li>Private endpoints keep Azure-service traffic off the internet.</li>
+  </ul>
+</section>
+</article>
+</body>
+</html>

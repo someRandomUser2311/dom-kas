@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>2.4 · Services</title>
+<link rel="stylesheet" href="../content.css">
+</head>
+<body>
+<article class="lesson" data-id="2.4" data-chapter="2">
+<nav class="crumbs"><a href="../index.html">Course</a> / <a href="index.html">Chapter 2</a> / 2.4</nav>
+<header>
+  <p class="kicker">Chapter 2 · Lesson 2.4 · ~12 steps · ~15 min</p>
+  <h1>Services</h1>
+  <p class="meta">You'll be able to give a set of pods a stable address, choose the right Service type, wire <code>port</code> to <code>targetPort</code>, and debug a Service with no endpoints.</p>
+</header>
+
+<section class="step" id="s1">
+  <h2>1. Pods come and go; the address must not</h2>
+  <div class="body">
+    <p><code>orders-api</code> has three pods, each with its own IP. Every rollout, crash or scale-up changes them. The <code>web</code> frontend can't keep a list of pod IPs.</p>
+    <p>A <b>Service</b> gives a group of pods <b>one stable virtual IP and DNS name</b>, and load-balances connections across whichever pods currently match its selector.</p>
+  </div>
+  <div class="widget" data-widget="service-traffic">A client pod sends requests to the Service <code>orders-api</code> (ClusterIP 10.0.142.17:80). Each request animates to one of the three matching pods, on port 8080. Buttons: "kill a pod" (traffic shifts to the rest), "scale to 5", and "break the selector" (requests fail, and the endpoint list goes empty).</div>
+  <aside class="coming" data-set="A">
+    <dl>
+      <dt>Windows/IIS admin</dt><dd>Like an NLB or ARR virtual IP in front of a web farm, except membership is decided by labels and updates itself.</dd>
+      <dt>Linux admin</dt><dd>A virtual IP that kube-proxy (iptables/IPVS) or eBPF (Cilium) rules translate to a pod IP on each node. There's no proxy process in the path.</dd>
+      <dt>Developer (Compose)</dt><dd>In Compose, the service name resolves to the containers automatically. In Kubernetes you create that name explicitly, as a Service object.</dd>
+      <dt>Other clouds</dt><dd>Same object as on EKS and GKE. Only <code>type: LoadBalancer</code> differs: on AKS it creates an Azure Load Balancer rule.</dd>
+    </dl>
+  </aside>
+</section>
+
+<section class="step" id="s2">
+  <h2>2. A ClusterIP Service</h2>
+  <div class="body">
+    <p>The default type is <b>ClusterIP</b>: an address reachable only <b>inside</b> the cluster. That's exactly right for <code>orders-api</code>, which only <code>web</code> calls.</p>
+  </div>
+  <pre class="code" data-file="k8s/base/service.yaml">apiVersion: v1
+kind: Service
+metadata:
+  name: orders-api
+  namespace: orders
+spec:
+  type: ClusterIP
+  selector:
+    app: orders-api
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8080</pre>
+</section>
+
+<section class="step" id="s3">
+  <h2>3. <code>port</code> vs <code>targetPort</code></h2>
+  <div class="body">
+    <ul>
+      <li><code>port</code>: the port clients use on the <b>Service</b> (<code>http://orders-api:80</code>).</li>
+      <li><code>targetPort</code>: the port on the <b>pod</b> the traffic is forwarded to. It must be where the container actually listens, usually its <code>containerPort</code>.</li>
+    </ul>
+    <p><code>targetPort</code> can also be a <b>name</b> that matches a named container port. Then the pod can change port numbers without the Service changing.</p>
+  </div>
+  <div class="check" data-type="fill">
+    <p class="q">The container listens on 8080; clients should call port 80. Complete the Service.</p>
+    <pre class="code" data-file="service.yaml">  ports:
+    - port: 80
+      <span class="blank">?</span>: 8080</pre>
+    <ul class="chips">
+      <li class="correct"><code>targetPort</code></li>
+      <li><code>containerPort</code> <span class="why"><code>containerPort</code> belongs in the pod spec, not the Service.</span></li>
+      <li><code>nodePort</code> <span class="why"><code>nodePort</code> opens a port on every node; that's a different thing.</span></li>
+      <li><code>hostPort</code> <span class="why"><code>hostPort</code> is a pod setting to avoid.</span></li>
+    </ul>
+    <div class="explain">Service <code>port</code> 80 → pod <code>targetPort</code> 8080. If you omit <code>targetPort</code>, it defaults to the same value as <code>port</code>, a common source of "connection refused".</div>
+  </div>
+</section>
+
+<section class="step" id="s4">
+  <h2>4. Endpoints: who's behind the Service right now</h2>
+  <div class="body">
+    <p>Kubernetes keeps a list of the IP:port pairs behind each Service, in <b>EndpointSlice</b> objects. Only pods that match the selector <b>and are Ready</b> are included.</p>
+    <p>Check it whenever a Service "doesn't work". The older <code>kubectl get endpoints</code> still works but is deprecated; prefer <code>kubectl get endpointslices</code>.</p>
+  </div>
+  <pre class="output">$ kubectl get endpointslices -n orders -l kubernetes.io/service-name=orders-api
+NAME               ADDRESSTYPE   PORTS   ENDPOINTS                            AGE
+orders-api-x7k2p   IPv4          8080    10.244.1.12,10.244.2.7,10.244.3.9    3d</pre>
+</section>
+
+<section class="step" id="s5">
+  <h2>5. Diagnose: no endpoints</h2>
+  <div class="check" data-type="diagnose">
+    <p class="q"><code>web</code> gets "connection refused" calling <code>orders-api</code>. Here's what you see. What's the root cause?</p>
+    <pre class="output">$ kubectl get endpointslices -n orders -l kubernetes.io/service-name=orders-api
+NAME               ADDRESSTYPE   PORTS     ENDPOINTS   AGE
+orders-api-x7k2p   IPv4          &lt;unset&gt;   &lt;unset&gt;     5m
+$ kubectl get svc orders-api -n orders -o jsonpath='{.spec.selector}'
+{"app":"orders-api","tier":"api"}
+$ kubectl get pods -n orders --show-labels
+NAME                         READY   STATUS    LABELS
+orders-api-7d9c5f6b8-2xk9p   1/1     Running   app=orders-api,pod-template-hash=7d9c5f6b8
+orders-api-7d9c5f6b8-q8w4m   1/1     Running   app=orders-api,pod-template-hash=7d9c5f6b8</pre>
+    <ol class="options">
+      <li>The pods aren't ready <span class="why">They're <code>1/1 Running</code>.</span></li>
+      <li class="correct">The Service selector requires <code>tier=api</code>, which the pods don't have</li>
+      <li>The <code>targetPort</code> is wrong <span class="why">A wrong targetPort still gives endpoints; it fails differently.</span></li>
+      <li>The Service is in the wrong namespace <span class="why">Both are in <code>orders</code>.</span></li>
+    </ol>
+    <div class="explain">Every label in a Service selector must be on the pod. Either add <code>tier: api</code> to the pod template or remove it from the selector. Empty endpoints almost always mean a selector mismatch or no ready pods.</div>
+  </div>
+</section>
+
+<section class="step" id="s6">
+  <h2>6. NodePort</h2>
+  <div class="body">
+    <p><b>NodePort</b> opens the same port (30000–32767) on <b>every node</b> and forwards it to the Service. It's mostly a building block: LoadBalancer Services use it underneath.</p>
+    <p>On AKS you rarely use it directly. Nodes usually have no public IPs, and exposing node ports is a security smell.</p>
+  </div>
+</section>
+
+<section class="step" id="s7">
+  <h2>7. LoadBalancer</h2>
+  <div class="body">
+    <p><b>LoadBalancer</b> asks the cloud for an external load balancer. On AKS, the cloud-controller-manager adds a frontend IP and rule to the cluster's <b>Azure Load Balancer</b>, which then appears in <code>EXTERNAL-IP</code>.</p>
+    <p>Add the annotation <code>service.beta.kubernetes.io/azure-load-balancer-internal: "true"</code> to get a <b>private</b> IP from your VNet instead.</p>
+    <p>One public IP per Service gets expensive and messy. For HTTP apps, you usually expose a single <b>Gateway or Ingress</b> instead (Chapter 8).</p>
+  </div>
+  <pre class="output">$ kubectl get svc -n orders
+NAME         TYPE           CLUSTER-IP     EXTERNAL-IP    PORT(S)        AGE
+orders-api   ClusterIP      10.0.142.17    &lt;none&gt;         80/TCP         3d
+web          LoadBalancer   10.0.88.203    20.50.12.34    80:31452/TCP   3d</pre>
+</section>
+
+<section class="step" id="s8">
+  <h2>8. Headless Services</h2>
+  <div class="body">
+    <p>Set <code>clusterIP: None</code> and you get a <b>headless</b> Service: no virtual IP and no load balancing. DNS returns the individual pod IPs instead.</p>
+    <p>StatefulSets use this so each replica has its own stable name (<code>db-0.db.orders.svc.cluster.local</code>). Clients like database drivers that do their own load balancing want it too.</p>
+  </div>
+</section>
+
+<section class="step" id="s9">
+  <h2>9. Which type?</h2>
+  <div class="check" data-type="match">
+    <p class="q">Match each need to the Service type.</p>
+    <table class="pairs">
+      <tr><td><code>web</code> calls <code>orders-api</code> inside the cluster</td><td>ClusterIP</td></tr>
+      <tr><td>A TCP service must be reachable from the internet with its own IP</td><td>LoadBalancer</td></tr>
+      <tr><td>Only VMs in the same VNet should reach it</td><td>LoadBalancer with the internal annotation</td></tr>
+      <tr><td>Each database replica must be addressable by name</td><td>Headless (<code>clusterIP: None</code>)</td></tr>
+    </table>
+    <div class="explain">ClusterIP is the default and the most common. Pods talk to each other through ClusterIP Services; LoadBalancer is only for traffic from outside.</div>
+  </div>
+</section>
+
+<section class="step" id="s10">
+  <h2>10. Reaching a ClusterIP from your laptop</h2>
+  <div class="body">
+    <p>For debugging, <code>kubectl port-forward</code> tunnels a local port to a Service (or pod) through the API server. Nothing gets exposed publicly.</p>
+  </div>
+  <pre class="code" data-file="terminal">kubectl port-forward svc/orders-api -n orders 8080:80
+# in another terminal
+curl -s localhost:8080/healthz</pre>
+</section>
+
+<section class="step" id="s11">
+  <h2>11. Session affinity and traffic policy</h2>
+  <div class="body">
+    <ul>
+      <li>Connections are spread across pods. <code>sessionAffinity: ClientIP</code> keeps one client on one pod, but design apps so they don't need it.</li>
+      <li>Load balancing is per <b>connection</b>, not per request. A client with one long-lived HTTP/2 or gRPC connection talks to one pod. Chapter 8's gateways balance per request.</li>
+      <li><code>externalTrafficPolicy: Local</code> on a LoadBalancer Service keeps the client's source IP, at the cost of uneven spreading.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="step summary" id="s12">
+  <h2>Services, sorted</h2>
+  <ul>
+    <li>A Service = stable IP and DNS name in front of pods chosen by a label selector.</li>
+    <li><code>port</code> is the Service's port; <code>targetPort</code> is where the container listens.</li>
+    <li>EndpointSlices list the ready pods behind it; empty means a selector mismatch or no ready pods.</li>
+    <li>ClusterIP (default, internal), NodePort (building block), LoadBalancer (Azure LB; internal with an annotation), headless (pod IPs via DNS).</li>
+    <li><code>port-forward</code> for debugging; Gateways (Chapter 8) for HTTP from outside.</li>
+  </ul>
+</section>
+</article>
+</body>
+</html>

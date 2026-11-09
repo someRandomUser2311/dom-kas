@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>7.1 · CI/CD and where Azure Pipelines fits</title>
+<link rel="stylesheet" href="../content.css">
+</head>
+<body>
+<article class="lesson" data-id="7.1" data-chapter="7">
+<nav class="crumbs"><a href="../index.html">Course</a> / <a href="index.html">Chapter 7</a> / 7.1</nav>
+<header>
+  <p class="kicker">Chapter 7 · Lesson 7.1 · ~11 steps · built in app-preview (content/ch07/l1.js)</p>
+  <h1>CI/CD and where Azure Pipelines fits</h1>
+  <p class="meta">Converted from the built preview lesson. Interactive panels are kept as their rendered HTML inside <code>.widget</code> blocks.</p>
+</header>
+
+<section class="step" id="s1">
+  <h2>1. Shipping by hand doesn't scale</h2>
+  <div class="body"><p>In earlier chapters you deployed to AKS like this, straight from your laptop.</p><p>It works for one person on a quiet afternoon. With ten engineers and twenty changes a day, someone skips the tests, someone pushes <code>latest</code> over a good image, and someone deploys uncommitted code.</p></div>
+  <pre class="code" data-file="laptop.sh"># what "deploying" looked like so far
+docker build -t contosoacr.azurecr.io/orders-api:latest .
+docker push contosoacr.azurecr.io/orders-api:latest
+kubectl apply -f k8s/
+# tests? "I ran them yesterday" 🤞</pre>
+  <aside class="more"><p>The real cost isn't typing commands. It's <b>no audit trail</b> (who deployed what, from which commit?) and <b>no consistency</b> (every laptop has different tool versions).</p></aside>
+</section>
+
+<section class="step" id="s2">
+  <h2>2. CI: every push is built and tested</h2>
+  <div class="body"><p><b>Continuous Integration</b> means every push is built and tested automatically, on a clean machine, within minutes.</p><p>Broken code is caught while the change is still fresh in the author's head, not at release time.</p></div>
+  <div class="widget" data-widget="l1-step2"><div class="card"><div class="flow"><div class="flow-step done" data-i="0" style="cursor:pointer"><span class="fs-ico">👩‍💻</span>git push</div><span class="flow-arrow">→</span><div class="flow-step done" data-i="1" style="cursor:pointer"><span class="fs-ico">⚡</span>Trigger</div><span class="flow-arrow">→</span><div class="flow-step done" data-i="2" style="cursor:pointer"><span class="fs-ico">🖥️</span>Agent</div><span class="flow-arrow">→</span><div class="flow-step on" data-i="3" style="cursor:pointer"><span class="fs-ico">🧪</span>Test</div></div></div></div>
+  <aside class="coming" data-set="B">
+    <dl>
+      <dt>GitHub Actions</dt><dd>This is what a workflow with <code>on: push</code> and a test job gives you.</dd>
+      <dt>GitLab CI</dt><dd>Your <code>test</code> stage on every push: same idea.</dd>
+      <dt>Jenkins</dt><dd>A multibranch job building every commit. Here the build servers are managed for you.</dd>
+      <dt>Classic pipelines</dt><dd>The Classic <b>Build</b> pipeline with CI enabled covered exactly this part.</dd>
+    </dl>
+  </aside>
+</section>
+
+<section class="step" id="s3">
+  <h2>3. CD: every green build is deployable</h2>
+  <div class="body"><p><b>Continuous Delivery</b> extends CI: every build that passes produces a <b>deployable artifact</b>, for us a container image in ACR with a unique tag.</p><p>Releasing becomes a decision, not a project.</p></div>
+  <div class="widget" data-widget="l1-step3"><div class="card"><div class="flow"><div class="flow-step done" data-i="0" style="cursor:pointer"><span class="fs-ico">👩‍💻</span>git push</div><span class="flow-arrow">→</span><div class="flow-step done" data-i="1" style="cursor:pointer"><span class="fs-ico">⚡</span>Trigger</div><span class="flow-arrow">→</span><div class="flow-step done" data-i="2" style="cursor:pointer"><span class="fs-ico">🖥️</span>Agent</div><span class="flow-arrow">→</span><div class="flow-step done" data-i="3" style="cursor:pointer"><span class="fs-ico">🧪</span>Test</div><span class="flow-arrow">→</span><div class="flow-step on" data-i="4" style="cursor:pointer"><span class="fs-ico">📦</span>Push to ACR</div></div></div></div>
+</section>
+
+<section class="step" id="s4">
+  <h2>4. Delivery vs deployment: one switch</h2>
+  <div class="body"><p>The only difference between Continuous <b>Delivery</b> and Continuous <b>Deployment</b> is whether a human approves the last step.</p><p>Flip the switch and watch the name change.</p></div>
+  <div class="widget" data-widget="l1-step4"><p><i>Interactive in the preview (onShow handler).</i></p><div class="card">
+          <label class="toggle"><input type="checkbox" id="gate" checked><span class="track"></span>Require approval before prod</label>
+          <div style="margin-top:16px" id="gate-flow"></div>
+          <div class="seq-msg" id="gate-msg" style="margin-top:12px;min-height:0"></div></div></div>
+</section>
+
+<section class="step" id="s5">
+  <h2>5. Quick check</h2>
+  <div class="body"><p>Your team's pipeline tests every commit and pushes a tagged image to ACR. A lead must click <b>Approve</b> before it reaches production AKS.</p></div>
+  <pre class="code" data-file="laptop.sh"># what "deploying" looked like so far
+docker build -t contosoacr.azurecr.io/orders-api:latest .
+docker push contosoacr.azurecr.io/orders-api:latest
+kubectl apply -f k8s/
+# tests? "I ran them yesterday" 🤞</pre>
+  <div class="check" data-type="mcq">
+    <p class="q">What is this?</p>
+    <ol class="options">
+      <li>Continuous Integration only <span class="why">It goes further than CI: it produces a deployable image <em>and</em> deploys it.</span></li>
+      <li>Continuous Deployment <span class="why">Continuous Deployment has no human gate. Here a lead approves.</span></li>
+      <li class="correct">Continuous Delivery</li>
+      <li>A Classic release pipeline <span class="why">That's <em>how</em> it might be built, not what the practice is called.</span></li>
+    </ol>
+    <div class="explain">Every green build is deployable, but a human decides when it ships. Remove the approval and it becomes Continuous <em>Deployment</em>.</div>
+  </div>
+</section>
+
+<section class="step" id="s6">
+  <h2>6. Follow one commit to production</h2>
+  <div class="body"><p>Here's the whole journey. <b>Click each box</b> (or use the buttons) to see what happens at that point.</p><p>Every box is something you already did by hand. The pipeline just does it the same way, every time.</p></div>
+  <div class="widget" data-widget="l1-step6"><p><i>Interactive in the preview (onShow handler).</i></p><div class="card"><div class="flow"><div class="flow-step on" data-i="0" style="cursor:pointer"><span class="fs-ico">👩‍💻</span>git push</div><span class="flow-arrow">→</span><div class="flow-step " data-i="1" style="cursor:pointer"><span class="fs-ico">⚡</span>Trigger</div><span class="flow-arrow">→</span><div class="flow-step " data-i="2" style="cursor:pointer"><span class="fs-ico">🖥️</span>Agent</div><span class="flow-arrow">→</span><div class="flow-step " data-i="3" style="cursor:pointer"><span class="fs-ico">🧪</span>Test</div><span class="flow-arrow">→</span><div class="flow-step " data-i="4" style="cursor:pointer"><span class="fs-ico">📦</span>Push to ACR</div><span class="flow-arrow">→</span><div class="flow-step " data-i="5" style="cursor:pointer"><span class="fs-ico">🛑</span>Approval</div><span class="flow-arrow">→</span><div class="flow-step " data-i="6" style="cursor:pointer"><span class="fs-ico">☸️</span>Deploy</div></div></div><div class="seq-msg" id="fmsg" style="min-height:96px"></div>
+        <div style="display:flex;gap:10px"><button class="btn btn-sm" id="fprev">← Back</button><button class="btn btn-sm btn-primary" id="fnext">Next →</button><span class="subtle" id="fcount" style="margin-left:auto;align-self:center"></span></div></div>
+</section>
+
+<section class="step" id="s7">
+  <h2>7. Azure DevOps, the product</h2>
+  <div class="body"><p>Azure Pipelines is one service inside <b>Azure DevOps</b>, a separate product from the Azure portal. An <em>organization</em> holds <em>projects</em>, and each project can switch these services on or off.</p></div>
+  <div class="widget" data-widget="l1-step7"><div class="table-wrap"><table class="table">
+        <tr><th>Service</th><th>What it does</th></tr>
+        <tr><td><b>Repos</b></td><td>Git hosting (GitHub works just as well)</td></tr>
+        <tr><td><b>Pipelines</b> <span class="badge badge-accent">this chapter</span></td><td>Build, test and deploy: CI/CD</td></tr>
+        <tr><td><b>Artifacts</b></td><td>Package feeds: npm, NuGet, Maven, pip</td></tr>
+        <tr><td><b>Boards</b></td><td>Work items, sprints, Kanban</td></tr>
+        <tr><td><b>Test Plans</b></td><td>Manual & exploratory testing</td></tr></table></div></div>
+  <aside class="coming" data-set="B">
+    <dl>
+      <dt>GitHub Actions</dt><dd>GitHub bundles the same ideas: Repos ≈ GitHub repos, Pipelines ≈ Actions, Artifacts ≈ Packages, Boards ≈ Projects/Issues.</dd>
+      <dt>GitLab CI</dt><dd>GitLab is one app with all of these built in. Azure DevOps splits them into services you toggle per project.</dd>
+      <dt>Jenkins</dt><dd>Jenkins only covers the Pipelines part. Repos, packages and boards live in other tools.</dd>
+      <dt>Classic pipelines</dt><dd>Same product you already use. Only the way pipelines are defined is changing.</dd>
+    </dl>
+  </aside>
+</section>
+
+<section class="step" id="s8">
+  <h2>8. Quick check: do I need an Azure subscription?</h2>
+  <div class="body"><p>A common confusion, and it matters for this course.</p></div>
+  <pre class="code" data-file="laptop.sh"># what "deploying" looked like so far
+docker build -t contosoacr.azurecr.io/orders-api:latest .
+docker push contosoacr.azurecr.io/orders-api:latest
+kubectl apply -f k8s/
+# tests? "I ran them yesterday" 🤞</pre>
+  <div class="check" data-type="mcq">
+    <p class="q">Which statement is true?</p>
+    <ol class="options">
+      <li>You need an Azure subscription to create an Azure DevOps organization <span class="why">An organization needs a Microsoft account, not a subscription.</span></li>
+      <li>Pipelines can't run at all without a subscription <span class="why">Pipelines run on agents; the free tier covers small teams with no subscription.</span></li>
+      <li class="correct">The subscription is for the Azure resources you deploy to, and for buying extra capacity</li>
+    </ol>
+    <div class="explain">An Azure DevOps organization only needs a Microsoft account and has a free tier. An Azure subscription matters for <b>what you deploy to</b> (AKS, ACR…) and for buying extra parallel jobs. In this course those targets are emulated locally by floci-az.</div>
+  </div>
+</section>
+
+<section class="step" id="s9">
+  <h2>9. Classic vs YAML pipelines</h2>
+  <div class="body"><p>Azure Pipelines has two ways to define a pipeline. You'll meet both at work, but every <b>new</b> pipeline should be YAML: it lives in the repo, is reviewed in pull requests, and does build <em>and</em> deploy in one file.</p></div>
+  <div class="widget" data-widget="l1-step9"><div class="compare">
+        <div class="card"><div class="card-title">🖱️ Classic</div><ul class="muted" style="margin:0;padding-left:18px;font-size:14px"><li>Built by clicking in the UI</li><li>Separate Build & Release pipelines</li><li>Hard to review or reuse</li></ul></div>
+        <div class="card sel"><div class="card-title">📄 YAML <span class="badge badge-success">Use this</span></div><ul class="muted" style="margin:0;padding-left:18px;font-size:14px"><li><code>azure-pipelines.yml</code> in your repo</li><li>Reviewed in PRs, versioned with code</li><li>Reusable via templates</li></ul></div></div></div>
+  <aside class="coming" data-set="B">
+    <dl>
+      <dt>Classic pipelines</dt><dd>Your Classic definitions keep working, but new features land in YAML first. Next lesson shows how your Build + Release map onto stages.</dd>
+    </dl>
+  </aside>
+</section>
+
+<section class="step" id="s10">
+  <h2>10. The smallest useful pipeline</h2>
+  <div class="body"><p>Here's a complete, working pipeline in eight lines. The next lesson takes it apart line by line. For now, just find one thing in it.</p></div>
+  <pre class="code" data-file="azure-pipelines.yml"># azure-pipelines.yml
+trigger:
+  - main
+
+pool:
+  vmImage: ubuntu-latest
+
+steps:
+  - script: echo "Hello from $(Agent.OS)"</pre>
+  <div class="check" data-type="tapline" data-match="vmImage:">
+    <p class="q">Tap the line that picks <b>which machine</b> runs the pipeline.</p>
+    <div class="explain"><code>vmImage: ubuntu-latest</code> asks for a fresh Microsoft-hosted Ubuntu VM. You'll go deep on agents in L7.3.</div>
+  </div>
+</section>
+
+<section class="step summary" id="s11">
+  <h2>CI/CD, demystified</h2>
+  <div class="body">You know why we automate, the difference between CI, Continuous Delivery and Continuous Deployment, where Azure Pipelines sits in Azure DevOps, and why YAML beats Classic.</div>
+  <div class="widget" data-widget="l1-step11"><div class="card"><ul class="list-check" style="font-size:15px"><li>CI = every push built &amp; tested on a clean machine</li><li>Continuous Delivery = every green build deployable; a human ships it</li><li>Continuous Deployment = no human gate</li><li>Azure DevOps org needs no Azure subscription</li><li>New pipelines: YAML, in the repo</li></ul></div></div>
+</section>
+</article>
+</body>
+</html>

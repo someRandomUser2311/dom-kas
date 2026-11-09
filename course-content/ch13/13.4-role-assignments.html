@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>13.4 · Identity &amp; role assignments</title>
+<link rel="stylesheet" href="../content.css">
+</head>
+<body>
+<article class="lesson" data-id="13.4" data-chapter="13">
+<nav class="crumbs"><a href="../index.html">Course</a> / <a href="index.html">Chapter 13</a> / 13.4</nav>
+<header>
+  <p class="kicker">Chapter 13 · Lesson 13.4 · ~11 steps · ~14 min</p>
+  <h1>Identity &amp; role assignments</h1>
+  <p class="meta">You'll be able to write role assignments that redeploy cleanly, grant AcrPull to the kubelet, and create a workload identity with its federated credential in Bicep.</p>
+</header>
+
+<section class="step" id="s1">
+  <h2>1. A role assignment is an extension resource</h2>
+  <div class="body">
+    <p><code>Microsoft.Authorization/roleAssignments</code> is attached to another resource through <code>scope:</code>. It has three parts:</p>
+    <ul>
+      <li>the role definition ID;</li>
+      <li>the principal ID;</li>
+      <li>a principal type.</li>
+    </ul>
+    <p>Its <b>name must be a GUID</b>.</p>
+  </div>
+  <pre class="code" data-file="identity.bicep">var acrPullRoleId = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '7f951dda-4ed3-4680-a7ca-43fe172d538d')
+
+resource kubeletAcrPull 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(acr.id, aks.id, acrPullRoleId)
+  scope: acr
+  properties: {
+    roleDefinitionId: acrPullRoleId
+    principalId: aks.properties.identityProfile.kubeletidentity.objectId
+    principalType: 'ServicePrincipal'
+  }
+}</pre>
+  <aside class="coming" data-set="TF">
+    <dl>
+      <dt>Terraform</dt><dd><code>azurerm_role_assignment</code> generates the GUID name and remembers it in state. Bicep has no state, so <b>you</b> must compute a name that's the same on every deployment.</dd>
+    </dl>
+  </aside>
+</section>
+
+<section class="step" id="s2">
+  <h2>2. Why the name must be deterministic</h2>
+  <div class="body">
+    <p><code>guid(acr.id, aks.id, acrPullRoleId)</code> hashes its inputs. The same registry, cluster and role always give the same GUID.</p>
+    <p>A redeploy finds the existing assignment by that name and leaves it alone.</p>
+  </div>
+  <div class="check" data-type="mcq">
+    <p class="q">A colleague writes <code>name: newGuid()</code> for the role assignment. The first deployment succeeds. What happens on the second?</p>
+    <ol class="options">
+      <li>Nothing changes <span class="why">A new GUID means a new resource name.</span></li>
+      <li class="correct">It fails with <code>RoleAssignmentExists</code>: a different-named assignment for the same principal, role and scope already exists</li>
+      <li>A second identical assignment is created <span class="why">Azure refuses duplicates of principal + role + scope.</span></li>
+      <li>The old one is replaced <span class="why">Incremental mode doesn't delete the old one.</span></li>
+    </ol>
+    <div class="explain"><code>newGuid()</code> is only allowed as a parameter default, and changes every time. Always use <code>guid()</code> with stable inputs: scope, principal and role.</div>
+  </div>
+</section>
+
+<section class="step" id="s3">
+  <h2>3. The kubelet identity path</h2>
+  <div class="check" data-type="tapline" data-match="principalId: aks.properties.identityProfile.kubeletidentity.objectId">
+    <p class="q">In step 1's code, tap the line that targets the identity that actually pulls images.</p>
+    <div class="explain"><code>identityProfile.kubeletidentity.objectId</code> is the kubelet's identity, not <code>aks.identity</code> (the control plane). It's the same distinction as lesson 5.4.</div>
+  </div>
+</section>
+
+<section class="step" id="s4">
+  <h2>4. <code>principalType</code> avoids a race</h2>
+  <div class="body">
+    <p>A just-created identity may not have reached every Entra ID replica yet. Without <code>principalType</code>, ARM looks the principal up and can fail with <code>PrincipalNotFound</code>.</p>
+    <p>Setting <code>principalType: 'ServicePrincipal'</code> (managed identities count as service principals) skips that lookup.</p>
+  </div>
+</section>
+
+<section class="step" id="s5">
+  <h2>5. Diagnose the deployment error</h2>
+  <div class="check" data-type="diagnose">
+    <p class="q">A first deployment of a new environment fails intermittently. What's the fix?</p>
+    <pre class="output">{"code":"PrincipalNotFound","message":"Principal 4e7a… does not exist in the directory 72f9…. Check that you have
+the correct principal ID. If you are creating this principal and then immediately assigning a role, this error might be
+related to a replication delay. In this case, set the role assignment principalType property to a value, such as
+ServicePrincipal, User, or Group."}</pre>
+    <ol class="options">
+      <li>Add <code>dependsOn</code> on the identity <span class="why">The reference already orders it; the issue is directory replication.</span></li>
+      <li class="correct">Set <code>principalType: 'ServicePrincipal'</code> on the role assignment</li>
+      <li>Use <code>newGuid()</code> for the name <span class="why">That causes RoleAssignmentExists later.</span></li>
+      <li>Wait a day <span class="why">Only seconds of replication are involved, and the property avoids the lookup.</span></li>
+    </ol>
+    <div class="explain">The error message itself suggests the fix. Read deployment errors to the end.</div>
+  </div>
+</section>
+
+<section class="step" id="s6">
+  <h2>6. The cluster identity and its network grant</h2>
+  <pre class="code" data-file="identity.bicep">resource aksIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
+  name: 'id-aks-${nameSuffix}'
+  location: location
+}
+
+var networkContributorId = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '4d97b98b-1d4f-4787-a291-c67834d212e7')
+
+resource aksNetwork 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(aksSubnet.id, aksIdentity.id, networkContributorId)
+  scope: aksSubnet
+  properties: {
+    roleDefinitionId: networkContributorId
+    principalId: aksIdentity.properties.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+// on the cluster: dependsOn: [ aksNetwork ]   (hidden dependency, as in lesson 12.5)</pre>
+</section>
+
+<section class="step" id="s7">
+  <h2>7. A workload identity</h2>
+  <pre class="code" data-file="identity.bicep">resource ordersApiId 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
+  name: 'id-orders-api-${environment}'
+  location: location
+}
+
+resource ordersApiFed 'Microsoft.ManagedIdentity/userAssignedIdentities/federatedIdentityCredentials@2023-01-31' = {
+  parent: ordersApiId
+  name: 'fc-${aks.name}-orders-api'
+  properties: {
+    issuer: aks.properties.oidcIssuerProfile.issuerURL
+    subject: 'system:serviceaccount:orders:orders-api'
+    audiences: [ 'api://AzureADTokenExchange' ]
+  }
+}
+
+output ordersApiClientId string = ordersApiId.properties.clientId</pre>
+  <div class="body"><p>Deploy federated credentials for one identity one at a time (<code>@batchSize(1)</code> in loops). Concurrent writes to the same identity's credentials can conflict.</p></div>
+</section>
+
+<section class="step" id="s8">
+  <h2>8. Key Vault access</h2>
+  <pre class="code" data-file="identity.bicep">var kvSecretsUserId = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '4633458b-17de-408a-b874-0445c86b69e6')
+
+resource ordersApiKv 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(kv.id, ordersApiId.id, kvSecretsUserId)
+  scope: kv
+  properties: {
+    roleDefinitionId: kvSecretsUserId
+    principalId: ordersApiId.properties.principalId
+    principalType: 'ServicePrincipal'
+  }
+}</pre>
+</section>
+
+<section class="step" id="s9">
+  <h2>9. Cross-scope assignments</h2>
+  <div class="body">
+    <p>The shared registry lives in <code>rg-orders-shared</code>, a different resource group from the deployment. A role assignment's <code>scope</code> must be a resource in the deployment's own scope.</p>
+    <p>So put the AcrPull assignment in a small <b>module</b> deployed with <code>scope: resourceGroup('rg-orders-shared')</code> (lesson 13.6), and pass it the kubelet object ID as a parameter.</p>
+  </div>
+</section>
+
+<section class="step" id="s10">
+  <h2>10. Who can deploy role assignments?</h2>
+  <div class="body"><p>As with Terraform (lesson 12.5), the deploying identity needs <code>Microsoft.Authorization/roleAssignments/write</code>. Grant it Role Based Access Control Administrator, with a condition limiting the assignable roles. Contributor isn't enough.</p></div>
+</section>
+
+<section class="step summary" id="s11">
+  <h2>Role assignments, sorted</h2>
+  <ul>
+    <li>Extension resource with <code>scope:</code>; the name is <code>guid(scope, principal, role)</code>, never <code>newGuid()</code>.</li>
+    <li>Kubelet: <code>aks.properties.identityProfile.kubeletidentity.objectId</code> → AcrPull.</li>
+    <li><code>principalType: 'ServicePrincipal'</code> avoids PrincipalNotFound for new identities.</li>
+    <li>Federated credential: a child of the identity, with issuer = <code>oidcIssuerProfile.issuerURL</code> and an exact subject.</li>
+    <li>Cross-resource-group scopes go through a module.</li>
+  </ul>
+</section>
+</article>
+</body>
+</html>

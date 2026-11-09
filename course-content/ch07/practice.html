@@ -1,0 +1,297 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chapter 7 · Practice</title>
+<link rel="stylesheet" href="../content.css">
+</head>
+<body>
+<main>
+<nav class="crumbs"><a href="../index.html">Course</a> / <a href="index.html">Chapter 7</a> / Practice</nav>
+<p class="kicker">Chapter 7 · Practice</p>
+<h1>Practice: quiz, predict, labs, walkthrough</h1>
+
+<h2 id="quiz">Checkpoint quiz (8 drawn from 16)</h2>
+<p class="muted">Questions 1–8 are the built quiz (<code>app-preview/quiz.html</code>); 9–16 complete the pool.</p>
+
+<div class="check" data-type="mcq"><p class="q">Which setting makes a stage start in parallel with the stage above it?</p><ol class="options"><li><code>parallel: true</code></li><li class="correct"><code>dependsOn: []</code></li><li><code>condition: always()</code></li><li><code>strategy: parallel</code></li></ol><div class="explain">By default each stage depends on the previous one. An empty <code>dependsOn</code> removes that implicit dependency.</div></div>
+<div class="check" data-type="multi"><p class="q">Select all statements that are true about <code>deployment:</code> jobs.</p><ol class="options"><li class="correct">They record deployment history against an environment</li><li>They check out the repository automatically <span class="why">They skip checkout by default; add <code>- checkout: self</code>.</span></li><li class="correct">They are blocked by approvals and checks configured on their environment</li><li class="correct">They can use a <code>canary</code> strategy with <code>KubernetesManifest@1</code></li><li>They don't need an agent <span class="why">Like every job, they run on an agent.</span></li></ol><div class="explain">Deployment jobs = history + environment checks + strategies.</div></div>
+<div class="check" data-type="order"><p class="q">Put the steps of a CI job in order.</p><ol class="options"><li><code>checkout: self</code></li><li><code>go mod download</code></li><li><code>go test ./...</code></li><li><code>Docker@2</code> build</li><li><code>Docker@2</code> push</li><li><code>PublishPipelineArtifact</code> (k8s manifests)</li></ol><div class="explain">Get the code, install deps, test (fail fast), then build and push. Publishing the manifests lets the deploy stage use the exact files from this commit.</div></div>
+<div class="check" data-type="fill"><p class="q">Complete the pipeline so it deploys to the <code>prod</code> environment with a one-shot deployment.</p>
+<pre class="code" data-file="azure-pipelines.yml">pool:
+  vmImage: <span class="blank">ubuntu-latest</span>
+stages:
+  - stage: Deploy
+    jobs:
+      - <span class="blank">deployment</span>: DeployWeb
+        <span class="blank">environment</span>: prod
+        strategy:
+          <span class="blank">runOnce</span>:
+            deploy:
+              steps:
+                - script: ./deploy.sh</pre>
+<ul class="chips"><li>job</li><li class="correct">ubuntu-latest</li><li class="correct">runOnce</li><li>pool</li><li class="correct">deployment</li><li>rolling</li><li class="correct">environment</li><li>stage</li></ul>
+<div class="explain">A <code>deployment</code> job targets an <code>environment</code> and needs a <code>strategy</code>; <code>runOnce</code> is the simplest.</div></div>
+<div class="check" data-type="tapline" data-match="condition: eq(variables['Build.SourceBranch'], 'refs/heads/main')"><p class="q">This pipeline deployed a broken build to prod. Tap the line that caused it.</p>
+<pre class="code" data-file="azure-pipelines.yml">stages:
+  - stage: Build
+    jobs:
+      - job: build
+        steps:
+          - script: go test ./...
+  - stage: DeployProd
+    dependsOn: Build
+    condition: eq(variables['Build.SourceBranch'], 'refs/heads/main')
+    jobs:
+      - deployment: deploy
+        environment: prod</pre>
+<div class="explain">A custom condition <b>replaces</b> the default <code>succeeded()</code>. Fix: <code>and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))</code>.</div></div>
+<div class="check" data-type="mcq"><p class="q">Which credential type should a new Azure Resource Manager service connection use?</p><ol class="options"><li>Client secret with 24-month expiry</li><li class="correct">Workload identity federation</li><li>A personal access token</li><li>The subscription owner's username and password</li></ol><div class="explain">Federation uses short-lived OIDC tokens. There's no secret to store, leak or rotate.</div></div>
+<div class="check" data-type="mcq"><p class="q">Why tag images with <code>$(Build.BuildId)</code> instead of <code>latest</code>?</p><ol class="options"><li><code>latest</code> isn't allowed by ACR</li><li class="correct">Each tag maps to exactly one run, so deployments are traceable and rollbacks deterministic</li><li>It makes images smaller</li><li>AKS can only pull numeric tags</li></ol><div class="explain"><code>latest</code> changes underneath you.</div></div>
+<div class="check" data-type="tapline" data-match="dbPassword: 'S3cr3t-Pa55!'"><p class="q">Tap the line that is a security problem.</p>
+<pre class="code" data-file="azure-pipelines.yml">variables:
+  imageName: orders-api
+  acrName: contosoacr
+  dbPassword: 'S3cr3t-Pa55!'
+  tag: $(Build.BuildId)
+steps:
+  - script: ./migrate.sh
+    env:
+      DB_PASSWORD: $(dbPassword)</pre>
+<div class="explain">A plaintext secret in YAML is in Git history forever. Use a secret variable or a Key Vault-backed variable group.</div></div>
+<div class="check" data-type="mcq"><p class="q">Which agent can deploy to a private AKS cluster?</p><ol class="options"><li>Any Microsoft-hosted agent</li><li class="correct">A Managed DevOps Pool (or self-hosted agent) with a route and DNS to the private API server</li><li>Only Windows agents</li><li>Any agent with the <code>kubectl</code> capability</li></ol><div class="explain">See Chapter 6.5.</div></div>
+<div class="check" data-type="mcq"><p class="q">A job has <code>demands: [docker, vnet]</code>. Which agent can run it?</p><ol class="options"><li>One with the <code>docker</code> capability only</li><li class="correct">One with both <code>docker</code> and <code>vnet</code> capabilities</li><li>Any agent in the pool</li><li>One with either capability</li></ol><div class="explain">All demands must match.</div></div>
+<div class="check" data-type="mcq"><p class="q">Where are approvals for production configured?</p><ol class="options"><li>In the YAML as <code>approval: true</code></li><li class="correct">As checks on the <code>prod</code> environment in Azure DevOps</li><li>On the service connection only</li><li>In the branch policy</li></ol><div class="explain">Approvals live outside the YAML, so a pull request can't remove them.</div></div>
+<div class="check" data-type="mcq"><p class="q">Which syntax is evaluated at <b>compile</b> time and can shape the pipeline's structure?</p><ol class="options"><li><code>$(var)</code></li><li><code>$[ var ]</code></li><li class="correct"><code>${{ var }}</code></li><li><code>%var%</code></li></ol><div class="explain"><code>${{ }}</code> is expanded before the run starts, so it can add or remove stages, jobs and steps.</div></div>
+<div class="check" data-type="mcq"><p class="q">What does <code>extends</code> with a required template give the platform team?</p><ol class="options"><li>Faster pipelines</li><li class="correct">A way to enforce that every pipeline runs inside an approved template (e.g. mandatory scan stages)</li><li>Free agents</li><li>Automatic rollback</li></ol><div class="explain">Pair it with a "required template" check on the environment or service connection.</div></div>
+<div class="check" data-type="mcq"><p class="q">A secret variable from a Key Vault-linked variable group is used in a <code>script</code> step. How does it reach the script?</p><ol class="options"><li>Automatically, as an env var</li><li class="correct">You must map it explicitly with <code>env:</code></li><li>It's written to a file</li><li>It can't be used in scripts</li></ol><div class="explain">Secret variables aren't exposed to scripts as environment variables unless mapped.</div></div>
+<div class="check" data-type="mcq"><p class="q">Who needs AcrPush and who needs AcrPull?</p><ol class="options"><li>Both are needed by the pipeline</li><li class="correct">The pipeline's identity pushes (AcrPush); the AKS kubelet identity pulls (AcrPull)</li><li>The kubelet pushes, the pipeline pulls</li><li>Neither; the admin user covers both</li></ol><div class="explain">Each identity gets only what it does.</div></div>
+<div class="check" data-type="mcq"><p class="q">On a PR run, how do you stop the Docker push step from running?</p><ol class="options"><li>Remove the trigger</li><li class="correct">A step condition such as <code>ne(variables['Build.Reason'], 'PullRequest')</code></li><li><code>pr: none</code></li><li><code>dependsOn: []</code></li></ol><div class="explain">PRs build and test, but don't publish.</div></div>
+
+<h2 id="predict">Predict the pipeline run (3 scenarios)</h2>
+<p>All three scenarios use this pipeline. Predict each stage: Succeeded, Failed, Skipped or Waiting.</p>
+<pre class="code" data-file="azure-pipelines.yml">trigger: [main]
+pr: [main]                         # repo is on GitHub
+
+stages:
+  - stage: Build
+    jobs:
+      - job: test_and_build
+        steps:
+          - script: go test ./...
+          - task: Docker@2
+            condition: and(succeeded(), ne(variables['Build.Reason'], 'PullRequest'))
+            inputs: { command: buildAndPush, containerRegistry: acr-connection, repository: orders-api }
+
+  - stage: Lint
+    dependsOn: []
+    jobs:
+      - job: lint
+        steps:
+          - script: golangci-lint run &amp;&amp; kube-linter lint k8s/
+
+  - stage: DeployDev
+    dependsOn: [Build, Lint]
+    condition: and(succeeded(), ne(variables['Build.Reason'], 'PullRequest'))
+    jobs:
+      - deployment: dev
+        environment: dev
+        strategy: { runOnce: { deploy: { steps: [ ... ] } } }
+
+  - stage: DeployProd
+    dependsOn: DeployDev
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+    jobs:
+      - deployment: prod
+        environment: prod          # has a required approval check
+        strategy: { runOnce: { deploy: { steps: [ ... ] } } }
+
+  - stage: Report
+    dependsOn: [Build, Lint]
+    condition: succeededOrFailed()
+    jobs:
+      - job: publish
+        steps:
+          - task: PublishTestResults@2</pre>
+
+<div class="check" data-type="predict"><p class="q">Scenario 1 · PR, tests fail: a pull request from <code>feature/cart</code> into <code>main</code>; one unit test fails; lint passes.</p>
+<table><tr><th>Stage</th><th>Result</th><th>Why</th></tr>
+<tr><td>Build</td><td>Failed</td><td><code>go test</code> exits non-zero; the Docker step never runs.</td></tr>
+<tr><td>Lint</td><td>Succeeded</td><td><code>dependsOn: []</code>: it ran in parallel and passed on its own.</td></tr>
+<tr><td>DeployDev</td><td>Skipped</td><td>A dependency failed, <i>and</i> it's a PR run.</td></tr>
+<tr><td>DeployProd</td><td>Skipped</td><td>DeployDev didn't succeed.</td></tr>
+<tr><td>Report</td><td>Succeeded</td><td><code>succeededOrFailed()</code> runs after failures, which is why it's used for test results.</td></tr></table></div>
+<div class="check" data-type="predict"><p class="q">Scenario 2 · main, all green: the PR is merged into <code>main</code>; everything passes; nobody has approved prod yet.</p>
+<table><tr><th>Stage</th><th>Result</th><th>Why</th></tr>
+<tr><td>Build</td><td>Succeeded</td><td>Not a PR, so the push runs too.</td></tr>
+<tr><td>Lint</td><td>Succeeded</td><td>Passes.</td></tr>
+<tr><td>DeployDev</td><td>Succeeded</td><td>Both dependencies succeeded; the reason is <code>IndividualCI</code>.</td></tr>
+<tr><td>DeployProd</td><td>Waiting</td><td>The condition is true, but the <code>prod</code> environment's approval pauses the stage before the job starts.</td></tr>
+<tr><td>Report</td><td>Succeeded</td><td>Ran after Build and Lint.</td></tr></table></div>
+<div class="check" data-type="predict"><p class="q">Scenario 3 · PR, all green: another pull request; tests and lint pass.</p>
+<table><tr><th>Stage</th><th>Result</th><th>Why</th></tr>
+<tr><td>Build</td><td>Succeeded</td><td>The Docker step inside is skipped by its condition; a skipped step doesn't fail the stage.</td></tr>
+<tr><td>Lint</td><td>Succeeded</td><td>Passes.</td></tr>
+<tr><td>DeployDev</td><td>Skipped</td><td><code>Build.Reason</code> is <code>PullRequest</code>. PRs never deploy.</td></tr>
+<tr><td>DeployProd</td><td>Skipped</td><td><code>succeeded()</code> is false when a dependency was skipped.</td></tr>
+<tr><td>Report</td><td>Succeeded</td><td>Its dependencies finished.</td></tr></table></div>
+
+<h2 id="lab">Write lab A: a multi-stage pipeline</h2>
+<div class="lab">
+  <p><b>Brief:</b> Finish <code>azure-pipelines.yml</code> for <code>orders-api</code>. Graded by <b>pipeline-rules</b>, with a live stage graph drawn from your YAML.</p>
+  <pre class="start" data-file="azure-pipelines.yml"># azure-pipelines.yml for orders-api
+# TODO: only build pushes to main
+trigger:
+  - main
+
+pool:
+  vmImage: ubuntu-latest
+
+stages:
+  - stage: Build
+    jobs:
+      - job: build
+        steps:
+          - script: go test ./...
+            displayName: Unit tests
+          # TODO: build &amp; push the image to ACR with a traceable tag
+
+  # TODO: add a Deploy stage that
+  #  - only runs for main AND when Build succeeded
+  #  - uses a deployment job targeting the 'prod' environment
+  #  - deploys k8s/*.yaml to namespace 'orders' with the new image</pre>
+  <ul class="rules">
+    <li>The YAML is valid.</li>
+    <li>Only known top-level keys (trigger, pr, pool, variables, stages, resources, …).</li>
+    <li>The CI trigger is for <code>main</code> only.</li>
+    <li>The Build stage runs <code>Docker@2</code> with <code>command: buildAndPush</code>, <code>containerRegistry: acr-connection</code>, repository <code>orders-api</code>.</li>
+    <li>The image tag is traceable (<code>$(Build.BuildId)</code> or <code>$(Build.SourceVersion)</code>), never <code>latest</code>.</li>
+    <li>The Deploy stage depends on Build.</li>
+    <li>Deploy runs only for <code>main</code> AND when Build succeeded.</li>
+    <li class="critical">Prod deploys only through a <b>deployment job</b> targeting environment <code>prod</code> (which carries the approval).</li>
+    <li>The deployment job checks out the repo (<code>- checkout: self</code>).</li>
+    <li class="critical">Azure access only through service connections: <code>KubernetesManifest@1</code> uses a service connection to deploy <code>k8s/*.yaml</code> to namespace <code>orders</code> with the new image (no kubeconfig or credentials in the YAML).</li>
+    <li class="critical">No plaintext secrets in the YAML.</li>
+  </ul>
+  <details class="solution"><summary>Reference solution</summary>
+<pre>trigger:
+  - main
+
+pool:
+  vmImage: ubuntu-latest
+
+variables:
+  imageRepo: orders-api
+  tag: $(Build.BuildId)
+
+stages:
+  - stage: Build
+    jobs:
+      - job: build
+        steps:
+          - script: go test ./...
+            displayName: Unit tests
+          - task: Docker@2
+            displayName: Build &amp; push image
+            inputs:
+              command: buildAndPush
+              containerRegistry: acr-connection
+              repository: $(imageRepo)
+              tags: $(tag)
+
+  - stage: Deploy
+    dependsOn: Build
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+    jobs:
+      - deployment: deploy_orders
+        environment: prod
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: self
+                - task: KubernetesManifest@1
+                  inputs:
+                    action: deploy
+                    connectionType: azureResourceManager
+                    azureSubscriptionConnection: sc-orders-prod
+                    azureResourceGroup: rg-orders-prod
+                    kubernetesCluster: aks-orders-prod
+                    namespace: orders
+                    manifests: k8s/*.yaml
+                    containers: contosoacr.azurecr.io/orders-api:$(tag)</pre>
+  <p>A <code>kubernetesServiceConnection</code> (e.g. <code>aks-prod</code>) is also accepted instead of the Azure Resource Manager connection inputs.</p></details>
+</div>
+
+<h2 id="lab-b">Write lab B: templates and extends</h2>
+<div class="lab">
+  <p><b>Brief:</b> Contoso's platform team publishes <code>templates/secure-pipeline.yml</code> in the <code>platform/pipeline-templates</code> repo. It wraps any build in mandatory scan and publish stages. Make <code>orders-api</code>'s pipeline use it with <code>extends</code>, passing its build steps as a parameter. Graded by <b>pipeline-rules</b>.</p>
+  <pre class="start" data-file="templates/secure-pipeline.yml (given, read-only)">parameters:
+  - name: buildSteps
+    type: stepList
+    default: []
+  - name: imageRepository
+    type: string
+
+stages:
+  - stage: Build
+    jobs:
+      - job: build
+        steps:
+          - ${{ each step in parameters.buildSteps }}:
+            - ${{ step }}
+          - task: Docker@2
+            inputs:
+              command: buildAndPush
+              containerRegistry: acr-connection
+              repository: ${{ parameters.imageRepository }}
+              tags: $(Build.BuildId)
+  - stage: Scan
+    dependsOn: Build
+    jobs:
+      - job: trivy
+        steps:
+          - script: trivy image --exit-code 1 --severity CRITICAL contosoacr.azurecr.io/${{ parameters.imageRepository }}:$(Build.BuildId)</pre>
+  <ul class="rules">
+    <li>A <code>resources.repositories</code> entry references <code>platform/pipeline-templates</code>, pinned to a <code>ref</code> (a tag or <code>refs/heads/main</code>).</li>
+    <li>The top level uses <code>extends: template: templates/secure-pipeline.yml@&lt;alias&gt;</code>.</li>
+    <li><code>parameters.buildSteps</code> contains the test step(s); <code>parameters.imageRepository</code> is <code>orders-api</code>.</li>
+    <li class="critical">No <code>stages:</code> or <code>jobs:</code> defined outside <code>extends</code>, so the template can't be bypassed.</li>
+    <li>The template ref is pinned (a tag preferred over a moving branch).</li>
+    <li class="critical">No plaintext secrets.</li>
+  </ul>
+  <details class="solution"><summary>Reference solution</summary>
+<pre>trigger: [main]
+
+resources:
+  repositories:
+    - repository: platform
+      type: git
+      name: platform/pipeline-templates
+      ref: refs/tags/v2.3.0
+
+extends:
+  template: templates/secure-pipeline.yml@platform
+  parameters:
+    imageRepository: orders-api
+    buildSteps:
+      - script: go test ./...
+        displayName: Unit tests</pre>
+  <p>On the <code>prod</code> environment, add a "Required template" check for <code>templates/secure-pipeline.yml@platform</code>, so pipelines that don't extend it can't deploy.</p></details>
+</div>
+
+<h2 id="walkthrough">Walkthrough: what the pipeline automates, by hand</h2>
+<p>A scripted terminal (not graded). The same steps a pipeline performs, run one at a time, signed in with workload identity federation as the pipeline would be:</p>
+<ol>
+  <li><code>az login --service-principal -u $AZURE_CLIENT_ID --federated-token "$OIDC_TOKEN" --tenant $AZURE_TENANT_ID</code>: no client secret. (The legacy client-secret version is shown only for comparison.)</li>
+  <li><code>az acr login -n contosoacr</code></li>
+  <li><code>docker build -t contosoacr.azurecr.io/orders-api:$BUILD_ID .</code> then <code>docker push …</code></li>
+  <li><code>az aks get-credentials -g rg-orders-dev -n aks-orders-dev</code> then <code>kubelogin convert-kubeconfig -l workloadidentity</code></li>
+  <li><code>kubectl apply -n orders -f k8s/</code> with the new image tag</li>
+  <li><code>kubectl rollout status deploy/orders-api -n orders</code> and <code>kubectl get pods -n orders</code></li>
+</ol>
+<p class="muted">The built preview (<code>app-preview/lab-terminal.html</code>) also creates the resource group, registry and cluster. In the course those now come from Chapters 4–6 and IaC (Chapters 12–13).</p>
+</main>
+</body>
+</html>

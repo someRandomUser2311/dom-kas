@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>15.2 · Who can do what: humans and pipelines</title>
+<link rel="stylesheet" href="../content.css">
+</head>
+<body>
+<article class="lesson" data-id="15.2" data-chapter="15">
+<nav class="crumbs"><a href="../index.html">Course</a> / <a href="index.html">Chapter 15</a> / 15.2</nav>
+<header>
+  <p class="kicker">Chapter 15 · Lesson 15.2 · ~10 steps · ~12 min</p>
+  <h1>Who can do what: humans and pipelines</h1>
+  <p class="meta">You'll be able to design access for every team and pipeline on Contoso's clusters, including break-glass access, and spot over-privileged setups.</p>
+</header>
+
+<section class="step" id="s1">
+  <h2>1. An access map</h2>
+  <table>
+    <tr><th>Who</th><th>Dev cluster</th><th>Prod cluster</th></tr>
+    <tr><td>Orders developers (Entra group)</td><td>AKS RBAC Writer on <code>orders</code></td><td>AKS RBAC Reader on <code>orders</code>; Writer via PIM, time-limited</td></tr>
+    <tr><td>Platform team</td><td>AKS RBAC Cluster Admin</td><td>Reader; Cluster Admin via PIM with approval</td></tr>
+    <tr><td>App release pipeline (orders)</td><td>Writer on <code>orders</code></td><td>Writer on <code>orders</code> only</td></tr>
+    <tr><td>Infra pipeline</td><td colspan="2">Azure Contributor on the resource groups + conditioned RBAC Admin; no Kubernetes data-plane role needed</td></tr>
+    <tr><td>Break-glass group (2 people)</td><td colspan="2">Cluster Admin, monitored, used only when Entra ID or PIM is broken</td></tr>
+  </table>
+  <aside class="coming" data-set="A">
+    <dl>
+      <dt>Windows/IIS admin</dt><dd>Like tiered admin accounts and Just Enough Administration, applied to the cluster.</dd>
+      <dt>Linux admin</dt><dd>No shared root; sudo through an access system with expiry and logging.</dd>
+      <dt>Developer (Compose)</dt><dd>You'll have full rights in dev, and read-only in prod unless you request more.</dd>
+      <dt>Other clouds</dt><dd>Like EKS access entries with IAM Identity Center permission sets, or GKE with Google Groups.</dd>
+    </dl>
+  </aside>
+</section>
+
+<section class="step" id="s2">
+  <h2>2. Groups, never individuals</h2>
+  <div class="body"><p>Assign roles to Entra ID groups. People join and leave groups through the identity process (and access reviews), not through cluster changes. Either Azure RBAC role assignments or Kubernetes RoleBindings work, as long as the subject is a group.</p></div>
+</section>
+
+<section class="step" id="s3">
+  <h2>3. The pipeline is a high-value identity</h2>
+  <div class="body">
+    <p>The release pipeline can change production. If it's <b>cluster-admin</b>, anyone who can change the pipeline's YAML, or compromise an agent, owns the cluster.</p>
+    <p>Scope it to the namespaces it deploys, with the verbs it needs. Nothing cluster-wide.</p>
+  </div>
+  <aside class="coming" data-set="B">
+    <dl>
+      <dt>GitHub Actions</dt><dd>Same principle for OIDC federated credentials: one credential per repo and environment, with a narrow role.</dd>
+      <dt>GitLab CI</dt><dd>Use the GitLab agent's per-project authorization, not one cluster-admin token for every project.</dd>
+      <dt>Jenkins</dt><dd>Avoid one shared kubeconfig credential with admin rights for all jobs.</dd>
+      <dt>Classic pipelines</dt><dd>Old "Kubernetes service connections" often used admin kubeconfigs. Replace them.</dd>
+    </dl>
+  </aside>
+</section>
+
+<section class="step" id="s4">
+  <h2>4. Service connection types</h2>
+  <div class="body">
+    <ul>
+      <li><b>Azure Resource Manager (WIF)</b>: an Entra ID identity. The task gets cluster credentials through Azure, and Azure RBAC on the cluster decides what it may do. Recommended.</li>
+      <li><b>Kubernetes service connection</b> with a kubeconfig or ServiceAccount token: a stored credential that must be rotated. Avoid it, especially with admin kubeconfigs, which don't exist anyway when local accounts are disabled.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="step" id="s5">
+  <h2>5. The safest setup</h2>
+  <div class="check" data-type="mcq">
+    <p class="q">Which pipeline identity setup is safest for deploying <code>orders-api</code> to prod?</p>
+    <ol class="options">
+      <li>A Kubernetes service connection with the cluster's admin kubeconfig <span class="why">A stored credential with full power.</span></li>
+      <li>An ARM service connection with a client secret, Contributor on the subscription <span class="why">A secret, and far too broad.</span></li>
+      <li class="correct">An ARM service connection using workload identity federation, with AKS RBAC Writer on the <code>orders</code> namespace only, usable only from <code>main</code> via the approved template</li>
+      <li>The developer's personal account <span class="why">Personal, unaudited, and gone when they leave.</span></li>
+    </ol>
+    <div class="explain">No secret, minimal scope, and protected by Azure DevOps checks (lesson 15.6).</div>
+  </div>
+</section>
+
+<section class="step" id="s6">
+  <h2>6. Spot the over-privilege</h2>
+  <div class="check" data-type="multi">
+    <p class="q">Select every over-privileged setup.</p>
+    <ol class="options">
+      <li class="correct">The release pipeline's SA is bound to <code>cluster-admin</code> with a ClusterRoleBinding</li>
+      <li class="correct">All developers have AKS RBAC Cluster Admin on prod permanently</li>
+      <li class="correct">The infra pipeline is Owner on the subscription</li>
+      <li>Developers have AKS RBAC Reader on prod <span class="why">Reasonable for troubleshooting.</span></li>
+      <li>The platform team activates Cluster Admin via PIM with approval <span class="why">Just-in-time and audited: good.</span></li>
+      <li class="correct">The app's ServiceAccount has <code>edit</code> on its namespace although the app never calls the Kubernetes API</li>
+    </ol>
+    <div class="explain">Every standing permission is a risk. Grant the minimum, and make anything powerful temporary.</div>
+  </div>
+</section>
+
+<section class="step" id="s7">
+  <h2>7. Break-glass access</h2>
+  <div class="body">
+    <p>If Entra ID is unavailable, or a misconfiguration locks everyone out, you need a way in.</p>
+    <p>A <b>break-glass</b> Entra group has Cluster Admin. Its accounts:</p>
+    <ul>
+      <li>have long, vaulted credentials and phishing-resistant MFA;</li>
+      <li>are excluded from conditional-access policies that could lock them out;</li>
+      <li>trigger an alert every time they sign in.</li>
+    </ul>
+    <p><code>az aks command invoke</code> (lesson 6.5) is also useful in emergencies, because it works through Azure's management plane.</p>
+  </div>
+</section>
+
+<section class="step" id="s8">
+  <h2>8. Access reviews</h2>
+  <div class="body"><p>Schedule Entra ID <b>access reviews</b> for the groups with cluster roles, quarterly for prod. Combine them with the audit-log query from lesson 14.5 to see what each group actually used.</p></div>
+</section>
+
+<section class="step" id="s9">
+  <h2>9. Defense in depth</h2>
+  <div class="body"><p>Least privilege doesn't stop a <i>legitimate</i> identity from deploying something bad. That's what Pod Security (next lesson), admission policies (Chapter 16) and pipeline checks (lesson 15.6) are for.</p></div>
+</section>
+
+<section class="step summary" id="s10">
+  <h2>Humans and pipelines, sorted</h2>
+  <ul>
+    <li>Groups → roles, scoped to namespaces; read-only in prod by default; PIM for more.</li>
+    <li>Pipeline: WIF ARM connection, namespace-scoped Writer, never cluster-admin.</li>
+    <li>Avoid Kubernetes service connections with stored kubeconfigs.</li>
+    <li>Break-glass group, alerted; regular access reviews.</li>
+  </ul>
+</section>
+</article>
+</body>
+</html>

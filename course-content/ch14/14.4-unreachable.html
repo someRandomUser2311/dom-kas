@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>14.4 · Running but unreachable</title>
+<link rel="stylesheet" href="../content.css">
+</head>
+<body>
+<article class="lesson" data-id="14.4" data-chapter="14">
+<nav class="crumbs"><a href="../index.html">Course</a> / <a href="index.html">Chapter 14</a> / 14.4</nav>
+<header>
+  <p class="kicker">Chapter 14 · Lesson 14.4 · ~11 steps · ~14 min</p>
+  <h1>Running but unreachable</h1>
+  <p class="meta">You'll be able to follow a request hop by hop (client → gateway → Service → endpoints → pod) and find exactly where it breaks.</p>
+</header>
+
+<section class="step" id="s1">
+  <h2>1. Pods are green, users get errors</h2>
+  <div class="body">
+    <p>Everything shows <code>Running</code>, yet <code>https://shop.contoso.example/api</code> returns 503 or times out. The request passes through several hops, and any one of them can be the broken link:</p>
+    <ol>
+      <li>DNS → the gateway's IP;</li>
+      <li>the gateway → the route;</li>
+      <li>route → Service;</li>
+      <li>Service → endpoints (ready pods);</li>
+      <li>network policy → pod port;</li>
+      <li>the app.</li>
+    </ol>
+  </div>
+  <div class="widget" data-widget="follow-the-packet">A request drawn as a dot moving client → Gateway → HTTPRoute → Service → EndpointSlice → NetworkPolicy → Pod. Each hop has an inspector showing the real output for it. In each scenario one hop is broken and lit red only after the learner inspects it; the learner clicks the hop they think is broken.</div>
+  <aside class="coming" data-set="A">
+    <dl>
+      <dt>Windows/IIS admin</dt><dd>Like tracing a request through the load balancer, ARR, the site binding, then the app: check each hop.</dd>
+      <dt>Linux admin</dt><dd><code>dig</code> → <code>curl</code> the LB → the proxy config → the backend's listen port → iptables.</dd>
+      <dt>Developer (Compose)</dt><dd>More hops than Compose's port mapping, so test each one in turn.</dd>
+      <dt>Other clouds</dt><dd>Same chain; the gateway product differs.</dd>
+    </dl>
+  </aside>
+</section>
+
+<section class="step" id="s2">
+  <h2>2. Work from the inside out</h2>
+  <div class="body">
+    <p>Test the pod directly first, then add one hop at a time:</p>
+    <ul>
+      <li><code>kubectl port-forward pod/… 8080:8080</code> → does the app answer?</li>
+      <li><code>kubectl port-forward svc/orders-api 8080:80</code> → does the Service reach it?</li>
+      <li>From another pod: <code>wget orders-api.orders</code> → do DNS and network policy allow it?</li>
+      <li>Through the gateway: <code>curl https://shop…</code></li>
+    </ul>
+    <p>The first hop that fails is the broken one.</p>
+  </div>
+</section>
+
+<section class="step" id="s3">
+  <h2>3. Diagnose: readiness</h2>
+  <div class="check" data-type="diagnose">
+    <p class="q">What's wrong?</p>
+    <pre class="output">$ kubectl get pods -n orders -l app=orders-api
+NAME                         READY   STATUS    RESTARTS   AGE
+orders-api-7d9c5f6b8-2xk9p   0/1     Running   0          20m
+orders-api-7d9c5f6b8-q8w4m   0/1     Running   0          20m
+$ kubectl get endpointslices -n orders -l kubernetes.io/service-name=orders-api
+NAME               ADDRESSTYPE   PORTS   ENDPOINTS   AGE
+orders-api-x7k2p   IPv4          8080    &lt;unset&gt;     12d
+$ kubectl describe pod orders-api-7d9c5f6b8-2xk9p -n orders | grep -i readiness
+    Readiness:  http-get http://:http/ready delay=0s timeout=1s period=5s #success=1 #failure=3
+  Warning  Unhealthy  kubelet  Readiness probe failed: HTTP probe failed with statuscode: 404</pre>
+    <ol class="options">
+      <li>The selector is wrong <span class="why">A selector mismatch wouldn't make the pods 0/1 ready.</span></li>
+      <li class="correct">The readiness probe checks <code>/ready</code>, which returns 404, so no pod is ever ready and the Service has no endpoints</li>
+      <li>The pods crash <span class="why">0 restarts.</span></li>
+      <li>NetworkPolicy <span class="why">The kubelet's probes aren't blocked by NetworkPolicy, and the result here is an HTTP 404.</span></li>
+    </ol>
+    <div class="explain">The app serves <code>/readyz</code>. Fix the probe path. Ready pods then appear in the EndpointSlice and traffic flows.</div>
+  </div>
+</section>
+
+<section class="step" id="s4">
+  <h2>4. Diagnose: targetPort</h2>
+  <div class="check" data-type="diagnose">
+    <p class="q">Pods are ready and endpoints are listed, but calls fail. Why?</p>
+    <pre class="output">$ kubectl get endpointslices -n orders -l kubernetes.io/service-name=orders-api
+NAME               ADDRESSTYPE   PORTS   ENDPOINTS                 AGE
+orders-api-x7k2p   IPv4          80      10.244.1.12,10.244.2.7    12d
+$ kubectl exec -n web deploy/web -- wget -qO- -T 3 http://orders-api.orders/healthz
+wget: can't connect to remote host (10.0.142.17): Connection refused
+$ kubectl get pod orders-api-7d9c5f6b8-2xk9p -n orders -o jsonpath='{.spec.containers[0].ports}'
+[{"containerPort":8080,"name":"http","protocol":"TCP"}]</pre>
+    <ol class="options">
+      <li class="correct">The Service's <code>targetPort</code> is 80 (EndpointSlice port 80), but the container listens on 8080</li>
+      <li>DNS fails <span class="why">The name resolved to the ClusterIP.</span></li>
+      <li>NetworkPolicy blocks it <span class="why">A blocked connection usually times out; "refused" means nothing is listening on that port.</span></li>
+      <li>The pods aren't ready <span class="why">They're listed as endpoints.</span></li>
+    </ol>
+    <div class="explain">"Connection refused" = reached the pod, but nothing listens on that port. "Timeout" = dropped on the way, often by a policy.</div>
+  </div>
+</section>
+
+<section class="step" id="s5">
+  <h2>5. Diagnose: NetworkPolicy</h2>
+  <div class="check" data-type="diagnose">
+    <p class="q">What's wrong?</p>
+    <pre class="output">$ kubectl exec -n web deploy/web -- wget -qO- -T 3 http://orders-api.orders/healthz
+wget: download timed out
+$ kubectl port-forward -n orders svc/orders-api 8080:80 &amp;  curl -s localhost:8080/healthz
+ok
+$ kubectl get networkpolicy -n orders
+NAME                      POD-SELECTOR     AGE
+default-deny              &lt;none&gt;           2h
+allow-dns                 &lt;none&gt;           2h
+allow-gateway-to-api      app=orders-api   2h</pre>
+    <ol class="options">
+      <li>The app is broken <span class="why">port-forward reaches it fine.</span></li>
+      <li class="correct">Default-deny is on in <code>orders</code>, and there's no policy allowing traffic from namespace <code>web</code> to orders-api (and maybe no egress allow in <code>web</code>)</li>
+      <li>DNS <span class="why">The request got to the wget timeout stage after resolving; allow-dns exists.</span></li>
+      <li>targetPort <span class="why">That would be "refused", not a timeout.</span></li>
+    </ol>
+    <div class="explain">port-forward bypasses NetworkPolicy (it goes through the API server and kubelet), so it's a good way to separate "app broken" from "path blocked". Add the web → orders-api allows on both sides (lesson 9.3).</div>
+  </div>
+</section>
+
+<section class="step" id="s6">
+  <h2>6. Gateway route not attached</h2>
+  <pre class="output">$ curl -s -o /dev/null -w "%{http_code}\n" https://shop.contoso.example/api/healthz
+404
+$ kubectl get httproute orders-api -n orders -o jsonpath='{range .status.parents[*].conditions[*]}{.type}={.status} ({.reason}){"\n"}{end}'
+Accepted=False (NotAllowedByListeners)
+ResolvedRefs=True (ResolvedRefs)</pre>
+  <div class="body"><p>A 404 from the gateway itself means no route matched. The route status shows it was never attached: <code>allowedRoutes</code> doesn't include namespace <code>orders</code> (lesson 8.4).</p></div>
+</section>
+
+<section class="step" id="s7">
+  <h2>7. Find the broken hop</h2>
+  <div class="check" data-type="custom">
+    <p class="q">In the follow-the-packet widget, scenario "Black Friday": requests to <code>/api</code> return 503. Inspect hops until you find the broken one, then click it.</p>
+    <div class="widget" data-widget="follow-the-packet">Scenario data: Gateway OK; HTTPRoute Accepted and ResolvedRefs True; Service selector <code>app: orders-api, version: green</code>; EndpointSlice empty; pods labelled <code>version: blue</code>. Success when the learner clicks the Service → EndpointSlice hop. Clicking a healthy hop shows its good output and "not here".</div>
+    <div class="explain">A blue/green switch to a colour with no pods (lesson 11.2). The gateway returns 503 because the backend has no endpoints.</div>
+  </div>
+</section>
+
+<section class="step" id="s8">
+  <h2>8. Status codes as clues</h2>
+  <table>
+    <tr><th>From the gateway</th><th>Usually means</th></tr>
+    <tr><td>404</td><td>No route matched (host or path, or route not attached)</td></tr>
+    <tr><td>503</td><td>The route matched, but the backend has no ready endpoints</td></tr>
+    <tr><td>502</td><td>The backend connection failed (wrong port, app reset the connection)</td></tr>
+    <tr><td>504</td><td>The backend was too slow (timeout)</td></tr>
+  </table>
+</section>
+
+<section class="step" id="s9">
+  <h2>9. DNS outside the cluster</h2>
+  <div class="body"><p>Don't forget the first hop. <code>nslookup shop.contoso.example</code> must return the gateway's address. Stale DNS after recreating a gateway or LoadBalancer is a classic cause of "it works for some people".</p></div>
+</section>
+
+<section class="step" id="s10">
+  <h2>10. Refused vs timeout</h2>
+  <div class="body">
+    <ul>
+      <li><b>Refused</b>: you reached the target IP, but nothing listens on that port. Check targetPort, containerPort and the app's bind address (<code>0.0.0.0</code>, not <code>127.0.0.1</code>).</li>
+      <li><b>Timeout</b>: packets were dropped on the way. Check NetworkPolicy, NSGs and firewalls, or a wrong IP.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="step summary" id="s11">
+  <h2>Unreachable, sorted</h2>
+  <ul>
+    <li>Inside-out: pod → Service → in-cluster client → gateway → DNS.</li>
+    <li>Not ready → no endpoints; wrong targetPort → refused; policy → timeout; route not attached → gateway 404.</li>
+    <li>port-forward bypasses NetworkPolicy, which helps isolate it.</li>
+    <li>Use status codes and route conditions as clues.</li>
+  </ul>
+</section>
+</article>
+</body>
+</html>

@@ -1,0 +1,1261 @@
+# Complete reference solutions for labs whose course page only shows an
+# excerpt or points to a lesson. Each must pass its own lab's rules (the API
+# sweep in the test suite checks this). Shown to learners on "View solution".
+lab: ch03/lab
+solution: |
+  apiVersion: apps/v1
+  kind: Deployment
+  metadata:
+    name: orders-api
+    namespace: orders
+    labels:
+      app: orders-api
+  spec:
+    # no replicas: the HPA owns the replica count
+    selector:
+      matchLabels:
+        app: orders-api
+    template:
+      metadata:
+        labels:
+          app: orders-api
+      spec:
+        topologySpreadConstraints:
+          - maxSkew: 1
+            topologyKey: topology.kubernetes.io/zone
+            whenUnsatisfiable: ScheduleAnyway
+            labelSelector:
+              matchLabels:
+                app: orders-api
+        containers:
+          - name: api
+            image: contosoacr.azurecr.io/orders-api:1.4.2
+            ports:
+              - name: http
+                containerPort: 8080
+            resources:
+              requests:
+                cpu: 250m
+                memory: 256Mi
+              limits:
+                memory: 512Mi
+            startupProbe:
+              httpGet: { path: /healthz, port: http }
+              periodSeconds: 5
+              failureThreshold: 30
+            readinessProbe:
+              httpGet: { path: /readyz, port: http }
+              periodSeconds: 5
+            livenessProbe:
+              httpGet: { path: /healthz, port: http }
+              periodSeconds: 10
+              failureThreshold: 3
+  ---
+  apiVersion: autoscaling/v2
+  kind: HorizontalPodAutoscaler
+  metadata:
+    name: orders-api
+    namespace: orders
+  spec:
+    scaleTargetRef:
+      apiVersion: apps/v1
+      kind: Deployment
+      name: orders-api
+    minReplicas: 2
+    maxReplicas: 10
+    metrics:
+      - type: Resource
+        resource:
+          name: cpu
+          target:
+            type: Utilization
+            averageUtilization: 70
+  ---
+  apiVersion: policy/v1
+  kind: PodDisruptionBudget
+  metadata:
+    name: orders-api
+    namespace: orders
+  spec:
+    maxUnavailable: 1
+    selector:
+      matchLabels:
+        app: orders-api
+---
+lab: ch04/lab
+solution: |
+  #!/usr/bin/env bash
+  set -euo pipefail
+
+  RG=rg-orders-dev
+  CLUSTER=aks-orders-dev
+  LOCATION=westeurope
+
+  az group create --name "$RG" --location "$LOCATION"
+
+  az aks create \
+    --resource-group "$RG" --name "$CLUSTER" --location "$LOCATION" \
+    --tier standard \
+    --nodepool-name system --node-count 2 --zones 1 2 3 \
+    --node-vm-size Standard_D4ds_v5 \
+    --nodepool-taints CriticalAddonsOnly=true:NoSchedule \
+    --network-plugin azure --network-plugin-mode overlay \
+    --network-dataplane cilium --pod-cidr 192.168.0.0/16 \
+    --enable-oidc-issuer --enable-workload-identity \
+    --enable-aad --enable-azure-rbac --disable-local-accounts \
+    --auto-upgrade-channel patch --node-os-upgrade-channel NodeImage \
+    --generate-ssh-keys
+
+  az aks nodepool add \
+    --resource-group "$RG" --cluster-name "$CLUSTER" --name user \
+    --mode User --zones 1 2 3 --node-vm-size Standard_D4ds_v5 \
+    --enable-cluster-autoscaler --min-count 2 --max-count 6
+---
+lab: ch06/lab
+solution: |
+  #!/usr/bin/env bash
+  # Run from the repository root. --file . uploads the working folder, so the
+  # path in --command is relative to it.
+  set -euo pipefail
+
+  az aks command invoke \
+    --resource-group rg-orders-prod \
+    --name aks-orders-prod \
+    --command "kubectl apply -f k8s/base/ -n orders" \
+    --file .
+---
+lab: ch08/lab
+solution: |
+  # k8s/gateway/gateway.yaml
+  apiVersion: gateway.networking.k8s.io/v1
+  kind: Gateway
+  metadata:
+    name: shop-gateway
+    namespace: gateway-infra
+  spec:
+    gatewayClassName: azure-alb-external
+    listeners:
+      - name: https
+        protocol: HTTPS
+        port: 443
+        hostname: shop.contoso.example
+        tls:
+          mode: Terminate
+          certificateRefs:
+            - kind: Secret
+              name: shop-contoso-tls   # created by cert-manager / Key Vault, never in Git
+        allowedRoutes:
+          namespaces:
+            from: Selector
+            selector:
+              matchLabels:
+                shop-routes: allowed
+      - name: http
+        protocol: HTTP
+        port: 80
+        hostname: shop.contoso.example
+        allowedRoutes:
+          namespaces:
+            from: Same
+  ---
+  # HTTP only redirects to HTTPS
+  apiVersion: gateway.networking.k8s.io/v1
+  kind: HTTPRoute
+  metadata:
+    name: http-to-https
+    namespace: gateway-infra
+  spec:
+    parentRefs:
+      - name: shop-gateway
+        sectionName: http
+    hostnames: [shop.contoso.example]
+    rules:
+      - filters:
+          - type: RequestRedirect
+            requestRedirect:
+              scheme: https
+              statusCode: 301
+  ---
+  # k8s/gateway/orders-route.yaml
+  apiVersion: gateway.networking.k8s.io/v1
+  kind: HTTPRoute
+  metadata:
+    name: orders-api
+    namespace: orders
+  spec:
+    parentRefs:
+      - name: shop-gateway
+        namespace: gateway-infra
+        sectionName: https
+    hostnames: [shop.contoso.example]
+    rules:
+      - matches:
+          - path: { type: PathPrefix, value: /api }
+        backendRefs:
+          - name: orders-api
+            port: 80
+  ---
+  # k8s/gateway/web-route.yaml
+  apiVersion: gateway.networking.k8s.io/v1
+  kind: HTTPRoute
+  metadata:
+    name: web
+    namespace: web
+  spec:
+    parentRefs:
+      - name: shop-gateway
+        namespace: gateway-infra
+        sectionName: https
+    hostnames: [shop.contoso.example]
+    rules:
+      - matches:
+          - path: { type: PathPrefix, value: / }
+        backendRefs:
+          - name: web
+            port: 80
+---
+lab: ch09/lab
+solution: |
+  # Default-deny (both directions) and DNS in every namespace
+  apiVersion: networking.k8s.io/v1
+  kind: NetworkPolicy
+  metadata: { name: default-deny, namespace: web }
+  spec: { podSelector: {}, policyTypes: [Ingress, Egress] }
+  ---
+  apiVersion: networking.k8s.io/v1
+  kind: NetworkPolicy
+  metadata: { name: default-deny, namespace: orders }
+  spec: { podSelector: {}, policyTypes: [Ingress, Egress] }
+  ---
+  apiVersion: networking.k8s.io/v1
+  kind: NetworkPolicy
+  metadata: { name: default-deny, namespace: db }
+  spec: { podSelector: {}, policyTypes: [Ingress, Egress] }
+  ---
+  apiVersion: networking.k8s.io/v1
+  kind: NetworkPolicy
+  metadata: { name: allow-dns, namespace: web }
+  spec:
+    podSelector: {}
+    policyTypes: [Egress]
+    egress:
+      - to:
+          - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: kube-system } }
+            podSelector: { matchLabels: { k8s-app: kube-dns } }
+        ports: [{ port: 53, protocol: UDP }, { port: 53, protocol: TCP }]
+  ---
+  apiVersion: networking.k8s.io/v1
+  kind: NetworkPolicy
+  metadata: { name: allow-dns, namespace: orders }
+  spec:
+    podSelector: {}
+    policyTypes: [Egress]
+    egress:
+      - to:
+          - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: kube-system } }
+            podSelector: { matchLabels: { k8s-app: kube-dns } }
+        ports: [{ port: 53, protocol: UDP }, { port: 53, protocol: TCP }]
+  ---
+  apiVersion: networking.k8s.io/v1
+  kind: NetworkPolicy
+  metadata: { name: allow-dns, namespace: db }
+  spec:
+    podSelector: {}
+    policyTypes: [Egress]
+    egress:
+      - to:
+          - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: kube-system } }
+            podSelector: { matchLabels: { k8s-app: kube-dns } }
+        ports: [{ port: 53, protocol: UDP }, { port: 53, protocol: TCP }]
+  ---
+  # web: in from the gateway, out to orders-api
+  apiVersion: networking.k8s.io/v1
+  kind: NetworkPolicy
+  metadata: { name: web-flows, namespace: web }
+  spec:
+    podSelector: { matchLabels: { app: web } }
+    policyTypes: [Ingress, Egress]
+    ingress:
+      - from:
+          - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: gateway-infra } }
+        ports: [{ port: 8080 }]
+    egress:
+      - to:
+          - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: orders } }
+            podSelector: { matchLabels: { app: orders-api } }
+        ports: [{ port: 8080 }]
+  ---
+  # orders-api: in from the gateway and web
+  apiVersion: networking.k8s.io/v1
+  kind: NetworkPolicy
+  metadata: { name: orders-api-ingress, namespace: orders }
+  spec:
+    podSelector: { matchLabels: { app: orders-api } }
+    policyTypes: [Ingress]
+    ingress:
+      - from:
+          - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: gateway-infra } }
+          - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: web } }
+            podSelector: { matchLabels: { app: web } }
+        ports: [{ port: 8080 }]
+  ---
+  # orders-api and orders-worker: out to postgres
+  apiVersion: networking.k8s.io/v1
+  kind: NetworkPolicy
+  metadata: { name: orders-to-db, namespace: orders }
+  spec:
+    podSelector:
+      matchExpressions:
+        - { key: app, operator: In, values: [orders-api, orders-worker] }
+    policyTypes: [Egress]
+    egress:
+      - to:
+          - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: db } }
+            podSelector: { matchLabels: { app: postgres } }
+        ports: [{ port: 5432 }]
+  ---
+  # postgres: in from orders-api and orders-worker only
+  apiVersion: networking.k8s.io/v1
+  kind: NetworkPolicy
+  metadata: { name: postgres-ingress, namespace: db }
+  spec:
+    podSelector: { matchLabels: { app: postgres } }
+    policyTypes: [Ingress]
+    ingress:
+      - from:
+          - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: orders } }
+            podSelector:
+              matchExpressions:
+                - { key: app, operator: In, values: [orders-api, orders-worker] }
+        ports: [{ port: 5432 }]
+---
+lab: ch10/lab
+solution: |
+  # k8s/overlays/prod/kustomization.yaml
+  apiVersion: kustomize.config.k8s.io/v1beta1
+  kind: Kustomization
+  namespace: orders
+  resources:
+    - ../../base
+  images:
+    - name: contosoacr.azurecr.io/orders-api
+      newTag: "1.4.2"
+  patches:
+    - target: { kind: Deployment, name: orders-api }
+      patch: |-
+        apiVersion: apps/v1
+        kind: Deployment
+        metadata:
+          name: orders-api
+        spec:
+          template:
+            spec:
+              containers:
+                - name: api
+                  resources:
+                    requests:
+                      cpu: 500m
+                      memory: 512Mi
+                    limits:
+                      memory: 1Gi
+    - target: { kind: HorizontalPodAutoscaler, name: orders-api }
+      patch: |-
+        apiVersion: autoscaling/v2
+        kind: HorizontalPodAutoscaler
+        metadata:
+          name: orders-api
+        spec:
+          minReplicas: 4
+          maxReplicas: 20
+---
+lab: ch10/lab-b
+solution: |
+  # azure-pipelines.yml (after the Build stage)
+    - stage: DeployDev
+      dependsOn: Build
+      condition: succeeded()
+      jobs:
+        - template: templates/deploy.yml
+          parameters:
+            environment: dev
+            serviceConnection: sc-orders-dev
+            cluster: aks-orders-dev
+            resourceGroup: rg-orders-dev
+            imageTag: $(Build.BuildId)
+            pool:
+              vmImage: ubuntu-latest
+
+    - stage: DeployProd
+      dependsOn: DeployDev
+      condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+      jobs:
+        - template: templates/deploy.yml
+          parameters:
+            environment: prod
+            serviceConnection: sc-orders-prod
+            cluster: aks-orders-prod
+            resourceGroup: rg-orders-prod
+            imageTag: $(Build.BuildId)
+            pool:
+              name: pool-orders-prod   # Managed DevOps Pool inside the VNet
+
+  # templates/deploy.yml
+  parameters:
+    - name: environment
+      type: string
+    - name: serviceConnection
+      type: string
+    - name: cluster
+      type: string
+    - name: resourceGroup
+      type: string
+    - name: imageTag
+      type: string
+    - name: pool
+      type: object
+
+  jobs:
+    - deployment: deploy_orders_api
+      pool: ${{ parameters.pool }}
+      environment: ${{ parameters.environment }}
+      strategy:
+        runOnce:
+          deploy:
+            steps:
+              - task: KubernetesManifest@1
+                inputs:
+                  action: deploy
+                  connectionType: azureResourceManager
+                  azureSubscriptionConnection: ${{ parameters.serviceConnection }}
+                  azureResourceGroup: ${{ parameters.resourceGroup }}
+                  kubernetesCluster: ${{ parameters.cluster }}
+                  namespace: orders
+                  manifests: $(Pipeline.Workspace)/manifests/${{ parameters.environment }}/*.yaml
+                  containers: contosoacr.azurecr.io/orders-api:${{ parameters.imageTag }}
+---
+lab: ch11/lab
+solution: |
+    - stage: DeployProd
+      dependsOn: [Build, DeployDev]
+      condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+      jobs:
+        - deployment: canary_orders_api
+          pool:
+            name: pool-orders-prod
+          environment: prod.orders          # approvals live on the prod environment
+          strategy:
+            canary:
+              increments: [10, 50]
+              deploy:
+                steps:
+                  - task: KubernetesManifest@1
+                    inputs:
+                      action: deploy
+                      connectionType: azureResourceManager
+                      azureSubscriptionConnection: sc-orders-prod
+                      azureResourceGroup: rg-orders-prod
+                      kubernetesCluster: aks-orders-prod
+                      namespace: orders
+                      strategy: canary
+                      percentage: $(strategy.increment)
+                      manifests: $(Pipeline.Workspace)/manifests/*.yaml
+                      containers: contosoacr.azurecr.io/orders-api:$(Build.BuildId)
+              postRouteTraffic:
+                steps:
+                  - script: |
+                      # fails the job when the canary's 5xx ratio is above 1%
+                      ./scripts/canary-error-rate.sh --namespace orders --max-ratio 0.01 || exit 1
+                    displayName: Compare canary vs stable 5xx ratio
+              on:
+                failure:
+                  steps:
+                    - task: KubernetesManifest@1
+                      inputs:
+                        action: reject
+                        connectionType: azureResourceManager
+                        azureSubscriptionConnection: sc-orders-prod
+                        azureResourceGroup: rg-orders-prod
+                        kubernetesCluster: aks-orders-prod
+                        namespace: orders
+                        strategy: canary
+                        manifests: $(Pipeline.Workspace)/manifests/*.yaml
+                success:
+                  steps:
+                    - task: KubernetesManifest@1
+                      inputs:
+                        action: promote
+                        connectionType: azureResourceManager
+                        azureSubscriptionConnection: sc-orders-prod
+                        azureResourceGroup: rg-orders-prod
+                        kubernetesCluster: aks-orders-prod
+                        namespace: orders
+                        strategy: canary
+                        manifests: $(Pipeline.Workspace)/manifests/*.yaml
+                        containers: contosoacr.azurecr.io/orders-api:$(Build.BuildId)
+---
+lab: ch12/lab
+solution: |
+  # versions.tf
+  terraform {
+    required_version = ">= 1.9"
+    required_providers {
+      azurerm = {
+        source  = "hashicorp/azurerm"
+        version = "~> 4.20"
+      }
+    }
+    backend "azurerm" {
+      resource_group_name  = "rg-tfstate"
+      storage_account_name = "sttfstatecontoso"
+      container_name       = "tfstate"
+      key                  = "orders/dev.tfstate"
+      use_azuread_auth     = true
+    }
+  }
+
+  provider "azurerm" {
+    features {}
+  }
+
+  # variables.tf
+  variable "environment" {
+    type = string
+    validation {
+      condition     = contains(["dev", "prod"], var.environment)
+      error_message = "environment must be dev or prod."
+    }
+  }
+
+  variable "location" {
+    type    = string
+    default = "westeurope"
+  }
+
+  # main.tf
+  locals {
+    name = "orders-${var.environment}"
+  }
+
+  resource "azurerm_resource_group" "main" {
+    name     = "rg-${local.name}"
+    location = var.location
+  }
+
+  resource "azurerm_virtual_network" "main" {
+    name                = "vnet-${local.name}"
+    resource_group_name = azurerm_resource_group.main.name
+    location            = azurerm_resource_group.main.location
+    address_space       = ["10.20.0.0/16"]
+  }
+
+  resource "azurerm_subnet" "nodes" {
+    name                 = "snet-nodes"
+    resource_group_name  = azurerm_resource_group.main.name
+    virtual_network_name = azurerm_virtual_network.main.name
+    address_prefixes     = ["10.20.0.0/22"]
+  }
+
+  resource "azurerm_log_analytics_workspace" "main" {
+    name                = "log-${local.name}"
+    resource_group_name = azurerm_resource_group.main.name
+    location            = azurerm_resource_group.main.location
+    retention_in_days   = 30
+  }
+
+  data "azurerm_container_registry" "shared" {
+    name                = "contosoacr"
+    resource_group_name = "rg-shared"
+  }
+
+  resource "azurerm_kubernetes_cluster" "main" {
+    name                      = "aks-${local.name}"
+    resource_group_name       = azurerm_resource_group.main.name
+    location                  = azurerm_resource_group.main.location
+    dns_prefix                = "aks-${local.name}"
+    sku_tier                  = "Standard"
+    oidc_issuer_enabled       = true
+    workload_identity_enabled = true
+    local_account_disabled    = true
+    automatic_upgrade_channel = "patch"
+    node_os_upgrade_channel   = "NodeImage"
+
+    default_node_pool {
+      name                         = "system"
+      vm_size                      = "Standard_D4ds_v5"
+      node_count                   = 2
+      zones                        = ["1", "2", "3"]
+      vnet_subnet_id               = azurerm_subnet.nodes.id
+      only_critical_addons_enabled = true
+    }
+
+    identity {
+      type = "SystemAssigned"
+    }
+
+    azure_active_directory_role_based_access_control {
+      azure_rbac_enabled = true
+    }
+
+    network_profile {
+      network_plugin      = "azure"
+      network_plugin_mode = "overlay"
+      network_data_plane  = "cilium"
+      pod_cidr            = "192.168.0.0/16"
+      service_cidr        = "172.16.0.0/16"
+      dns_service_ip      = "172.16.0.10"
+    }
+
+    oms_agent {
+      log_analytics_workspace_id = azurerm_log_analytics_workspace.main.id
+    }
+  }
+
+  resource "azurerm_kubernetes_cluster_node_pool" "user" {
+    name                  = "user"
+    kubernetes_cluster_id = azurerm_kubernetes_cluster.main.id
+    mode                  = "User"
+    vm_size               = "Standard_D4ds_v5"
+    zones                 = ["1", "2", "3"]
+    vnet_subnet_id        = azurerm_subnet.nodes.id
+    auto_scaling_enabled  = true
+    min_count             = 2
+    max_count             = 6
+  }
+
+  resource "azurerm_role_assignment" "kubelet_acr_pull" {
+    scope                = data.azurerm_container_registry.shared.id
+    role_definition_name = "AcrPull"
+    principal_id         = azurerm_kubernetes_cluster.main.kubelet_identity[0].object_id
+    principal_type       = "ServicePrincipal"
+  }
+
+  resource "azurerm_user_assigned_identity" "orders_api" {
+    name                = "id-orders-api-${var.environment}"
+    resource_group_name = azurerm_resource_group.main.name
+    location            = azurerm_resource_group.main.location
+  }
+
+  resource "azurerm_federated_identity_credential" "orders_api" {
+    name                = "orders-api"
+    resource_group_name = azurerm_resource_group.main.name
+    parent_id           = azurerm_user_assigned_identity.orders_api.id
+    audience            = ["api://AzureADTokenExchange"]
+    issuer              = azurerm_kubernetes_cluster.main.oidc_issuer_url
+    subject             = "system:serviceaccount:orders:orders-api"
+  }
+
+  # outputs.tf
+  output "cluster_name" {
+    value = azurerm_kubernetes_cluster.main.name
+  }
+
+  output "orders_api_client_id" {
+    value = azurerm_user_assigned_identity.orders_api.client_id
+  }
+---
+lab: ch12/lab-b
+solution: |
+  trigger:
+    branches:
+      include: [main]
+    paths:
+      include: [infra/terraform/*]
+  pr:
+    branches:
+      include: [main]
+
+  variables:
+    workDir: infra/terraform/envs/prod
+
+  stages:
+    - stage: Checks
+      jobs:
+        - job: lint
+          pool: { vmImage: ubuntu-latest }
+          steps:
+            - script: terraform fmt -check -recursive
+              workingDirectory: $(workDir)
+            - script: terraform init -backend=false && terraform validate
+              workingDirectory: $(workDir)
+            - script: tflint --recursive && checkov -d .
+              workingDirectory: $(workDir)
+
+    - stage: Plan
+      dependsOn: Checks
+      jobs:
+        - job: plan
+          pool:
+            name: pool-orders-prod
+          steps:
+            - task: AzureCLI@2
+              displayName: terraform plan
+              inputs:
+                azureSubscription: sc-orders-infra-prod   # workload identity federation
+                scriptType: bash
+                scriptLocation: inlineScript
+                addSpnToEnvironment: true
+                workingDirectory: $(workDir)
+                inlineScript: |
+                  export ARM_CLIENT_ID=$servicePrincipalId ARM_TENANT_ID=$tenantId ARM_OIDC_TOKEN=$idToken
+                  terraform init -input=false
+                  terraform plan -input=false -out=tfplan
+              env:
+                ARM_USE_OIDC: true
+                ARM_SUBSCRIPTION_ID: $(subscriptionId)
+            - publish: $(workDir)/tfplan
+              artifact: tfplan
+
+    - stage: Apply
+      dependsOn: Plan
+      condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+      jobs:
+        - deployment: apply
+          pool:
+            name: pool-orders-prod
+          environment: infra-prod          # approval check on this environment
+          strategy:
+            runOnce:
+              deploy:
+                steps:
+                  - checkout: self
+                  - download: current
+                    artifact: tfplan
+                  - task: AzureCLI@2
+                    displayName: terraform apply (the approved plan)
+                    inputs:
+                      azureSubscription: sc-orders-infra-prod
+                      scriptType: bash
+                      scriptLocation: inlineScript
+                      addSpnToEnvironment: true
+                      workingDirectory: $(workDir)
+                      inlineScript: |
+                        export ARM_CLIENT_ID=$servicePrincipalId ARM_TENANT_ID=$tenantId ARM_OIDC_TOKEN=$idToken
+                        cp $(Pipeline.Workspace)/tfplan/tfplan .
+                        terraform init -input=false
+                        terraform apply -input=false tfplan
+                    env:
+                      ARM_USE_OIDC: true
+                      ARM_SUBSCRIPTION_ID: $(subscriptionId)
+---
+lab: ch13/lab
+solution: |
+  // main.bicep
+  @allowed([
+    'dev'
+    'prod'
+  ])
+  param environment string
+  param location string = resourceGroup().location
+
+  var name = 'orders-${environment}'
+
+  resource vnet 'Microsoft.Network/virtualNetworks@2024-05-01' = {
+    name: 'vnet-${name}'
+    location: location
+    properties: {
+      addressSpace: { addressPrefixes: ['10.20.0.0/16'] }
+      subnets: [
+        {
+          name: 'snet-nodes'
+          properties: { addressPrefix: '10.20.0.0/22' }
+        }
+      ]
+    }
+  }
+
+  resource acr 'Microsoft.ContainerRegistry/registries@2023-07-01' existing = {
+    name: 'contosoacr'
+    scope: resourceGroup('rg-shared')
+  }
+
+  resource aks 'Microsoft.ContainerService/managedClusters@2024-09-01' = {
+    name: 'aks-${name}'
+    location: location
+    sku: { name: 'Base', tier: 'Standard' }
+    identity: { type: 'SystemAssigned' }
+    properties: {
+      dnsPrefix: 'aks-${name}'
+      disableLocalAccounts: true
+      aadProfile: {
+        managed: true
+        enableAzureRBAC: true
+      }
+      oidcIssuerProfile: { enabled: true }
+      securityProfile: {
+        workloadIdentity: { enabled: true }
+      }
+      networkProfile: {
+        networkPlugin: 'azure'
+        networkPluginMode: 'overlay'
+        networkDataplane: 'cilium'
+        podCidr: '192.168.0.0/16'
+        serviceCidr: '172.16.0.0/16'
+        dnsServiceIP: '172.16.0.10'
+      }
+      agentPoolProfiles: [
+        {
+          name: 'system'
+          mode: 'System'
+          vmSize: 'Standard_D4ds_v5'
+          count: 2
+          availabilityZones: ['1', '2', '3']
+          vnetSubnetID: vnet.properties.subnets[0].id
+          nodeTaints: ['CriticalAddonsOnly=true:NoSchedule']
+        }
+      ]
+    }
+  }
+
+  // AcrPull for the kubelet identity, on the shared registry
+  module acrPull 'modules/acr-pull.bicep' = {
+    name: 'acr-pull-${name}'
+    scope: resourceGroup('rg-shared')
+    params: {
+      acrName: acr.name
+      principalId: aks.properties.identityProfile.kubeletidentity.objectId
+    }
+  }
+
+  resource ordersApiId 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
+    name: 'id-orders-api-${environment}'
+    location: location
+  }
+
+  resource fic 'Microsoft.ManagedIdentity/userAssignedIdentities/federatedIdentityCredentials@2023-01-31' = {
+    parent: ordersApiId
+    name: 'orders-api'
+    properties: {
+      issuer: aks.properties.oidcIssuerProfile.issuerURL
+      subject: 'system:serviceaccount:orders:orders-api'
+      audiences: ['api://AzureADTokenExchange']
+    }
+  }
+
+  output ordersApiClientId string = ordersApiId.properties.clientId
+
+  // modules/acr-pull.bicep
+  // param acrName string
+  // param principalId string
+  // resource acr 'Microsoft.ContainerRegistry/registries@2023-07-01' existing = { name: acrName }
+  // resource ra 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  //   name: guid(acr.id, principalId, 'AcrPull')
+  //   scope: acr
+  //   properties: {
+  //     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '7f951dda-4ed3-4680-a7ca-43fe172d538d')
+  //     principalId: principalId
+  //     principalType: 'ServicePrincipal'
+  //   }
+  // }
+
+  // main.prod.bicepparam
+  using 'main.bicep'
+  param environment = 'prod'
+---
+lab: ch13/lab-b
+solution: |
+  resource batchPool 'Microsoft.ContainerService/managedClusters/agentPools@2024-09-01' = {
+    parent: aks
+    name: 'batch'
+    properties: {
+      mode: 'User'
+      vmSize: 'Standard_D4ds_v5'
+      availabilityZones: ['1', '2', '3']
+      enableAutoScaling: true
+      minCount: 0
+      maxCount: 5
+      scaleSetPriority: 'Spot'
+      scaleSetEvictionPolicy: 'Delete'
+      spotMaxPrice: -1
+      nodeTaints: ['batch=true:NoSchedule']
+    }
+  }
+
+  resource kubeletAcrPull 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+    name: guid(acr.id, aks.id, 'AcrPull')
+    scope: acr
+    properties: {
+      roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '7f951dda-4ed3-4680-a7ca-43fe172d538d')
+      principalId: aks.properties.identityProfile.kubeletidentity.objectId
+      principalType: 'ServicePrincipal'
+    }
+  }
+---
+lab: ch13/lab-c
+solution: |
+  trigger:
+    branches:
+      include: [main]
+    paths:
+      include: [infra/bicep/*]
+  pr:
+    branches:
+      include: [main]
+
+  stages:
+    - stage: Lint
+      jobs:
+        - job: lint
+          pool: { vmImage: ubuntu-latest }
+          steps:
+            - script: az bicep lint --file infra/bicep/main.bicep && az bicep build --file infra/bicep/main.bicep
+
+    - stage: WhatIf
+      dependsOn: Lint
+      jobs:
+        - job: whatif
+          pool:
+            name: pool-orders-prod
+          steps:
+            - task: AzureCLI@2
+              inputs:
+                azureSubscription: sc-orders-infra-prod   # workload identity federation
+                scriptType: bash
+                scriptLocation: inlineScript
+                inlineScript: |
+                  az deployment group what-if \
+                    --resource-group rg-orders-prod \
+                    --template-file infra/bicep/main.bicep \
+                    --parameters infra/bicep/main.prod.bicepparam
+
+    - stage: Deploy
+      dependsOn: WhatIf
+      condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+      jobs:
+        - deployment: deploy
+          pool:
+            name: pool-orders-prod
+          environment: infra-prod          # approval after reviewing the what-if
+          strategy:
+            runOnce:
+              deploy:
+                steps:
+                  - checkout: self
+                  - task: AzureCLI@2
+                    inputs:
+                      azureSubscription: sc-orders-infra-prod
+                      scriptType: bash
+                      scriptLocation: inlineScript
+                      inlineScript: |
+                        az stack group create \
+                          --name stack-orders-prod \
+                          --resource-group rg-orders-prod \
+                          --template-file infra/bicep/main.bicep \
+                          --parameters infra/bicep/main.prod.bicepparam \
+                          --action-on-unmanage deleteResources \
+                          --deny-settings-mode none \
+                          --yes
+---
+lab: ch14/lab
+solution: |
+  apiVersion: v1
+  kind: ConfigMap
+  metadata:
+    name: orders-api-config
+    namespace: orders
+  data:
+    LOG_LEVEL: info
+    FEATURE_FLAGS: express-shipping      # fix 3: the missing key
+  ---
+  apiVersion: apps/v1
+  kind: Deployment
+  metadata:
+    name: orders-api
+    namespace: orders
+  spec:
+    replicas: 3
+    selector:
+      matchLabels:
+        app: orders-api
+    template:
+      metadata:
+        labels:
+          app: orders-api
+      spec:
+        containers:
+          - name: api
+            image: contosoacr.azurecr.io/orders-api:1.4.2
+            ports:
+              - name: http
+                containerPort: 8080
+            env:
+              - name: LOG_LEVEL
+                valueFrom:
+                  configMapKeyRef:
+                    name: orders-api-config
+                    key: LOG_LEVEL
+              - name: FEATURE_FLAGS
+                valueFrom:
+                  configMapKeyRef:
+                    name: orders-api-config
+                    key: FEATURE_FLAGS
+            readinessProbe:
+              httpGet:
+                path: /readyz                # fix 1: the path the app serves
+                port: http
+            livenessProbe:
+              httpGet:
+                path: /healthz
+                port: http
+  ---
+  apiVersion: v1
+  kind: Service
+  metadata:
+    name: orders-api
+    namespace: orders
+  spec:
+    selector:
+      app: orders-api                      # fix 4: the selector typo
+    ports:
+      - name: http
+        port: 80
+        targetPort: http                   # fix 2: the container's port
+  ---
+  apiVersion: networking.k8s.io/v1
+  kind: NetworkPolicy
+  metadata:
+    name: default-deny
+    namespace: orders
+  spec:
+    podSelector: {}
+    policyTypes: [Ingress, Egress]
+  ---
+  apiVersion: networking.k8s.io/v1
+  kind: NetworkPolicy
+  metadata:
+    name: allow-web-to-api
+    namespace: orders
+  spec:
+    podSelector:
+      matchLabels:
+        app: orders-api
+    policyTypes: [Ingress]
+    ingress:
+      - from:
+          - namespaceSelector:
+              matchLabels:
+                kubernetes.io/metadata.name: web
+            podSelector:
+              matchLabels:
+                app: web
+        ports:
+          - port: 8080                     # fix 5: the pod port, not the Service port
+  ---
+  apiVersion: networking.k8s.io/v1
+  kind: NetworkPolicy
+  metadata:
+    name: allow-dns
+    namespace: orders
+  spec:
+    podSelector: {}
+    policyTypes: [Egress]
+    egress:
+      - to:
+          - namespaceSelector:
+              matchLabels:
+                kubernetes.io/metadata.name: kube-system
+            podSelector:
+              matchLabels:
+                k8s-app: kube-dns
+        ports:
+          - { port: 53, protocol: UDP }
+          - { port: 53, protocol: TCP }
+---
+lab: ch15/lab
+solution: |
+  apiVersion: rbac.authorization.k8s.io/v1
+  kind: Role
+  metadata:
+    name: deployer
+    namespace: orders
+  rules:
+    - apiGroups: [apps]
+      resources: [deployments]
+      verbs: [get, list, watch, create, update, patch]
+    - apiGroups: [""]
+      resources: [services, configmaps]
+      verbs: [get, list, watch, create, update, patch]
+    - apiGroups: [autoscaling]
+      resources: [horizontalpodautoscalers]
+      verbs: [get, list, watch, create, update, patch]
+    - apiGroups: [gateway.networking.k8s.io]
+      resources: [httproutes]
+      verbs: [get, list, watch, create, update, patch]
+  ---
+  apiVersion: rbac.authorization.k8s.io/v1
+  kind: RoleBinding
+  metadata:
+    name: deployer
+    namespace: orders
+  subjects:
+    - kind: ServiceAccount
+      name: deployer
+      namespace: ci
+  roleRef:
+    apiGroup: rbac.authorization.k8s.io
+    kind: Role
+    name: deployer
+---
+lab: ch15/lab-b
+solution: |
+  apiVersion: v1
+  kind: ServiceAccount
+  metadata:
+    name: orders-api
+    namespace: orders
+    annotations:
+      azure.workload.identity/client-id: 6c1f2a9e-0000-4b1d-9c55-1a2b3c4d5e6f
+  ---
+  apiVersion: apps/v1
+  kind: Deployment
+  metadata:
+    name: orders-api
+    namespace: orders
+  spec:
+    selector:
+      matchLabels:
+        app: orders-api
+    template:
+      metadata:
+        labels:
+          app: orders-api
+          azure.workload.identity/use: "true"
+      spec:
+        serviceAccountName: orders-api
+        automountServiceAccountToken: false
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 65532
+          runAsGroup: 65532
+          seccompProfile:
+            type: RuntimeDefault
+        containers:
+          - name: api
+            image: contosoacr.azurecr.io/orders-api:1.4.2
+            ports:
+              - name: http
+                containerPort: 8080
+            securityContext:
+              allowPrivilegeEscalation: false
+              readOnlyRootFilesystem: true
+              capabilities:
+                drop: [ALL]
+            resources:
+              requests: { cpu: 250m, memory: 256Mi }
+              limits: { memory: 512Mi }
+            volumeMounts:
+              - name: tmp
+                mountPath: /tmp
+              - name: kv
+                mountPath: /mnt/secrets
+                readOnly: true
+        volumes:
+          - name: tmp
+            emptyDir: {}
+          - name: kv
+            csi:
+              driver: secrets-store.csi.k8s.io
+              readOnly: true
+              volumeAttributes:
+                secretProviderClass: orders-api-kv
+  ---
+  apiVersion: secrets-store.csi.x-k8s.io/v1
+  kind: SecretProviderClass
+  metadata:
+    name: orders-api-kv
+    namespace: orders
+  spec:
+    provider: azure
+    parameters:
+      usePodIdentity: "false"
+      clientID: 6c1f2a9e-0000-4b1d-9c55-1a2b3c4d5e6f
+      keyvaultName: kv-orders-prod
+      tenantId: 72f988bf-0000-4000-8000-2d7cd011db47
+      objects: |
+        array:
+          - |
+            objectName: payments-api-key
+            objectType: secret
+---
+lab: ch16/lab
+solution: |
+    - stage: Build
+      jobs:
+        - job: build
+          pool: { vmImage: ubuntu-latest }
+          steps:
+            - task: Docker@2
+              displayName: Build
+              inputs:
+                command: build
+                containerRegistry: acr-connection
+                repository: orders-api
+                tags: $(Build.BuildId)
+            - script: |
+                trivy image --exit-code 1 --severity HIGH,CRITICAL --ignore-unfixed \
+                  contosoacr.azurecr.io/orders-api:$(Build.BuildId)
+              displayName: Scan (fails on fixable HIGH/CRITICAL)
+            - task: Docker@2
+              displayName: Push
+              inputs:
+                command: push
+                containerRegistry: acr-connection
+                repository: orders-api
+                tags: $(Build.BuildId)
+            - script: |
+                DIGEST=$(docker inspect --format='{{index .RepoDigests 0}}' contosoacr.azurecr.io/orders-api:$(Build.BuildId) | cut -d@ -f2)
+                echo "##vso[task.setvariable variable=imageDigest;isOutput=true]$DIGEST"
+              name: digest
+            - script: syft contosoacr.azurecr.io/orders-api@$(digest.imageDigest) -o spdx-json > sbom.spdx.json
+              displayName: SBOM (SPDX)
+            - publish: sbom.spdx.json
+              artifact: sbom
+            - task: AzureCLI@2
+              displayName: Sign with Notation + Key Vault
+              inputs:
+                azureSubscription: sc-contoso-signing     # workload identity federation
+                scriptType: bash
+                scriptLocation: inlineScript
+                inlineScript: |
+                  notation sign --signature-format cose --plugin azure-kv \
+                    --id "$(signingKeyId)" contosoacr.azurecr.io/orders-api@$(digest.imageDigest)
+
+    # in the prod deploy job: deploy the signed digest
+                  - task: KubernetesManifest@1
+                    inputs:
+                      action: deploy
+                      connectionType: azureResourceManager
+                      azureSubscriptionConnection: sc-orders-prod
+                      azureResourceGroup: rg-orders-prod
+                      kubernetesCluster: aks-orders-prod
+                      namespace: orders
+                      manifests: $(Pipeline.Workspace)/manifests/*.yaml
+                      containers: contosoacr.azurecr.io/orders-api@$(imageDigest)
+---
+lab: ch17/project
+solution: "# ==> Dockerfile\n# Pin both images to the digest of the version you tested (crane digest / docker buildx imagetools inspect).\nFROM golang:1.23-bookworm@sha256:<digest-of-golang-1.23> AS build\nWORKDIR /src\nCOPY go.mod go.sum ./\nRUN go mod download\nCOPY . .\nRUN CGO_ENABLED=0 go build -trimpath -ldflags=\"-s -w\" -o /out/orders-api ./cmd/orders-api\n\nFROM gcr.io/distroless/static-debian12:nonroot@sha256:<digest-of-static-nonroot>\nCOPY --from=build /out/orders-api /orders-api\nEXPOSE 8080\nUSER nonroot:nonroot\nENTRYPOINT [\"/orders-api\"]\n\n# ==> k8s/base/deployment.yaml\napiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: orders-api\n  namespace: orders\n  labels:\n    app: orders-api\nspec:\n  selector:\n    matchLabels:\n      app: orders-api\n  template:\n    metadata:\n      labels:\n        app: orders-api\n        azure.workload.identity/use: \"true\"\n    spec:\n      serviceAccountName: orders-api\n      securityContext:\n        runAsNonRoot: true\n    \
+  \    runAsUser: 65532\n        seccompProfile:\n          type: RuntimeDefault\n      topologySpreadConstraints:\n        - maxSkew: 1\n          topologyKey: topology.kubernetes.io/zone\n          whenUnsatisfiable: ScheduleAnyway\n          labelSelector:\n            matchLabels:\n              app: orders-api\n      containers:\n        - name: api\n          image: contosoacr.azurecr.io/orders-api:1.4.2\n          ports:\n            - name: http\n              containerPort: 8080\n          envFrom:\n            - configMapRef:\n                name: orders-api-config\n          resources:\n            requests: { cpu: 250m, memory: 256Mi }\n            limits: { memory: 512Mi }\n          readinessProbe:\n            httpGet: { path: /readyz, port: http }\n          livenessProbe:\n            httpGet: { path: /healthz, port: http }\n          securityContext:\n            allowPrivilegeEscalation: false\n            readOnlyRootFilesystem: true\n            capabilities:\n    \
+  \          drop: [ALL]\n          volumeMounts:\n            - { name: tmp, mountPath: /tmp }\n            - { name: kv, mountPath: /mnt/secrets, readOnly: true }\n      volumes:\n        - name: tmp\n          emptyDir: {}\n        - name: kv\n          csi:\n            driver: secrets-store.csi.k8s.io\n            readOnly: true\n            volumeAttributes:\n              secretProviderClass: orders-api-kv\n\n# ==> k8s/base/service.yaml\napiVersion: v1\nkind: Service\nmetadata:\n  name: orders-api\n  namespace: orders\nspec:\n  selector:\n    app: orders-api\n  ports:\n    - name: http\n      port: 80\n      targetPort: http\n\n# ==> k8s/base/configmap.yaml\napiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: orders-api-config\n  namespace: orders\ndata:\n  LOG_LEVEL: info\n  FEATURE_EXPRESS_SHIPPING: \"true\"\n\n# ==> k8s/base/hpa.yaml\napiVersion: autoscaling/v2\nkind: HorizontalPodAutoscaler\nmetadata:\n  name: orders-api\n  namespace: orders\nspec:\n  scaleTargetRef: { apiVersion:\
+  \ apps/v1, kind: Deployment, name: orders-api }\n  minReplicas: 2\n  maxReplicas: 10\n  metrics:\n    - type: Resource\n      resource: { name: cpu, target: { type: Utilization, averageUtilization: 70 } }\n\n# ==> k8s/base/pdb.yaml\napiVersion: policy/v1\nkind: PodDisruptionBudget\nmetadata:\n  name: orders-api\n  namespace: orders\nspec:\n  maxUnavailable: 1\n  selector:\n    matchLabels:\n      app: orders-api\n\n# ==> k8s/base/serviceaccount.yaml\napiVersion: v1\nkind: ServiceAccount\nmetadata:\n  name: orders-api\n  namespace: orders\n  annotations:\n    azure.workload.identity/client-id: 6c1f2a9e-0000-4b1d-9c55-1a2b3c4d5e6f\n\n# ==> k8s/overlays/dev/kustomization.yaml\napiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nnamespace: orders\nresources:\n  - ../../base\nimages:\n  - name: contosoacr.azurecr.io/orders-api\n    newTag: \"1.4.2\"\n\n# ==> k8s/overlays/prod/kustomization.yaml\napiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nnamespace: orders\n\
+  resources:\n  - ../../base\nimages:\n  - name: contosoacr.azurecr.io/orders-api\n    newTag: \"1.4.2\"\npatches:\n  - target: { kind: Deployment, name: orders-api }\n    patch: |-\n      apiVersion: apps/v1\n      kind: Deployment\n      metadata:\n        name: orders-api\n      spec:\n        template:\n          spec:\n            containers:\n              - name: api\n                resources:\n                  requests:\n                    cpu: 500m\n                    memory: 512Mi\n                  limits:\n                    memory: 1Gi\n  - target: { kind: HorizontalPodAutoscaler, name: orders-api }\n    patch: |-\n      apiVersion: autoscaling/v2\n      kind: HorizontalPodAutoscaler\n      metadata:\n        name: orders-api\n      spec:\n        minReplicas: 4\n        maxReplicas: 20\n\n# ==> k8s/policies/networkpolicies.yaml\n# Default-deny (both directions) and DNS in every namespace\napiVersion: networking.k8s.io/v1\nkind: NetworkPolicy\nmetadata: { name: default-deny,\
+  \ namespace: web }\nspec: { podSelector: {}, policyTypes: [Ingress, Egress] }\n---\napiVersion: networking.k8s.io/v1\nkind: NetworkPolicy\nmetadata: { name: default-deny, namespace: orders }\nspec: { podSelector: {}, policyTypes: [Ingress, Egress] }\n---\napiVersion: networking.k8s.io/v1\nkind: NetworkPolicy\nmetadata: { name: default-deny, namespace: db }\nspec: { podSelector: {}, policyTypes: [Ingress, Egress] }\n---\napiVersion: networking.k8s.io/v1\nkind: NetworkPolicy\nmetadata: { name: allow-dns, namespace: web }\nspec:\n  podSelector: {}\n  policyTypes: [Egress]\n  egress:\n    - to:\n        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: kube-system } }\n          podSelector: { matchLabels: { k8s-app: kube-dns } }\n      ports: [{ port: 53, protocol: UDP }, { port: 53, protocol: TCP }]\n---\napiVersion: networking.k8s.io/v1\nkind: NetworkPolicy\nmetadata: { name: allow-dns, namespace: orders }\nspec:\n  podSelector: {}\n  policyTypes: [Egress]\n  egress:\n\
+  \    - to:\n        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: kube-system } }\n          podSelector: { matchLabels: { k8s-app: kube-dns } }\n      ports: [{ port: 53, protocol: UDP }, { port: 53, protocol: TCP }]\n---\napiVersion: networking.k8s.io/v1\nkind: NetworkPolicy\nmetadata: { name: allow-dns, namespace: db }\nspec:\n  podSelector: {}\n  policyTypes: [Egress]\n  egress:\n    - to:\n        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: kube-system } }\n          podSelector: { matchLabels: { k8s-app: kube-dns } }\n      ports: [{ port: 53, protocol: UDP }, { port: 53, protocol: TCP }]\n---\n# web: in from the gateway, out to orders-api\napiVersion: networking.k8s.io/v1\nkind: NetworkPolicy\nmetadata: { name: web-flows, namespace: web }\nspec:\n  podSelector: { matchLabels: { app: web } }\n  policyTypes: [Ingress, Egress]\n  ingress:\n    - from:\n        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: gateway-infra\
+  \ } }\n      ports: [{ port: 8080 }]\n  egress:\n    - to:\n        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: orders } }\n          podSelector: { matchLabels: { app: orders-api } }\n      ports: [{ port: 8080 }]\n---\n# orders-api: in from the gateway and web\napiVersion: networking.k8s.io/v1\nkind: NetworkPolicy\nmetadata: { name: orders-api-ingress, namespace: orders }\nspec:\n  podSelector: { matchLabels: { app: orders-api } }\n  policyTypes: [Ingress]\n  ingress:\n    - from:\n        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: gateway-infra } }\n        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: web } }\n          podSelector: { matchLabels: { app: web } }\n      ports: [{ port: 8080 }]\n---\n# orders-api and orders-worker: out to postgres\napiVersion: networking.k8s.io/v1\nkind: NetworkPolicy\nmetadata: { name: orders-to-db, namespace: orders }\nspec:\n  podSelector:\n    matchExpressions:\n      - { key: app,\
+  \ operator: In, values: [orders-api, orders-worker] }\n  policyTypes: [Egress]\n  egress:\n    - to:\n        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: db } }\n          podSelector: { matchLabels: { app: postgres } }\n      ports: [{ port: 5432 }]\n---\n# postgres: in from orders-api and orders-worker only\napiVersion: networking.k8s.io/v1\nkind: NetworkPolicy\nmetadata: { name: postgres-ingress, namespace: db }\nspec:\n  podSelector: { matchLabels: { app: postgres } }\n  policyTypes: [Ingress]\n  ingress:\n    - from:\n        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: orders } }\n          podSelector:\n            matchExpressions:\n              - { key: app, operator: In, values: [orders-api, orders-worker] }\n      ports: [{ port: 5432 }]\n\n# ==> k8s/policies/cluster/policies.yaml\n# Kyverno ClusterPolicies (Azure Policy's built-ins express the same rules)\napiVersion: kyverno.io/v1\nkind: ClusterPolicy\nmetadata:\n  name: contoso-baseline\n\
+  spec:\n  validationFailureAction: Enforce\n  rules:\n    - name: allowed-registries\n      match: { any: [ { resources: { kinds: [Pod] } } ] }\n      validate:\n        message: Images must come from contosoacr.azurecr.io/\n        pattern:\n          spec:\n            containers:\n              - image: \"contosoacr.azurecr.io/*\"\n    - name: no-latest\n      match: { any: [ { resources: { kinds: [Pod] } } ] }\n      validate:\n        message: The latest tag isn't allowed\n        pattern:\n          spec:\n            containers:\n              - image: \"!*:latest\"\n    - name: require-memory-limits\n      match: { any: [ { resources: { kinds: [Pod] } } ] }\n      validate:\n        message: Memory limits are required\n        pattern:\n          spec:\n            containers:\n              - resources:\n                  limits:\n                    memory: \"?*\"\n    - name: no-privileged\n      match: { any: [ { resources: { kinds: [Pod] } } ] }\n      validate:\n        message:\
+  \ Privileged containers aren't allowed\n        pattern:\n          spec:\n            containers:\n              - =(securityContext):\n                  =(privileged): \"false\"\n---\napiVersion: kyverno.io/v1\nkind: ClusterPolicy\nmetadata:\n  name: verify-signed-images\nspec:\n  validationFailureAction: Enforce\n  rules:\n    - name: notation-signature\n      match: { any: [ { resources: { kinds: [Pod], namespaces: [orders, web] } } ] }\n      verifyImages:\n        - type: Notary\n          imageReferences: [\"contosoacr.azurecr.io/*\"]\n          attestors:\n            - entries:\n                - certificates:\n                    cert: \"-- the Contoso signing CA certificate (public) --\"\n\n# ==> k8s/gateway/gateway.yaml\napiVersion: gateway.networking.k8s.io/v1\nkind: Gateway\nmetadata:\n  name: shop-gateway\n  namespace: gateway-infra\nspec:\n  gatewayClassName: azure-alb-external\n  listeners:\n    - name: https\n      protocol: HTTPS\n      port: 443\n      hostname: shop.contoso.example\n\
+  \      tls:\n        mode: Terminate\n        certificateRefs:\n          - kind: Secret\n            name: shop-contoso-tls   # created by cert-manager / Key Vault, never in Git\n      allowedRoutes:\n        namespaces:\n          from: Selector\n          selector:\n            matchLabels:\n              shop-routes: allowed\n    - name: http\n      protocol: HTTP\n      port: 80\n      hostname: shop.contoso.example\n      allowedRoutes:\n        namespaces:\n          from: Same\n\n# ==> k8s/gateway/routes.yaml\n# HTTP only redirects to HTTPS\napiVersion: gateway.networking.k8s.io/v1\nkind: HTTPRoute\nmetadata:\n  name: http-to-https\n  namespace: gateway-infra\nspec:\n  parentRefs:\n    - name: shop-gateway\n      sectionName: http\n  hostnames: [shop.contoso.example]\n  rules:\n    - filters:\n        - type: RequestRedirect\n          requestRedirect:\n            scheme: https\n            statusCode: 301\n---\napiVersion: gateway.networking.k8s.io/v1\nkind: HTTPRoute\nmetadata:\n\
+  \  name: orders-api\n  namespace: orders\nspec:\n  parentRefs:\n    - name: shop-gateway\n      namespace: gateway-infra\n      sectionName: https\n  hostnames: [shop.contoso.example]\n  rules:\n    - matches:\n        - path: { type: PathPrefix, value: /api }\n      backendRefs:\n        - name: orders-api\n          port: 80\n---\napiVersion: gateway.networking.k8s.io/v1\nkind: HTTPRoute\nmetadata:\n  name: web\n  namespace: web\nspec:\n  parentRefs:\n    - name: shop-gateway\n      namespace: gateway-infra\n      sectionName: https\n  hostnames: [shop.contoso.example]\n  rules:\n    - matches:\n        - path: { type: PathPrefix, value: / }\n      backendRefs:\n        - name: web\n          port: 80\n\n# ==> k8s/secrets/secretproviderclass.yaml\napiVersion: secrets-store.csi.x-k8s.io/v1\nkind: SecretProviderClass\nmetadata:\n  name: orders-api-kv\n  namespace: orders\nspec:\n  provider: azure\n  parameters:\n    usePodIdentity: \"false\"\n    clientID: 6c1f2a9e-0000-4b1d-9c55-1a2b3c4d5e6f\n\
+  \    keyvaultName: kv-orders-prod\n    tenantId: 72f988bf-0000-4000-8000-2d7cd011db47\n    objects: |\n      array:\n        - |\n          objectName: payments-api-key\n          objectType: secret\n\n# ==> infra/terraform/main.tf\n# versions.tf\nterraform {\n  required_version = \">= 1.9\"\n  required_providers {\n    azurerm = {\n      source  = \"hashicorp/azurerm\"\n      version = \"~> 4.20\"\n    }\n  }\n  backend \"azurerm\" {\n    resource_group_name  = \"rg-tfstate\"\n    storage_account_name = \"sttfstatecontoso\"\n    container_name       = \"tfstate\"\n    key                  = \"orders/dev.tfstate\"\n    use_azuread_auth     = true\n  }\n}\n\nprovider \"azurerm\" {\n  features {}\n}\n\n# variables.tf\nvariable \"environment\" {\n  type = string\n  validation {\n    condition     = contains([\"dev\", \"prod\"], var.environment)\n    error_message = \"environment must be dev or prod.\"\n  }\n}\n\nvariable \"location\" {\n  type    = string\n  default = \"westeurope\"\n}\n\n\
+  # main.tf\nlocals {\n  name = \"orders-${var.environment}\"\n}\n\nresource \"azurerm_resource_group\" \"main\" {\n  name     = \"rg-${local.name}\"\n  location = var.location\n}\n\nresource \"azurerm_virtual_network\" \"main\" {\n  name                = \"vnet-${local.name}\"\n  resource_group_name = azurerm_resource_group.main.name\n  location            = azurerm_resource_group.main.location\n  address_space       = [\"10.20.0.0/16\"]\n}\n\nresource \"azurerm_subnet\" \"nodes\" {\n  name                 = \"snet-nodes\"\n  resource_group_name  = azurerm_resource_group.main.name\n  virtual_network_name = azurerm_virtual_network.main.name\n  address_prefixes     = [\"10.20.0.0/22\"]\n}\n\nresource \"azurerm_log_analytics_workspace\" \"main\" {\n  name                = \"log-${local.name}\"\n  resource_group_name = azurerm_resource_group.main.name\n  location            = azurerm_resource_group.main.location\n  retention_in_days   = 30\n}\n\ndata \"azurerm_container_registry\" \"shared\"\
+  \ {\n  name                = \"contosoacr\"\n  resource_group_name = \"rg-shared\"\n}\n\nresource \"azurerm_kubernetes_cluster\" \"main\" {\n  name                      = \"aks-${local.name}\"\n  resource_group_name       = azurerm_resource_group.main.name\n  location                  = azurerm_resource_group.main.location\n  dns_prefix                = \"aks-${local.name}\"\n  sku_tier                  = \"Standard\"\n  private_cluster_enabled   = true\n  oidc_issuer_enabled       = true\n  workload_identity_enabled = true\n  local_account_disabled    = true\n  automatic_upgrade_channel = \"patch\"\n  node_os_upgrade_channel   = \"NodeImage\"\n\n  default_node_pool {\n    name                         = \"system\"\n    vm_size                      = \"Standard_D4ds_v5\"\n    node_count                   = 2\n    zones                        = [\"1\", \"2\", \"3\"]\n    vnet_subnet_id               = azurerm_subnet.nodes.id\n    only_critical_addons_enabled = true\n  }\n\n  identity {\n\
+  \    type = \"SystemAssigned\"\n  }\n\n  azure_active_directory_role_based_access_control {\n    azure_rbac_enabled = true\n  }\n\n  network_profile {\n    network_plugin      = \"azure\"\n    network_plugin_mode = \"overlay\"\n    network_data_plane  = \"cilium\"\n    pod_cidr            = \"192.168.0.0/16\"\n    service_cidr        = \"172.16.0.0/16\"\n    dns_service_ip      = \"172.16.0.10\"\n  }\n\n  oms_agent {\n    log_analytics_workspace_id = azurerm_log_analytics_workspace.main.id\n  }\n}\n\nresource \"azurerm_kubernetes_cluster_node_pool\" \"user\" {\n  name                  = \"user\"\n  kubernetes_cluster_id = azurerm_kubernetes_cluster.main.id\n  mode                  = \"User\"\n  vm_size               = \"Standard_D4ds_v5\"\n  zones                 = [\"1\", \"2\", \"3\"]\n  vnet_subnet_id        = azurerm_subnet.nodes.id\n  auto_scaling_enabled  = true\n  min_count             = 2\n  max_count             = 6\n}\n\nresource \"azurerm_role_assignment\" \"kubelet_acr_pull\"\
+  \ {\n  scope                = data.azurerm_container_registry.shared.id\n  role_definition_name = \"AcrPull\"\n  principal_id         = azurerm_kubernetes_cluster.main.kubelet_identity[0].object_id\n  principal_type       = \"ServicePrincipal\"\n}\n\nresource \"azurerm_user_assigned_identity\" \"orders_api\" {\n  name                = \"id-orders-api-${var.environment}\"\n  resource_group_name = azurerm_resource_group.main.name\n  location            = azurerm_resource_group.main.location\n}\n\nresource \"azurerm_federated_identity_credential\" \"orders_api\" {\n  name                = \"orders-api\"\n  resource_group_name = azurerm_resource_group.main.name\n  parent_id           = azurerm_user_assigned_identity.orders_api.id\n  audience            = [\"api://AzureADTokenExchange\"]\n  issuer              = azurerm_kubernetes_cluster.main.oidc_issuer_url\n  subject             = \"system:serviceaccount:orders:orders-api\"\n}\n\n# outputs.tf\noutput \"cluster_name\" {\n  value = azurerm_kubernetes_cluster.main.name\n\
+  }\n\noutput \"orders_api_client_id\" {\n  value = azurerm_user_assigned_identity.orders_api.client_id\n}\n\n# ==> infra/bicep/main.bicep\n// Terraform was chosen for this project.\n\n# ==> infra-pipeline.yml\ntrigger:\n  branches:\n    include: [main]\n  paths:\n    include: [infra/terraform/*]\npr:\n  branches:\n    include: [main]\n\nvariables:\n  workDir: infra/terraform/envs/prod\n\nstages:\n  - stage: Checks\n    jobs:\n      - job: lint\n        pool: { vmImage: ubuntu-latest }\n        steps:\n          - script: terraform fmt -check -recursive\n            workingDirectory: $(workDir)\n          - script: terraform init -backend=false && terraform validate\n            workingDirectory: $(workDir)\n          - script: tflint --recursive && checkov -d .\n            workingDirectory: $(workDir)\n\n  - stage: Plan\n    dependsOn: Checks\n    jobs:\n      - job: plan\n        pool:\n          name: pool-orders-prod\n        steps:\n          - task: AzureCLI@2\n            displayName:\
+  \ terraform plan\n            inputs:\n              azureSubscription: sc-orders-infra-prod   # workload identity federation\n              scriptType: bash\n              scriptLocation: inlineScript\n              addSpnToEnvironment: true\n              workingDirectory: $(workDir)\n              inlineScript: |\n                export ARM_CLIENT_ID=$servicePrincipalId ARM_TENANT_ID=$tenantId ARM_OIDC_TOKEN=$idToken\n                terraform init -input=false\n                terraform plan -input=false -out=tfplan\n            env:\n              ARM_USE_OIDC: true\n              ARM_SUBSCRIPTION_ID: $(subscriptionId)\n          - publish: $(workDir)/tfplan\n            artifact: tfplan\n\n  - stage: Apply\n    dependsOn: Plan\n    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))\n    jobs:\n      - deployment: apply\n        pool:\n          name: pool-orders-prod\n        environment: infra-prod          # approval check on this environment\n\
+  \        strategy:\n          runOnce:\n            deploy:\n              steps:\n                - checkout: self\n                - download: current\n                  artifact: tfplan\n                - task: AzureCLI@2\n                  displayName: terraform apply (the approved plan)\n                  inputs:\n                    azureSubscription: sc-orders-infra-prod\n                    scriptType: bash\n                    scriptLocation: inlineScript\n                    addSpnToEnvironment: true\n                    workingDirectory: $(workDir)\n                    inlineScript: |\n                      export ARM_CLIENT_ID=$servicePrincipalId ARM_TENANT_ID=$tenantId ARM_OIDC_TOKEN=$idToken\n                      cp $(Pipeline.Workspace)/tfplan/tfplan .\n                      terraform init -input=false\n                      terraform apply -input=false tfplan\n                  env:\n                    ARM_USE_OIDC: true\n                    ARM_SUBSCRIPTION_ID: $(subscriptionId)\n\
+  \n# ==> templates/build.yml\nparameters:\n  - name: imageRepository\n    type: string\n    default: orders-api\n\njobs:\n  - job: build\n    pool: { vmImage: ubuntu-latest }\n    steps:\n      - script: go test ./...\n        displayName: Unit tests\n      - task: Docker@2\n        inputs:\n          command: build\n          containerRegistry: acr-connection\n          repository: ${{ parameters.imageRepository }}\n          tags: $(Build.BuildId)\n      - script: |\n          trivy image --exit-code 1 --severity HIGH,CRITICAL --ignore-unfixed \\\n            contosoacr.azurecr.io/${{ parameters.imageRepository }}:$(Build.BuildId)\n        displayName: Scan (fails on fixable HIGH/CRITICAL)\n      - task: Docker@2\n        inputs:\n          command: push\n          containerRegistry: acr-connection\n          repository: ${{ parameters.imageRepository }}\n          tags: $(Build.BuildId)\n      - script: |\n          DIGEST=$(docker inspect --format='{{index .RepoDigests 0}}' contosoacr.azurecr.io/${{\
+  \ parameters.imageRepository }}:$(Build.BuildId) | cut -d@ -f2)\n          echo \"##vso[task.setvariable variable=imageDigest;isOutput=true]$DIGEST\"\n        name: digest\n      - script: syft contosoacr.azurecr.io/${{ parameters.imageRepository }}@$(digest.imageDigest) -o spdx-json > sbom.spdx.json\n      - publish: sbom.spdx.json\n        artifact: sbom\n      - task: AzureCLI@2\n        inputs:\n          azureSubscription: sc-contoso-signing\n          scriptType: bash\n          scriptLocation: inlineScript\n          inlineScript: |\n            notation sign --signature-format cose --plugin azure-kv \\\n              --id \"$(signingKeyId)\" contosoacr.azurecr.io/${{ parameters.imageRepository }}@$(digest.imageDigest)\n\n# ==> azure-pipelines.yml\ntrigger: [main]\n\nstages:\n  - stage: Build\n    jobs:\n      - template: templates/build.yml\n\n  - stage: DeployDev\n    dependsOn: Build\n    variables:\n      imageDigest: $[ stageDependencies.Build.build.outputs['digest.imageDigest']\
+  \ ]\n    jobs:\n      - deployment: deploy_dev\n        pool: { vmImage: ubuntu-latest }\n        environment: dev\n        strategy:\n          runOnce:\n            deploy:\n              steps:\n                - task: KubernetesManifest@1\n                  inputs:\n                    action: deploy\n                    connectionType: azureResourceManager\n                    azureSubscriptionConnection: sc-orders-dev\n                    azureResourceGroup: rg-orders-dev\n                    kubernetesCluster: aks-orders-dev\n                    namespace: orders\n                    manifests: $(Pipeline.Workspace)/manifests/dev/*.yaml\n                    containers: contosoacr.azurecr.io/orders-api@$(imageDigest)\n\n  - stage: DeployProd\n    dependsOn: DeployDev\n    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))\n    variables:\n      imageDigest: $[ stageDependencies.Build.build.outputs['digest.imageDigest'] ]\n    jobs:\n      - deployment:\
+  \ canary_orders_api\n        pool:\n          name: pool-orders-prod\n        environment: prod.orders\n        strategy:\n          canary:\n            increments: [10, 50]\n            deploy:\n              steps:\n                - task: KubernetesManifest@1\n                  inputs:\n                    action: deploy\n                    connectionType: azureResourceManager\n                    azureSubscriptionConnection: sc-orders-prod\n                    azureResourceGroup: rg-orders-prod\n                    kubernetesCluster: aks-orders-prod\n                    namespace: orders\n                    strategy: canary\n                    percentage: $(strategy.increment)\n                    manifests: $(Pipeline.Workspace)/manifests/prod/*.yaml\n                    containers: contosoacr.azurecr.io/orders-api@$(imageDigest)\n            postRouteTraffic:\n              steps:\n                - script: ./scripts/canary-error-rate.sh --namespace orders --max-ratio 0.01 ||\
+  \ exit 1\n            on:\n              failure:\n                steps:\n                  - task: KubernetesManifest@1\n                    inputs:\n                      action: reject\n                      connectionType: azureResourceManager\n                      azureSubscriptionConnection: sc-orders-prod\n                      azureResourceGroup: rg-orders-prod\n                      kubernetesCluster: aks-orders-prod\n                      namespace: orders\n                      strategy: canary\n                      manifests: $(Pipeline.Workspace)/manifests/prod/*.yaml\n              success:\n                steps:\n                  - task: KubernetesManifest@1\n                    inputs:\n                      action: promote\n                      connectionType: azureResourceManager\n                      azureSubscriptionConnection: sc-orders-prod\n                      azureResourceGroup: rg-orders-prod\n                      kubernetesCluster: aks-orders-prod\n\
+  \                      namespace: orders\n                      strategy: canary\n                      manifests: $(Pipeline.Workspace)/manifests/prod/*.yaml\n                      containers: contosoacr.azurecr.io/orders-api@$(imageDigest)\n\n"

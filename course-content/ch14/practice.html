@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chapter 14 · Practice</title>
+<link rel="stylesheet" href="../content.css">
+</head>
+<body>
+<main>
+<nav class="crumbs"><a href="../index.html">Course</a> / <a href="index.html">Chapter 14</a> / Practice</nav>
+<p class="kicker">Chapter 14 · Practice</p>
+<h1>Practice: quiz, incident drills, lab, try it locally</h1>
+
+<h2 id="quiz">Checkpoint quiz (10 drawn from 20)</h2>
+<div class="check" data-type="mcq"><p class="q">The first triage command for a broken Deployment?</p><ol class="options"><li class="correct"><code>kubectl get deploy,rs,pods</code></li><li><code>kubectl delete pod</code></li><li><code>kubectl debug</code></li><li>Restart the node</li></ol><div class="explain">See where it's stuck first.</div></div>
+<div class="check" data-type="mcq"><p class="q">How long are events kept by default?</p><ol class="options"><li>Forever</li><li class="correct">About an hour</li><li>A day</li><li>Until the pod is deleted only</li></ol><div class="explain">Ship them to Log Analytics.</div></div>
+<div class="check" data-type="mcq"><p class="q">Why <code>logs --previous</code> in a crash loop?</p><ol class="options"><li>It's faster</li><li class="correct">The cause is in the container that died, not the one that just started</li><li>It shows events</li><li>It's required syntax</li></ol><div class="explain">The current container may not have logged yet.</div></div>
+<div class="check" data-type="mcq"><p class="q">How do you get a shell into a distroless pod?</p><ol class="options"><li><code>exec -- sh</code></li><li class="correct"><code>kubectl debug</code> with an ephemeral tools container</li><li>Rebuild the image</li><li>SSH to the node</li></ol><div class="explain">Add <code>--target</code> to see its processes.</div></div>
+<div class="check" data-type="mcq"><p class="q">"0/5 nodes are available: 3 Insufficient cpu" means…</p><ol class="options"><li>CPU limits are too low</li><li class="correct">The pod's CPU request doesn't fit on any eligible node</li><li>The node CPUs are broken</li><li>A throttling issue</li></ol><div class="explain">Lower the request or add capacity.</div></div>
+<div class="check" data-type="mcq"><p class="q">"volume node affinity conflict" points to…</p><ol class="options"><li>A missing PVC</li><li class="correct">A zonal disk that can only attach in a zone with no room for the pod</li><li>The wrong StorageClass</li><li>RBAC</li></ol><div class="explain">Keep capacity per zone, or use ZRS.</div></div>
+<div class="check" data-type="mcq"><p class="q">ImagePullBackOff with "not found"?</p><ol class="options"><li>AcrPull is missing</li><li class="correct">The tag or repository doesn't exist</li><li>DNS</li><li>Disk is full</li></ol><div class="explain">401 = AcrPull; no such host = DNS.</div></div>
+<div class="check" data-type="mcq"><p class="q">CreateContainerConfigError usually means…</p><ol class="options"><li>Bad image</li><li class="correct">A referenced ConfigMap or Secret (key) is missing</li><li>OOM</li><li>Probe failure</li></ol><div class="explain">Read the kubelet event.</div></div>
+<div class="check" data-type="mcq"><p class="q">Exit code 137 means…</p><ol class="options"><li>An app error</li><li class="correct">Killed by SIGKILL, often OOM</li><li>Normal exit</li><li>Command not found</li></ol><div class="explain">128 + 9.</div></div>
+<div class="check" data-type="mcq"><p class="q">Exit code 127 means…</p><ol class="options"><li>OOM</li><li class="correct">Command not found</li><li>SIGTERM</li><li>Success</li></ol><div class="explain">Check command/args against the image.</div></div>
+<div class="check" data-type="mcq"><p class="q">All pods restart at once; events say "Liveness probe failed: …/health/db". Cause?</p><ol class="options"><li>An app crash</li><li class="correct">Liveness depends on the database (the death spiral)</li><li>OOM</li><li>A node failure</li></ol><div class="explain">Liveness should check the process only.</div></div>
+<div class="check" data-type="mcq"><p class="q">Pods Running 0/1, EndpointSlice empty. Most likely…</p><ol class="options"><li>A selector mismatch</li><li class="correct">The readiness probe is failing</li><li>A NetworkPolicy</li><li>DNS</li></ol><div class="explain">Not-ready pods aren't endpoints.</div></div>
+<div class="check" data-type="mcq"><p class="q">"Connection refused" to a Service with endpoints suggests…</p><ol class="options"><li>NetworkPolicy</li><li class="correct">A wrong targetPort, or the app not listening on 0.0.0.0</li><li>DNS</li><li>Readiness</li></ol><div class="explain">Refused = reached, nothing listening.</div></div>
+<div class="check" data-type="mcq"><p class="q">port-forward works but in-cluster calls time out. Likely?</p><ol class="options"><li>The app is broken</li><li class="correct">A NetworkPolicy is blocking the path</li><li>The wrong image</li><li>Quota</li></ol><div class="explain">port-forward bypasses NetworkPolicy.</div></div>
+<div class="check" data-type="mcq"><p class="q">The gateway returns 503 for a matched route. Likely?</p><ol class="options"><li>No route</li><li class="correct">The backend Service has no ready endpoints</li><li>A TLS error</li><li>DNS</li></ol><div class="explain">404 would be "no route matched".</div></div>
+<div class="check" data-type="mcq"><p class="q">Which log category answers "who deleted this?" cost-effectively?</p><ol class="options"><li>kube-apiserver</li><li class="correct">kube-audit-admin</li><li>kube-scheduler</li><li>cluster-autoscaler</li></ol><div class="explain">Writes only, no reads.</div></div>
+<div class="check" data-type="mcq"><p class="q">Which service stores Prometheus metrics for AKS?</p><ol class="options"><li>Log Analytics</li><li class="correct">An Azure Monitor workspace (managed Prometheus)</li><li>Key Vault</li><li>ACR</li></ol><div class="explain">Visualise them in Managed Grafana.</div></div>
+<div class="check" data-type="mcq"><p class="q">What makes a good page-worthy alert?</p><ol class="options"><li>Any pod restart</li><li class="correct">User-facing symptoms (error rate, latency), with an owner and a runbook</li><li>CPU above 50% on one node</li><li>Every warning event</li></ol><div class="explain">Avoid alert fatigue.</div></div>
+<div class="check" data-type="mcq"><p class="q">The deploy log shows "configured" then "exceeded its progress deadline". Look at…</p><ol class="options"><li>The service connection</li><li class="correct">The new pods' health (cluster triage)</li><li>Agent disk</li><li>The YAML syntax</li></ol><div class="explain">Kubernetes accepted the change; the pods are unhealthy.</div></div>
+<div class="check" data-type="mcq"><p class="q">A Forbidden from "admission webhook … denied" is…</p><ol class="options"><li>An RBAC problem</li><li class="correct">A policy rejecting the manifest</li><li>A network problem</li><li>Quota</li></ol><div class="explain">Fix the manifest to comply.</div></div>
+
+<h2 id="predict">Incident drills (4 multi-step scenarios)</h2>
+<p class="muted">Each answer reveals the next piece of output. The first-reveal score counts toward the predict weight.</p>
+<div class="check" data-type="predict"><p class="q">Drill 1 · "Checkout is down." Step 1: <code>kubectl get pods -n orders</code> shows all orders-api pods <code>Running 0/1</code>. Next command?</p><ol class="options"><li class="correct"><code>kubectl describe pod</code> → reveals "Readiness probe failed: … connect: connection refused" on <code>/readyz</code></li><li>Delete all pods</li><li>Scale to 0</li></ol><div class="explain">Step 2 then shows the app logging "listening on 127.0.0.1:8080" since 1.5.1, a bind-address regression. Fix: roll back, then bind to 0.0.0.0.</div></div>
+<div class="check" data-type="predict"><p class="q">Drill 2 · "Deploy failed." The log shows Forbidden for user 6c1f… on deployments in <code>orders</code>. Step 1: what changed?</p><ol class="options"><li class="correct">Check recent role assignment changes: the IaC PR moved the role to the wrong namespace scope</li><li>The cluster upgrade</li><li>The app code</li></ol><div class="explain">Restore the AKS RBAC Writer assignment at <code>/namespaces/orders</code> via IaC.</div></div>
+<div class="check" data-type="predict"><p class="q">Drill 3 · "Pods pending after scale-out." Events: "max node group size reached". Step 1?</p><ol class="options"><li class="correct">Check the pool's max and vCPU quota, then raise max (IaC) and check subnet IPs</li><li>Add tolerations</li><li>Delete pods</li></ol><div class="explain">Step 2 shows that quota allows only 2 more nodes, so request a quota increase as well.</div></div>
+<div class="check" data-type="predict"><p class="q">Drill 4 · "Intermittent 5xx after policy rollout." The web logs show timeouts to orders-api. Step 1?</p><ol class="options"><li class="correct">Compare the policy matrix: the new default-deny in <code>web</code> lacks the egress allow to orders-api</li><li>Raise memory</li><li>Restart CoreDNS</li></ol><div class="explain">"Intermittent" because only new pods picked up policy-enforced paths while connections were cycling. Add the egress allow.</div></div>
+
+<h2 id="lab">Write lab: fix the broken bundle</h2>
+<div class="lab">
+  <p><b>Brief:</b> A bundle of Deployment + Service + ConfigMap + NetworkPolicy for <code>orders-api</code> has <b>5 planted bugs</b>:</p>
+  <ul>
+    <li>a readiness path the app doesn't serve;</li>
+    <li>a Service targetPort mismatch;</li>
+    <li>a missing ConfigMap key;</li>
+    <li>a selector typo;</li>
+    <li>a NetworkPolicy that doesn't allow web → orders-api:8080.</li>
+  </ul>
+  <p>Fix them. Graded by <b>manifest-lint</b>, <b>cross-ref</b> and <b>netpol-eval</b>.</p>
+  <ul class="rules">
+    <li>The readiness probe path is <code>/readyz</code> on the named port.</li>
+    <li>The Service targetPort matches containerPort.</li>
+    <li>Every <code>configMapKeyRef</code> key exists in the ConfigMap.</li>
+    <li>The Service selector matches the pod template labels.</li>
+    <li>The netpol matrix allows web → orders-api:8080 and DNS; everything else stays denied.</li>
+    <li class="critical">The fix doesn't replace the NetworkPolicy with allow-all (no <code>ingress: [{}]</code>, and default-deny is still present).</li>
+    <li class="critical">The Service ends with ready endpoints (selector matches and readiness passes in the simulation).</li>
+  </ul>
+</div>
+
+<h2 id="walkthrough">Walkthrough: a full incident</h2>
+<ol>
+  <li>02:14: the OrdersApiHighErrorRate alert pages on-call; the Grafana dashboard shows 5xx at 8%.</li>
+  <li>"What changed?": the canary of 1.6.0 was promoted at 01:50.</li>
+  <li>Mitigate: <code>kubectl rollout undo</code>; errors drop within 3 minutes.</li>
+  <li>Diagnose: <code>ContainerLogV2</code> KQL shows "timeout calling payments" only in 1.6.0; the new HTTP client has no keep-alive, causing SNAT exhaustion (lesson 5.3).</li>
+  <li>Post-mortem notes: timeline, impact, root cause, action items (connection reuse, NAT gateway, a canary check on the payments error rate).</li>
+</ol>
+
+<h2 id="try">Try it locally</h2>
+<p class="muted">Each script plants a real fault in the kind lab. Debug it with the lesson's method, then compare with <code>lab/fix/</code>.</p>
+<div class="try" data-lesson="14.1-14.4">
+<pre>./lab/break/ch14-wrong-tag.sh         # ImagePullBackOff
+./lab/break/ch14-oom.sh               # OOMKilled
+./lab/break/ch14-missing-key.sh       # CreateContainerConfigError
+./lab/break/ch14-crash-on-start.sh    # CrashLoopBackOff, exit 1
+./lab/break/ch14-selector.sh          # no endpoints
+./lab/break/ch14-readiness.sh         # Running 0/1
+./lab/break/ch14-netpol.sh            # timeouts (needs ./lab/addons/netpol.sh)
+./lab/break/ch14-route.sh             # HTTPRoute not attached (needs ./lab/addons/gateway.sh)</pre>
+<p>Expected: each script prints the symptom to investigate, without saying the cause. <code>./lab/fix/&lt;case&gt;.sh --explain</code> applies the fix and explains it.</p>
+<p><b>Cleanup:</b> <code>./lab/break/reset.sh</code> (deletes namespace <code>incident</code>)</p></div>
+<div class="try" data-lesson="14.5"><p><b>14.5 Local stand-ins for monitoring.</b></p>
+<pre>kubectl top nodes; kubectl top pods -A --sort-by=memory | head
+kubectl events -A --types=Warning | tail -20</pre>
+<p>Expected: live usage from metrics-server and recent warnings. Azure Monitor itself is shown in the walkthrough only.</p><p><b>Cleanup:</b> none.</p></div>
+</main>
+</body>
+</html>

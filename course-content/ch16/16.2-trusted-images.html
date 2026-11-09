@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>16.2 · Images you can trust</title>
+<link rel="stylesheet" href="../content.css">
+</head>
+<body>
+<article class="lesson" data-id="16.2" data-chapter="16">
+<nav class="crumbs"><a href="../index.html">Course</a> / <a href="index.html">Chapter 16</a> / 16.2</nav>
+<header>
+  <p class="kicker">Chapter 16 · Lesson 16.2 · ~10 steps · ~12 min</p>
+  <h1>Images you can trust</h1>
+  <p class="meta">You'll be able to choose minimal base images, pin them by digest, keep them patched automatically, and deploy images by digest.</p>
+</header>
+
+<section class="step" id="s1">
+  <h2>1. Less in the image, less to attack</h2>
+  <div class="body">
+    <p>A full OS base brings a shell, a package manager and hundreds of packages. Most are never used by the app, but every one can have vulnerabilities, and every tool can help an attacker.</p>
+    <p><b>Minimal</b> bases (distroless, Azure Linux distroless, <code>scratch</code> for static binaries, chiseled Ubuntu images for .NET) contain only what the app needs.</p>
+  </div>
+  <table>
+    <tr><th>Base</th><th>Size (approx.)</th><th>Shell?</th><th>Typical CVE count</th></tr>
+    <tr><td><code>golang:1.23</code> (build image)</td><td>~800 MB</td><td>Yes</td><td>Dozens–hundreds</td></tr>
+    <tr><td><code>debian:12-slim</code></td><td>~75 MB</td><td>Yes</td><td>Tens</td></tr>
+    <tr><td><code>gcr.io/distroless/static-debian12:nonroot</code></td><td>~2 MB</td><td>No</td><td>Near zero</td></tr>
+  </table>
+  <aside class="coming" data-set="A">
+    <dl>
+      <dt>Windows/IIS admin</dt><dd>Like Server Core or Nano Server instead of Desktop Experience: fewer components, fewer patches.</dd>
+      <dt>Linux admin</dt><dd>Like a minimal install with no compilers or package tools on production hosts.</dd>
+      <dt>Developer (Compose)</dt><dd>You debug with <code>kubectl debug</code> (lesson 14.1) instead of a shell in the image.</dd>
+      <dt>Other clouds</dt><dd>The same images work everywhere; some clouds also offer their own minimal bases.</dd>
+    </dl>
+  </aside>
+</section>
+
+<section class="step" id="s2">
+  <h2>2. Multi-stage builds, again</h2>
+  <div class="body"><p>Lesson 1.1's Dockerfile already builds in a full Go image and ships only the binary in distroless. That single change removes most vulnerability findings.</p></div>
+</section>
+
+<section class="step" id="s3">
+  <h2>3. Pin by digest</h2>
+  <div class="body"><p><code>FROM golang:1.23</code> can point to a different image tomorrow. Pin with a digest (<code>golang:1.23@sha256:…</code>), so builds are reproducible, and a compromised re-push of the tag can't reach you.</p></div>
+  <div class="check" data-type="tapline" data-match="FROM gcr.io/distroless/static-debian12:nonroot">
+    <p class="q">One <code>FROM</code> isn't pinned. Tap it.</p>
+    <pre class="code" data-file="Dockerfile">FROM golang:1.23@sha256:6c5c9590f169f77c8046e45c611d3b28fe477789acd8d3762d23d4744de69812 AS build
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN CGO_ENABLED=0 go build -o /out/orders-api ./cmd/orders-api
+
+FROM gcr.io/distroless/static-debian12:nonroot
+COPY --from=build /out/orders-api /orders-api
+USER nonroot:nonroot
+ENTRYPOINT ["/orders-api"]</pre>
+    <div class="explain">The runtime base has only a tag. Pin it too, with <code>@sha256:…</code>. Tools such as Dependabot or Renovate keep the pins up to date with PRs.</div>
+  </div>
+</section>
+
+<section class="step" id="s4">
+  <h2>4. Pinning without going stale</h2>
+  <div class="body"><p>A pinned digest never gets security fixes by itself. Let a bot (Renovate or Dependabot) open a PR whenever the upstream tag moves. The PR pipeline scans the new image, and merging rebuilds and redeploys. That gives you pinned <i>and</i> patched.</p></div>
+</section>
+
+<section class="step" id="s5">
+  <h2>5. Rebuild on base updates</h2>
+  <div class="body"><p><b>ACR Tasks</b> can trigger a rebuild automatically when a base image in ACR is updated. Teams that mirror base images into their own registry (lesson 10.5) get patched images quickly, with the pipeline still scanning before anything is deployed.</p></div>
+</section>
+
+<section class="step" id="s6">
+  <h2>6. Deploy by digest</h2>
+  <div class="check" data-type="mcq">
+    <p class="q">Why should the release pipeline deploy <code>orders-api@sha256:…</code> rather than <code>orders-api:1.4.2</code>?</p>
+    <ol class="options">
+      <li>Digests download faster <span class="why">The bytes are the same.</span></li>
+      <li class="correct">The digest is exactly what was scanned and signed; a tag could be re-pushed between scan and deploy</li>
+      <li>AKS can't pull tags <span class="why">It can.</span></li>
+      <li>Policies don't work with tags <span class="why">They do, but signature verification resolves to a digest anyway.</span></li>
+    </ol>
+    <div class="explain">Capture the digest at push time (<code>docker push</code> prints it) and pass it to the deploy stages. Lock tags in ACR as a second guard.</div>
+  </div>
+</section>
+
+<section class="step" id="s7">
+  <h2>7. Only your registry</h2>
+  <div class="body"><p>Mirror every external image you depend on (base images, add-on images, Helm chart images) into ACR (<code>az acr import</code>), scan it there, and have clusters pull only from <code>contosoacr.azurecr.io</code>. Lesson 16.5's policy enforces it.</p></div>
+  <pre class="code" data-file="terminal">az acr import -n contosoacr --source gcr.io/distroless/static-debian12:nonroot --image base/distroless-static:nonroot</pre>
+</section>
+
+<section class="step" id="s8">
+  <h2>8. Keep the registry clean</h2>
+  <div class="body"><p>Old images with known vulnerabilities are an attack surface too, if anyone can still deploy them. Purge CI images on a schedule (lesson 6.3), and keep only the releases that are actually deployed.</p></div>
+</section>
+
+<section class="step" id="s9">
+  <h2>9. Know what's in it</h2>
+  <div class="body"><p>A <b>Software Bill of Materials (SBOM)</b> lists every package in the image, with its version. When the next big vulnerability lands, you can answer "are we affected?" in minutes. Lesson 16.3 generates one in the pipeline.</p></div>
+</section>
+
+<section class="step summary" id="s10">
+  <h2>Trusted images, sorted</h2>
+  <ul>
+    <li>Minimal (distroless) runtime bases via multi-stage builds.</li>
+    <li>Pin <code>FROM</code> by digest; bots keep the pins fresh.</li>
+    <li>Rebuild on base updates; mirror external images into ACR.</li>
+    <li>Deploy by digest; purge old images; generate SBOMs.</li>
+  </ul>
+</section>
+</article>
+</body>
+</html>

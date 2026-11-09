@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>2.1 · Pods</title>
+<link rel="stylesheet" href="../content.css">
+</head>
+<body>
+<article class="lesson" data-id="2.1" data-chapter="2">
+<nav class="crumbs"><a href="../index.html">Course</a> / <a href="index.html">Chapter 2</a> / 2.1</nav>
+<header>
+  <p class="kicker">Chapter 2 · Lesson 2.1 · ~10 steps · ~12 min</p>
+  <h1>Pods</h1>
+  <p class="meta">You'll be able to write a Pod manifest, explain what containers in the same pod share, and use init containers and sidecars.</p>
+</header>
+
+<section class="step" id="s1">
+  <h2>1. The smallest thing Kubernetes runs</h2>
+  <div class="body">
+    <p>Kubernetes doesn't run containers on their own. It runs <b>pods</b>. A pod is a wrapper around one or more containers that are always scheduled <b>together, on the same node</b>.</p>
+    <p>Most pods have exactly one container: your app. Extra containers are for helpers that must live right next to it.</p>
+  </div>
+  <aside class="coming" data-set="A">
+    <dl>
+      <dt>Windows/IIS admin</dt><dd>A pod is closer to "one server running one site" than to "one process": it has its own IP address and can host a helper service beside the main one.</dd>
+      <dt>Linux admin</dt><dd>A pod is a set of processes sharing one network namespace, so one IP and one <code>localhost</code>, plus shared volumes.</dd>
+      <dt>Developer (Compose)</dt><dd>Close to one Compose <i>service</i>. <b>Careful:</b> two Compose services talk over the network by service name; two containers in one pod talk over <code>localhost</code>.</dd>
+      <dt>Other clouds</dt><dd>Same as an ECS task with several containers.</dd>
+    </dl>
+  </aside>
+</section>
+
+<section class="step" id="s2">
+  <h2>2. Every manifest starts the same way</h2>
+  <div class="body">
+    <p>Every Kubernetes object has four top-level fields:</p>
+    <ul>
+      <li><code>apiVersion</code>: which API group and version defines this kind. Pods are in the core group, so it's just <code>v1</code>.</li>
+      <li><code>kind</code>: the type of object.</li>
+      <li><code>metadata</code>: its name, namespace and labels.</li>
+      <li><code>spec</code>: what you want.</li>
+    </ul>
+  </div>
+  <pre class="code" data-file="pod.yaml">apiVersion: <span class="blank">?</span>
+kind: Pod
+metadata:
+  name: orders-api
+  namespace: orders</pre>
+  <div class="check" data-type="fill">
+    <p class="q">Fill in the <code>apiVersion</code> for a Pod.</p>
+    <ul class="chips">
+      <li class="correct"><code>v1</code></li>
+      <li><code>apps/v1</code> <span class="why"><code>apps/v1</code> is for Deployments, ReplicaSets and StatefulSets.</span></li>
+      <li><code>core/v1</code> <span class="why">The core group is written without a group name: just <code>v1</code>.</span></li>
+      <li><code>pod/v1</code> <span class="why">There's no <code>pod</code> API group.</span></li>
+    </ul>
+    <div class="explain">Core objects such as Pod, Service, ConfigMap, Secret and Namespace use <code>v1</code>. Check any kind with <code>kubectl api-resources</code>.</div>
+  </div>
+</section>
+
+<section class="step" id="s3">
+  <h2>3. The container list</h2>
+  <div class="body">
+    <p><code>spec.containers</code> is a list. Each item needs a <code>name</code> and an <code>image</code>. <code>ports</code> documents the port the app listens on; it's informational, but tools and people rely on it.</p>
+  </div>
+  <pre class="code" data-file="pod.yaml">apiVersion: v1
+kind: Pod
+metadata:
+  name: orders-api
+  namespace: orders
+  labels:
+    app: orders-api
+spec:
+  containers:
+    - name: api
+      image: contosoacr.azurecr.io/orders-api:1.4.2
+      ports:
+        - containerPort: 8080</pre>
+</section>
+
+<section class="step" id="s4">
+  <h2>4. Containers in a pod share a network</h2>
+  <div class="body">
+    <p>Every pod gets <b>one IP address</b>. All its containers share it, along with the port space and <code>localhost</code>.</p>
+    <p>That means two containers in one pod can't both listen on port 8080, and they talk to each other at <code>localhost:port</code>.</p>
+    <p>Containers in a pod can also share <b>volumes</b>, so one can write files the other reads.</p>
+  </div>
+  <div class="widget" data-widget="pod-anatomy">A pod drawn as a box with one IP badge (10.244.1.12). Inside are two containers, <code>api</code> (:8080) and <code>log-agent</code> (:2020), with a shared <code>emptyDir</code> volume between them. Clicking "api → localhost:2020" animates a call that never leaves the pod.</div>
+  <div class="check" data-type="mcq">
+    <p class="q">The <code>api</code> container needs to call a helper in the same pod on port 2020. Which address?</p>
+    <ol class="options">
+      <li><code>log-agent:2020</code> <span class="why">Container names aren't DNS names; that only works between Compose services.</span></li>
+      <li class="correct"><code>localhost:2020</code></li>
+      <li>The node's IP on port 2020 <span class="why">That would only work with a host port, which you should avoid.</span></li>
+      <li>A Service is required first <span class="why">Services are for reaching <i>other</i> pods.</span></li>
+    </ol>
+    <div class="explain">Containers in one pod share a network namespace, so <code>localhost</code> reaches all of them.</div>
+  </div>
+</section>
+
+<section class="step" id="s5">
+  <h2>5. Init containers: run first, then exit</h2>
+  <div class="body">
+    <p><b>Init containers</b> run <b>before</b> the app containers, one at a time, and each must exit successfully. Use them for setup:</p>
+    <ul>
+      <li>waiting for a database</li>
+      <li>running a schema migration</li>
+      <li>fetching a file</li>
+    </ul>
+    <p>While they run, the pod shows <code>Init:0/1</code>. If one fails, Kubernetes retries it, and the app never starts until it succeeds.</p>
+  </div>
+  <pre class="code" data-file="pod.yaml">spec:
+  initContainers:
+    - name: wait-for-db
+      image: busybox:1.36
+      command: ["sh", "-c", "until nc -z orders-db 5432; do echo waiting; sleep 2; done"]
+  containers:
+    - name: api
+      image: contosoacr.azurecr.io/orders-api:1.4.2
+      ports:
+        - containerPort: 8080</pre>
+  <div class="check" data-type="tapline" data-match="  initContainers:">
+    <p class="q">Tap the line that starts the section of containers that must finish before the app starts.</p>
+    <div class="explain"><code>initContainers</code> run to completion, in order, before any container in <code>containers</code> starts.</div>
+  </div>
+</section>
+
+<section class="step" id="s6">
+  <h2>6. Sidecars: helpers that run alongside</h2>
+  <div class="body">
+    <p>A <b>sidecar</b> is a helper that runs for the pod's whole life: a log shipper, a proxy, a certificate refresher.</p>
+    <p>Kubernetes has <b>native sidecars</b>: an init container with <code>restartPolicy: Always</code>. It starts before the app containers and keeps running beside them, and it stops after them. This is the recommended form on current Kubernetes versions.</p>
+  </div>
+  <pre class="code" data-file="pod.yaml">spec:
+  initContainers:
+    - name: log-agent
+      image: fluent/fluent-bit:3.1
+      restartPolicy: Always        # makes it a native sidecar
+  containers:
+    - name: api
+      image: contosoacr.azurecr.io/orders-api:1.4.2</pre>
+  <aside class="more"><p>Before native sidecars, helpers were simply listed as a second entry in <code>containers</code>. That still works, but there's no start order, and a never-ending sidecar can stop a Job from finishing.</p></aside>
+</section>
+
+<section class="step" id="s7">
+  <h2>7. Pods are disposable</h2>
+  <div class="body">
+    <p>A pod is never repaired or moved. If it dies, or its node dies, it's <b>replaced</b> by a new pod with a new name and a new IP.</p>
+    <p>That's why you almost never create bare pods. You create a <b>Deployment</b> (lesson 2.3), which keeps the right number of pods running. And you never hard-code a pod's IP: you use a <b>Service</b> (lesson 2.4).</p>
+  </div>
+</section>
+
+<section class="step" id="s8">
+  <h2>8. Pod phases and restarts</h2>
+  <div class="body">
+    <ul>
+      <li><code>Pending</code>: accepted, but not yet running (waiting for a node, pulling the image, or running init containers).</li>
+      <li><code>Running</code>: at least one container is running.</li>
+      <li><code>Succeeded</code> / <code>Failed</code>: all containers have exited (for batch work).</li>
+    </ul>
+    <p>The pod's <code>restartPolicy</code> (default <code>Always</code>) restarts crashed containers <i>inside the same pod</i> on the same node, with a growing delay. That delay is what <code>CrashLoopBackOff</code> means.</p>
+  </div>
+</section>
+
+<section class="step" id="s9">
+  <h2>9. Apply it and look</h2>
+  <pre class="output">$ kubectl apply -f pod.yaml
+pod/orders-api created
+$ kubectl get pod orders-api -n orders
+NAME         READY   STATUS     RESTARTS   AGE
+orders-api   0/1     Init:0/1   0          4s
+$ kubectl get pod orders-api -n orders
+NAME         READY   STATUS     RESTARTS   AGE
+orders-api   1/1     Running    0          21s</pre>
+  <div class="body"><p><code>READY 1/1</code> counts app containers that are ready. Native sidecars aren't counted in the ready total.</p></div>
+</section>
+
+<section class="step summary" id="s10">
+  <h2>Pods, sorted</h2>
+  <ul>
+    <li>A pod is one or more containers scheduled together, sharing one IP, <code>localhost</code> and volumes.</li>
+    <li>Every manifest has <code>apiVersion</code>, <code>kind</code>, <code>metadata</code> and <code>spec</code>; Pods use <code>v1</code>.</li>
+    <li>Init containers run to completion first; native sidecars are init containers with <code>restartPolicy: Always</code>.</li>
+    <li>Pods are replaced, never repaired. Use Deployments to run them and Services to reach them.</li>
+  </ul>
+</section>
+</article>
+</body>
+</html>

@@ -1,0 +1,367 @@
+# Grader rules for the write labs in Chapters 12–16.
+lab: ch12/lab
+start: |
+  # infra/terraform/envs/dev: versions.tf, main.tf, variables.tf, outputs.tf
+  # Write them one after another here; a comment line such as "# main.tf" between files is fine.
+rules:
+  - all:
+      - re: 'required_version\s*='
+      - re: 'source\s*=\s*"hashicorp/azurerm"'
+      - re: 'version\s*=\s*"~>\s*4'
+    hint: 'Pin azurerm with version = "~> 4.x" and set required_version.'
+  - all:
+      - re: 'backend\s+"azurerm"'
+      - re: 'use_azuread_auth\s*=\s*true'
+      - not_re: 'access_key\s*='
+  - all:
+      - re: 'network_plugin\s*=\s*"azure"'
+      - re: 'network_plugin_mode\s*=\s*"overlay"'
+  - all:
+      - re: 'oidc_issuer_enabled\s*=\s*true'
+      - re: 'workload_identity_enabled\s*=\s*true'
+  - re: 'azure_rbac_enabled\s*=\s*true'
+  - re: 'local_account_disabled\s*=\s*true'
+  - all:
+      - re: 'zones\s*=\s*\[\s*"1"\s*,\s*"2"\s*,\s*"3"\s*\]'
+      - re: '(node_count|min_count)\s*=\s*([2-9]|\d\d)\b'
+      - re: 'only_critical_addons_enabled\s*=\s*true'
+  - all:
+      - re: 'AcrPull'
+      - re: 'kubelet_identity\[0\]\.object_id'
+  - all:
+      - re: 'azurerm_federated_identity_credential'
+      - re: 'oidc_issuer_url'
+      - re: 'system:serviceaccount:orders:orders-api'
+  - not_re: '(?i)^\s*\w*(password|secret|token|client_secret|api_key|access_key)\w*\s*=\s*"[^"$]+"'
+  - re: 'validation\s*\{(?s:[^}]*)"dev"(?s:[^}]*)"prod"|validation\s*\{(?s:[^}]*)"prod"(?s:[^}]*)"dev"'
+    hint: 'validation { condition = contains(["dev", "prod"], var.environment) … }'
+---
+lab: ch12/lab-b
+start: |
+  # infra-pipeline.yml for infra/terraform/envs/prod
+rules:
+  - all:
+      - re: 'terraform\s+fmt\s+-check'
+      - re: 'terraform\s+validate'
+      - re: '(?i)(tflint|checkov|tfsec|trivy|terrascan)'
+  - all:
+      - re: 'terraform\s+plan\b[^\n]*-out[= ]\S+'
+      - re: '(publish:|PublishPipelineArtifact@1|PublishBuildArtifacts@1)'
+  - all:
+      - re: '-\s*deployment:\s*\S+'
+      - re: 'environment:\s*\S+'
+  - all:
+      - re: 'terraform\s+apply\b[^\n]*\s\S*plan\S*\s*$'
+      - not_re: 'terraform\s+apply\s+(-input=false\s+)?-auto-approve\s*$'
+    hint: Apply the saved plan file, e.g. terraform apply tfplan.
+  - all:
+      - re: 'refs/heads/main'
+      - re: 'dependsOn:\s*\[?\s*["'']?Plan'
+      - re: 'environment:\s*\S+'
+  - all:
+      - re: 'ARM_USE_OIDC\s*:\s*["'']?true'
+      - not_re: 'ARM_CLIENT_SECRET'
+---
+lab: ch13/lab
+start: |
+  // main.bicep (and modules), then main.prod.bicepparam after a line "// main.prod.bicepparam"
+rules:
+  - re: '@allowed\(\s*\[\s*''dev''[\s,]*''prod''\s*\]\s*\)|@allowed\(\s*\[\s*''prod''[\s,]*''dev''\s*\]\s*\)'
+  - all:
+      - re: 'networkPlugin:\s*''azure'''
+      - re: 'networkPluginMode:\s*''overlay'''
+  - all:
+      - re: 'oidcIssuerProfile:\s*\{\s*enabled:\s*true'
+      - re: 'workloadIdentity:\s*\{\s*enabled:\s*true'
+  - re: 'enableAzureRBAC:\s*true'
+  - re: 'disableLocalAccounts:\s*true'
+  - all:
+      - re: 'availabilityZones:\s*\[\s*''1''[\s,]*''2''[\s,]*''3''\s*\]'
+      - re: '(count|minCount):\s*([2-9]|\d\d)\b'
+      - re: 'CriticalAddonsOnly=true:NoSchedule'
+  - all:
+      - re: 'kubeletidentity\.objectId'
+      - re: 'guid\('
+      - re: '(?i)7f951dda-4ed3-4680-a7ca-43fe172d538d|acrpull'
+  - all:
+      - re: 'federatedIdentityCredentials'
+      - re: 'oidcIssuerProfile\.issuerURL'
+      - re: 'system:serviceaccount:orders:orders-api'
+  - all:
+      - not_re: '(?i)^param\s+\w*(password|secret|token|key)\w*\s*=\s*''[^'']+'''
+      - not_re: '(?m)^(?:[^@\n].*)?\n\s*param\s+\w*(?i:password|secret)\w*\s+string'
+    hint: Mark secret params @secure() and don't put values in .bicepparam (use getSecret()).
+---
+lab: ch13/lab-b
+rules:
+  - all:
+      - re: 'resource\s+\w+\s+''Microsoft\.ContainerService/managedClusters/agentPools@'
+      - re: 'parent:\s*\w+'
+  - all:
+      - re: 'mode:\s*''User'''
+      - re: 'vmSize:\s*''Standard_D4ds_v5'''
+      - re: 'availabilityZones:\s*\[\s*''1''[\s,]*''2''[\s,]*''3''\s*\]'
+      - re: 'enableAutoScaling:\s*true'
+      - re: 'minCount:\s*0\b'
+      - re: 'maxCount:\s*5\b'
+      - re: 'scaleSetPriority:\s*''Spot'''
+      - re: 'nodeTaints:\s*\[\s*''batch=true:NoSchedule''\s*\]'
+  - all:
+      - re: 'Microsoft\.Authorization/roleAssignments@'
+      - re: 'scope:\s*\w+'
+      - re: 'subscriptionResourceId\(\s*''Microsoft\.Authorization/roleDefinitions''\s*,\s*''7f951dda-4ed3-4680-a7ca-43fe172d538d''\s*\)'
+      - re: 'kubeletidentity\.objectId'
+      - re: 'principalType:\s*''ServicePrincipal'''
+  - re: 'name:\s*guid\('
+---
+lab: ch13/lab-c
+start: |
+  # infra-pipeline.yml for infra/bicep
+rules:
+  - re: 'az\s+bicep\s+(lint|build)'
+  - all:
+      - re: '(?i)what-if'
+      - re: '(-g|--resource-group)[ =]\S+|resourceGroupName:\s*\S+'
+  - all:
+      - re: '-\s*deployment:\s*\S+'
+      - re: 'environment:\s*\S+'
+  - all:
+      - re: 'refs/heads/main'
+      - re: 'dependsOn:\s*\[?\s*["'']?\w*(WhatIf|Preview|Plan)'
+      - re: 'environment:\s*\S+'
+  - all:
+      - re: 'AzureCLI@2|AzureResourceManagerTemplateDeployment@3'
+      - re: '(azureSubscription|azureResourceManagerConnection|ConnectedServiceName):\s*\S+'
+      - not_re: '(?i)client[-_]?secret|ARM_CLIENT_SECRET|--password'
+  - re: 'az\s+deployment\s+group\s+create|az\s+stack\s+group\s+create|AzureResourceManagerTemplateDeployment@3'
+---
+lab: ch14/lab
+start: |
+  apiVersion: v1
+  kind: ConfigMap
+  metadata:
+    name: orders-api-config
+    namespace: orders
+  data:
+    LOG_LEVEL: info
+  ---
+  apiVersion: apps/v1
+  kind: Deployment
+  metadata:
+    name: orders-api
+    namespace: orders
+  spec:
+    replicas: 3
+    selector:
+      matchLabels:
+        app: orders-api
+    template:
+      metadata:
+        labels:
+          app: orders-api
+      spec:
+        containers:
+          - name: api
+            image: contosoacr.azurecr.io/orders-api:1.4.2
+            ports:
+              - name: http
+                containerPort: 8080
+            env:
+              - name: LOG_LEVEL
+                valueFrom:
+                  configMapKeyRef:
+                    name: orders-api-config
+                    key: LOG_LEVEL
+              - name: FEATURE_FLAGS
+                valueFrom:
+                  configMapKeyRef:
+                    name: orders-api-config
+                    key: FEATURE_FLAGS
+            readinessProbe:
+              httpGet:
+                path: /ready
+                port: http
+            livenessProbe:
+              httpGet:
+                path: /healthz
+                port: http
+  ---
+  apiVersion: v1
+  kind: Service
+  metadata:
+    name: orders-api
+    namespace: orders
+  spec:
+    selector:
+      app: order-api
+    ports:
+      - name: http
+        port: 80
+        targetPort: 8000
+  ---
+  apiVersion: networking.k8s.io/v1
+  kind: NetworkPolicy
+  metadata:
+    name: default-deny
+    namespace: orders
+  spec:
+    podSelector: {}
+    policyTypes: [Ingress, Egress]
+  ---
+  apiVersion: networking.k8s.io/v1
+  kind: NetworkPolicy
+  metadata:
+    name: allow-web-to-api
+    namespace: orders
+  spec:
+    podSelector:
+      matchLabels:
+        app: orders-api
+    policyTypes: [Ingress]
+    ingress:
+      - from:
+          - namespaceSelector:
+              matchLabels:
+                kubernetes.io/metadata.name: web
+            podSelector:
+              matchLabels:
+                app: web
+        ports:
+          - port: 80
+  ---
+  apiVersion: networking.k8s.io/v1
+  kind: NetworkPolicy
+  metadata:
+    name: allow-dns
+    namespace: orders
+  spec:
+    podSelector: {}
+    policyTypes: [Egress]
+    egress:
+      - to:
+          - namespaceSelector:
+              matchLabels:
+                kubernetes.io/metadata.name: kube-system
+            podSelector:
+              matchLabels:
+                k8s-app: kube-dns
+        ports:
+          - { port: 53, protocol: UDP }
+          - { port: 53, protocol: TCP }
+solution: |
+  # Fixes: readiness /ready → /readyz; add FEATURE_FLAGS to the ConfigMap;
+  # selector order-api → orders-api; targetPort 8000 → http; netpol port 80 → 8080.
+  apiVersion: v1
+  kind: ConfigMap
+  metadata:
+    name: orders-api-config
+    namespace: orders
+  data:
+    LOG_LEVEL: info
+    FEATURE_FLAGS: express-shipping
+  ---
+  # Deployment: readinessProbe.httpGet.path: /readyz (port: http); everything else unchanged
+  # Service: selector app: orders-api; targetPort: http
+  # NetworkPolicy allow-web-to-api: ports: - port: 8080
+fixture:
+  pods:
+    - { name: web, ns: web, labels: { app: web } }
+    - { name: orders-api, ns: orders, labels: { app: orders-api }, ports: [8080] }
+    - { name: kube-dns, ns: kube-system, labels: { k8s-app: kube-dns }, ports: [53] }
+  expect:
+    - 'web -> orders-api:8080'
+    - '* -> kube-dns:53'
+rules:
+  - all:
+      - { kind: Deployment, each: 'spec.template.spec.containers[*]', path: readinessProbe.httpGet.path, op: eq, value: /readyz }
+      - { kind: Deployment, each: 'spec.template.spec.containers[*]', path: readinessProbe.httpGet.port, op: eq, value: http }
+  - fn: service_target_port
+  - fn: configmap_refs_exist
+  - fn: service_selects_pods
+  - fn: netpol
+    args: { mode: matrix }
+  - all:
+      - fn: netpol
+        args: { mode: no_allow_all }
+      - fn: netpol
+        args: { mode: default_deny, namespaces: [orders] }
+  - all:
+      - fn: service_selects_pods
+      - fn: service_target_port
+      - { kind: Deployment, each: 'spec.template.spec.containers[*]', path: readinessProbe.httpGet.path, op: eq, value: /readyz }
+---
+lab: ch15/lab
+start: |
+  # k8s/rbac/deployer.yaml: a Role and a RoleBinding (separate with ---)
+rbac:
+  subject: { kind: ServiceAccount, name: deployer, namespace: ci }
+  cases:
+    - { case: 'patch deployments -n orders', allow: true }
+    - { case: 'create httproutes.gateway.networking.k8s.io -n orders', allow: true }
+    - { case: 'update horizontalpodautoscalers.autoscaling -n orders', allow: true }
+    - { case: 'get secrets -n orders', allow: false }
+    - { case: 'create pods/exec -n orders', allow: false }
+    - { case: 'delete deployments -n orders', allow: false }
+    - { case: 'patch deployments -n payments', allow: false }
+    - { case: 'create clusterrolebindings', allow: false }
+rules:
+  - fn: rbac_cases
+  - fn: rbac_no_wildcard
+  - fn: rbac_no_cluster_binding
+  - all:
+      - { kind: RoleBinding, path: 'subjects[*].kind', op: eq, value: ServiceAccount }
+      - { kind: RoleBinding, path: 'subjects[*].name', op: eq, value: deployer }
+      - { kind: RoleBinding, path: 'subjects[*].namespace', op: eq, value: ci }
+---
+lab: ch15/lab-b
+start: |
+  # k8s/base/deployment.yaml (hardened), serviceaccount.yaml and k8s/secrets/secretproviderclass.yaml
+rules:
+  - fn: restricted_pss
+  - all:
+      - { kind: Deployment, each: 'spec.template.spec.containers[*]', path: securityContext.readOnlyRootFilesystem, op: eq, value: true }
+      - re: 'mountPath:\s*["'']?/tmp\b'
+      - re: 'emptyDir:'
+  - all:
+      - { kind: Deployment, each: 'spec.template.spec.containers[*]', path: securityContext.privileged, op: ne, value: true }
+      - re: 'runAsNonRoot:\s*true'
+  - all:
+      - kind: ServiceAccount
+        path: 'metadata.annotations["azure.workload.identity/client-id"]'
+        op: eq
+        value: 6c1f2a9e-0000-4b1d-9c55-1a2b3c4d5e6f
+      - re: 'azure\.workload\.identity/use:\s*["'']true["'']'
+  - fn: spc_matches
+  - all:
+      - { kind: SecretProviderClass, path: spec.parameters.clientID, op: eq, value: 6c1f2a9e-0000-4b1d-9c55-1a2b3c4d5e6f }
+      - { kind: SecretProviderClass, path: spec.parameters.keyvaultName, op: eq, value: kv-orders-prod }
+      - { kind: SecretProviderClass, path: spec.parameters.tenantId, op: exists }
+      - { kind: SecretProviderClass, path: spec.parameters.objects, op: re, value: payments-api-key }
+  - all:
+      - fn: no_secret_objects_with_data
+      - not_re: '(?i)pk_live|-----BEGIN [A-Z ]*PRIVATE KEY-----'
+---
+lab: ch16/lab
+start: |
+  # azure-pipelines.yml: the Build stage (scan, push, SBOM, sign) and the prod deploy step
+rules:
+  - all:
+      - re: '(?i)trivy'
+      - re: '--exit-code\s+1'
+      - re: '--severity\s+["'']?(HIGH,CRITICAL|CRITICAL,HIGH)'
+      - re: '--ignore-unfixed'
+      - before: ['(?i)trivy', '(?i)(command:\s*["'']?push|docker\s+push|notation\s+sign|KubernetesManifest@1)']
+  - all:
+      - re: '(?i)(spdx|cyclonedx)'
+      - re: '(?i)(syft|sbom)'
+      - re: '(?i)(PublishPipelineArtifact|publish:|oras\s+attach|attach)'
+  - all:
+      - re: 'AzureCLI@2'
+      - re: 'notation\s+sign'
+      - re: '(?i)azure-kv'
+      - re: 'notation\s+sign(?s:.{0,300}?)@(sha256:|\$)'
+  - all:
+      - not_re: '-----BEGIN [A-Z ]*PRIVATE KEY-----'
+      - not_re: '\S+\.(key|pem)\b'
+  - re: '@sha256:|@\$\(\w*[Dd]igest\w*\)|@\$\{\{|[Dd]igest\)'
+  - before: ['(?i)trivy', 'notation\s+sign']

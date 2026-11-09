@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>0.6 · Set up a local lab</title>
+<link rel="stylesheet" href="../content.css">
+</head>
+<body>
+<article class="lesson" data-id="0.6" data-chapter="0">
+<nav class="crumbs"><a href="../index.html">Course</a> / <a href="index.html">Chapter 0</a> / 0.6</nav>
+<header>
+  <p class="kicker">Chapter 0 · Lesson 0.6 · optional · ~7 steps · ~20 min including installs</p>
+  <h1>Set up a local lab</h1>
+  <p class="meta">You'll have a free, multi-node Kubernetes cluster running on your own machine, ready for the optional "Try it locally" boxes in later chapters. Nothing graded needs it.</p>
+</header>
+
+<section class="step" id="s1">
+  <h2>1. Why a local cluster?</h2>
+  <div class="body">
+    <p>Every lesson and lab in this course works in the browser. A local cluster adds something the browser can't: <b>real output and real errors</b>, like a genuine <code>CrashLoopBackOff</code> or a real rollout.</p>
+    <p>We use <b>kind</b> (Kubernetes IN Docker). Each Kubernetes node is a container on your machine. It's free, it starts in about a minute, and you can delete it and start again at any time.</p>
+    <p><b>What it can't do:</b> anything Azure-specific. It has:</p>
+    <ul>
+      <li>no AKS features</li>
+      <li>no ACR authentication</li>
+      <li>no Entra ID sign-in</li>
+      <li>no Azure load balancers</li>
+      <li>no Azure DevOps</li>
+    </ul>
+    <p>Each box tells you where local behaviour differs from AKS.</p>
+  </div>
+  <aside class="coming" data-set="A">
+    <dl>
+      <dt>Windows/IIS admin</dt><dd>On Windows, run everything inside <b>WSL2</b> (Ubuntu). Docker Desktop and Podman both integrate with it.</dd>
+      <dt>Linux admin</dt><dd>You can use Docker Engine or Podman directly; Docker Desktop isn't needed.</dd>
+      <dt>Developer (Compose)</dt><dd>If <code>docker compose up</code> works on your machine, kind will too.</dd>
+      <dt>Other clouds</dt><dd>Like minikube or k3d. We chose kind because its multi-node setup lets us fake availability zones.</dd>
+    </dl>
+  </aside>
+</section>
+
+<section class="step" id="s2">
+  <h2>2. What's in the course lab</h2>
+  <div class="body">
+    <p><code>lab/lab-up.sh</code> creates a cluster called <code>kq</code>:</p>
+    <ul>
+      <li><b>1 control-plane node.</b></li>
+      <li><b>3 worker nodes</b>, labelled <code>topology.kubernetes.io/zone</code> = <code>zone-1</code>, <code>zone-2</code> and <code>zone-3</code>. These stand in for availability zones in Chapter 3.</li>
+      <li><b>1 "gpu" worker</b>, labelled <code>gpu=true</code> and tainted <code>gpu=true:NoSchedule</code>, so ordinary pods stay off it. This is for the taints and tolerations box.</li>
+      <li><b>A local registry</b> at <code>localhost:5001</code>. It stands in for ACR: you push images to it, and the cluster pulls from it.</li>
+      <li><b>metrics-server</b>, so <code>kubectl top</code> and the autoscaler work.</li>
+    </ul>
+    <p>Chapters that need more, such as a Gateway controller, network-policy enforcement or Kyverno, install it with a script in <code>lab/addons/</code>.</p>
+  </div>
+  <pre class="code" data-file="lab/kind-config.yaml">kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: kq
+nodes:
+  - role: control-plane
+  - role: worker
+    labels: { topology.kubernetes.io/zone: zone-1 }
+  - role: worker
+    labels: { topology.kubernetes.io/zone: zone-2 }
+  - role: worker
+    labels: { topology.kubernetes.io/zone: zone-3 }
+  - role: worker
+    labels: { gpu: "true", topology.kubernetes.io/zone: zone-1 }
+    kubeadmConfigPatches:
+      - |
+        kind: JoinConfiguration
+        nodeRegistration:
+          taints:
+            - key: gpu
+              value: "true"
+              effect: NoSchedule
+containerdConfigPatches:
+  - |
+    [plugins."io.containerd.grpc.v1.cri".registry]
+      config_path = "/etc/containerd/certs.d"</pre>
+  <aside class="more"><p>The last block tells each node's container runtime to look for registry settings in <code>/etc/containerd/certs.d</code>. <code>lab-up.sh</code> writes a file there that maps <code>localhost:5001</code> to the registry container, which is the method in kind's own local-registry guide.</p></aside>
+</section>
+
+<section class="step" id="s3">
+  <h2>3. Install the tools</h2>
+  <div class="body">
+    <p>You need four tools. The exact versions the course is tested with are in <code>lab/versions.env</code>.</p>
+    <ul>
+      <li><b>A container engine</b>: Docker Desktop, Docker Engine (Linux), or Podman.</li>
+      <li><b>kind</b></li>
+      <li><b>kubectl</b></li>
+      <li><b>helm</b></li>
+    </ul>
+    <p>Hardware: about <b>4 CPUs and 8 GB of RAM free</b>. On a smaller machine, use the single-node lab (step 6).</p>
+    <p>Docker Desktop needs a paid subscription for use in larger companies. <b>Podman</b> is a free alternative; with it, set <code>KIND_EXPERIMENTAL_PROVIDER=podman</code>.</p>
+  </div>
+  <table>
+    <tr><th>OS</th><th>Commands</th></tr>
+    <tr><td>macOS (Homebrew)</td><td><pre>brew install kind kubectl helm
+# plus Docker Desktop, or: brew install podman &amp;&amp; podman machine init --cpus 4 --memory 8192 &amp;&amp; podman machine start</pre></td></tr>
+    <tr><td>Windows</td><td><pre># install WSL2 + Ubuntu, then Docker Desktop (WSL2 backend) or Podman Desktop
+# inside Ubuntu, follow the Linux row</pre></td></tr>
+    <tr><td>Linux</td><td><pre># Docker Engine or Podman from your distro, then the kind, kubectl and helm
+# release binaries for the versions in lab/versions.env (install-tools.sh does this)
+./lab/install-tools.sh</pre></td></tr>
+  </table>
+  <pre class="code" data-file="terminal">kind version
+kubectl version --client
+helm version --short</pre>
+</section>
+
+<section class="step" id="s4">
+  <h2>4. Start the lab</h2>
+  <div class="body">
+    <p>From the course repository, run:</p>
+  </div>
+  <pre class="code" data-file="terminal">./lab/lab-up.sh</pre>
+  <div class="body">
+    <p>The script:</p>
+    <ol>
+      <li>starts the registry container on <code>127.0.0.1:5001</code>;</li>
+      <li>creates the cluster from <code>kind-config.yaml</code>;</li>
+      <li>connects the registry to the cluster's network and tells each node about it;</li>
+      <li>installs metrics-server (with <code>--kubelet-insecure-tls</code>, which a local lab needs and production never should);</li>
+      <li>waits until every node is <code>Ready</code>.</li>
+    </ol>
+    <p>It takes 1–3 minutes the first time, while the node images download.</p>
+  </div>
+  <pre class="output">Creating cluster "kq" ...
+ ✓ Ensuring node image (kindest/node:…)
+ ✓ Preparing nodes 📦 📦 📦 📦 📦
+ ✓ Writing configuration 📜
+ ✓ Starting control-plane 🕹️
+ ✓ Installing CNI 🔌
+ ✓ Installing StorageClass 💾
+ ✓ Joining worker nodes 🚜
+Set kubectl context to "kind-kq"
+registry: localhost:5001 ✓   metrics-server ✓   all nodes Ready ✓</pre>
+</section>
+
+<section class="step" id="s5">
+  <h2>5. Check it works</h2>
+  <div class="body"><p>List the nodes with their zone label as an extra column.</p></div>
+  <div class="check" data-type="command">
+    <p class="q">Show all nodes with a column for the <code>topology.kubernetes.io/zone</code> label.</p>
+    <p class="answer"><code>kubectl get nodes -L topology.kubernetes.io/zone</code></p>
+    <p class="accept">Also accepted: <code>--label-columns</code> for <code>-L</code>, <code>node</code>/<code>no</code> for <code>nodes</code>, and an added <code>-o wide</code>.</p>
+    <div class="explain"><code>-L</code> adds one column per label key you name.</div>
+  </div>
+  <pre class="output">NAME               STATUS   ROLES           AGE   VERSION   ZONE
+kq-control-plane   Ready    control-plane   2m    v1.3x.x
+kq-worker          Ready    &lt;none&gt;          2m    v1.3x.x   zone-1
+kq-worker2         Ready    &lt;none&gt;          2m    v1.3x.x   zone-2
+kq-worker3         Ready    &lt;none&gt;          2m    v1.3x.x   zone-3
+kq-worker4         Ready    &lt;none&gt;          2m    v1.3x.x   zone-1</pre>
+  <div class="check" data-type="mcq">
+    <p class="q">In this lab, what does <code>localhost:5001</code> stand in for?</p>
+    <ol class="options">
+      <li>The AKS API server <span class="why">The API server is the control-plane node, reached through your kubeconfig.</span></li>
+      <li class="correct">Azure Container Registry</li>
+      <li>Azure Key Vault <span class="why">There's no local Key Vault; secret-store boxes use Kubernetes Secrets instead.</span></li>
+      <li>An Azure DevOps agent <span class="why">Pipelines aren't run locally in this course.</span></li>
+    </ol>
+    <div class="explain">You push images to <code>localhost:5001/orders-api:tag</code> and the cluster pulls them, just as AKS pulls from <code>contosoacr.azurecr.io</code>. The difference: no authentication is needed locally, whereas AKS needs the AcrPull role.</div>
+  </div>
+</section>
+
+<section class="step" id="s6">
+  <h2>6. Stop, reset and the small variant</h2>
+  <div class="body">
+    <ul>
+      <li><code>./lab/lab-down.sh</code> deletes the cluster and the registry. Your files are untouched.</li>
+      <li><b>Reset:</b> run <code>lab-down.sh</code>, then <code>lab-up.sh</code>. Every box assumes a fresh lab plus the add-ons it names.</li>
+      <li><b>Small machine?</b> <code>./lab/lab-up.sh --small</code> creates a single node with the registry and metrics-server. Most boxes work. Chapter 3's zone and taint boxes say when they need the full lab.</li>
+      <li>Each box ends with its own cleanup commands, so you rarely need a full reset.</li>
+    </ul>
+  </div>
+  <pre class="code" data-file="terminal">./lab/lab-down.sh
+./lab/lab-up.sh --small</pre>
+  <div class="check" data-type="custom">
+    <p class="q">Tick "I'm set up" once <code>kubectl get nodes</code> shows every node <code>Ready</code>.</p>
+    <div class="explain">This unlocks the "I tried it" ticks on every "Try it locally" box (5 XP each, never graded).</div>
+  </div>
+</section>
+
+<section class="step summary" id="s7">
+  <h2>Local lab, ready</h2>
+  <ul>
+    <li>kind runs Kubernetes nodes as containers; the course lab has 3 zone-labelled workers and 1 tainted "gpu" worker.</li>
+    <li><code>localhost:5001</code> stands in for ACR; metrics-server is installed.</li>
+    <li><code>lab-up.sh</code> / <code>lab-down.sh</code>, and <code>--small</code> for a single node.</li>
+    <li>Nothing Azure-specific runs locally; each box says where AKS differs.</li>
+  </ul>
+</section>
+</article>
+</body>
+</html>

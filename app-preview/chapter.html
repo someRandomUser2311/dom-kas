@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Azure Pipelines · Chapter 7</title>
+<link rel="stylesheet" href="assets/styles.css">
+</head>
+<body data-page="chapter">
+<header id="topbar"></header>
+
+<main class="page">
+  <div class="breadcrumb"><a href="index.html">Home</a><span class="sep">/</span><span>DevOps track</span><span class="sep">/</span><span>Chapter 7</span></div>
+
+  <div class="with-rail">
+    <div>
+      <div class="ch-hero">
+        <div class="ring" id="ring" style="--p:0"><span id="ring-val">0%</span></div>
+        <div>
+          <span class="badge badge-violet">DevOps track · Intermediate</span>
+          <h1 style="margin:10px 0 6px">Azure Pipelines: CI/CD to AKS</h1>
+          <p class="muted" style="max-width:640px">Learn how a commit becomes a running pod. You'll read, write and debug real <code>azure-pipelines.yml</code> files, wire up service connections and ACR, design multi-stage pipelines with approvals, and ship an app to AKS by hand so you know exactly what the pipeline automates.</p>
+          <div style="display:flex;gap:10px;flex-wrap:wrap;color:var(--text-3);font-size:13px">
+            <span>⏱ ~2h 50m</span><span>·</span><span>6 lessons</span><span>·</span><span>4 practice items</span><span>·</span><span>Auto-graded</span>
+          </div>
+        </div>
+      </div>
+
+      <div id="sections"></div>
+    </div>
+
+    <aside class="rail">
+      <div class="card">
+        <a class="btn btn-primary btn-lg btn-block" id="continue-btn" href="lesson.html?l=ch07/l1">Start chapter →</a>
+        <p class="subtle" style="margin:10px 0 0;text-align:center" id="continue-sub">Begin with lesson 1</p>
+      </div>
+
+      <div class="card">
+        <div class="card-title">🏗️ What you'll build</div>
+        <div class="flow" style="gap:6px">
+          <span class="badge">git push</span><span class="flow-arrow">→</span>
+          <span class="badge">Build & test</span><span class="flow-arrow">→</span>
+          <span class="badge badge-accent">Push to ACR</span><span class="flow-arrow">→</span>
+          <span class="badge badge-warn">Approval</span><span class="flow-arrow">→</span>
+          <span class="badge badge-success">Deploy to AKS</span>
+        </div>
+        <p class="subtle" style="margin:8px 0 0">A three-stage pipeline with a deployment job, a <code>prod</code> environment gate and image tags that can be traced back to a build.</p>
+      </div>
+
+      <div class="card">
+        <div class="card-title">🎯 Skills you'll gain</div>
+        <ul class="list-check" style="font-size:14px">
+          <li>Read any azure-pipelines.yml with confidence</li>
+          <li>Choose Microsoft-hosted vs self-hosted agents</li>
+          <li>Set up service connections with workload identity federation</li>
+          <li>Push images to ACR and let AKS pull them with <code>AcrPull</code></li>
+          <li>Design stages with conditions, environments & approvals</li>
+          <li>Use variables, secrets & templates correctly</li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <div class="card-title">📏 How you're evaluated</div>
+        <div style="display:grid;gap:8px;font-size:13.5px">
+          <div style="display:flex;justify-content:space-between"><span>Inline knowledge checks</span><span class="badge">10%</span></div>
+          <div style="display:flex;justify-content:space-between"><span>Checkpoint quiz</span><span class="badge">20%</span></div>
+          <div style="display:flex;justify-content:space-between"><span>Predict the run</span><span class="badge">15%</span></div>
+          <div style="display:flex;justify-content:space-between"><span>YAML lab (static grader)</span><span class="badge badge-accent">35%</span></div>
+          <div style="display:flex;justify-content:space-between"><span>Terminal lab (live checks)</span><span class="badge badge-violet">20%</span></div>
+        </div>
+        <p class="subtle" style="margin:10px 0 0">Pass mark 70%. Labs can be retried; hints cost a little XP.</p>
+      </div>
+    </aside>
+  </div>
+</main>
+
+<script src="assets/app.js"></script>
+<script>
+  document.addEventListener("DOMContentLoaded", () => {
+    const host = document.getElementById("sections");
+    let html = "";
+    KQ.CHAPTER.sections.forEach((s, si) => {
+      const doneCount = s.items.filter(i => KQ.isDone(i.id)).length;
+      html += `<div class="section-block"><h3><span class="sec-num">${String(si + 1).padStart(2, "0")}</span>${s.title}
+        <span class="badge ${doneCount === s.items.length ? "badge-success" : ""}" style="margin-left:auto">${doneCount}/${s.items.length}</span></h3><div class="lesson-list">`;
+      s.items.forEach(i => {
+        const done = KQ.isDone(i.id);
+        html += `<a class="lesson-row" href="${i.href}">
+          <span class="status-dot ${done ? "done" : ""}">${done ? "✓" : ""}</span>
+          <span class="lr-ico">${i.ico}</span>
+          <span class="lr-body"><div class="lr-title">${i.title}</div><div class="lr-sub">${i.kind}</div></span>
+          <span class="lr-time">${i.min} min</span></a>`;
+      });
+      html += `</div></div>`;
+    });
+    host.innerHTML = html;
+
+    const pct = KQ.chapterProgress();
+    document.getElementById("ring").style.setProperty("--p", pct);
+    document.getElementById("ring-val").textContent = pct + "%";
+    const next = KQ.ORDER.find(i => !KQ.isDone(i.id));
+    const btn = document.getElementById("continue-btn");
+    if (!next) { btn.href = "chapter-complete.html"; btn.textContent = "View results →"; document.getElementById("continue-sub").textContent = "Chapter complete 🎉"; }
+    else if (pct > 0) { btn.href = next.href; btn.textContent = "Continue →"; document.getElementById("continue-sub").textContent = "Next: " + next.title; }
+  });
+</script>
+</body>
+</html>

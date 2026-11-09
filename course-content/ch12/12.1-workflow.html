@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>12.1 · Why IaC, and the Terraform workflow</title>
+<link rel="stylesheet" href="../content.css">
+</head>
+<body>
+<article class="lesson" data-id="12.1" data-chapter="12">
+<nav class="crumbs"><a href="../index.html">Course</a> / <a href="index.html">Chapter 12</a> / 12.1</nav>
+<header>
+  <p class="kicker">Chapter 12 · Lesson 12.1 · ~11 steps · ~13 min</p>
+  <h1>Why IaC, and the Terraform workflow</h1>
+  <p class="meta">You'll be able to explain what infrastructure as code fixes, run Terraform's init → plan → apply loop, and read a plan's symbols.</p>
+</header>
+
+<section class="step" id="s1">
+  <h2>1. Click-ops drifts</h2>
+  <div class="body">
+    <p>Chapters 4–6 built Contoso's cluster with CLI commands. That was fine for learning. In production it isn't:</p>
+    <ul>
+      <li>Nobody can say exactly what prod looks like.</li>
+      <li>Dev and prod drift apart.</li>
+      <li>A changed setting has no review or history.</li>
+      <li>Rebuilding after a disaster is guesswork.</li>
+    </ul>
+    <p><b>Infrastructure as code</b> describes the desired infrastructure in files. A tool makes reality match them. Sound familiar? It's lesson 1.4's desired state, applied to Azure.</p>
+  </div>
+  <aside class="coming" data-set="C">
+    <dl>
+      <dt>Portal/ARM</dt><dd>Instead of clicking through the portal (or exporting ARM JSON afterwards), you write the definition first, and the portal becomes read-only for you.</dd>
+      <dt>az CLI scripts</dt><dd>Scripts say <i>how</i>, step by step, and break when re-run. Terraform says <i>what</i>, and works out the steps each time, including updates and deletes.</dd>
+      <dt>CloudFormation</dt><dd>Same idea. Terraform keeps its own state file instead of the cloud tracking a "stack", and it works across many providers.</dd>
+      <dt>Pulumi</dt><dd>Same model (state, plan/preview, apply); HCL instead of a general-purpose language.</dd>
+    </dl>
+  </aside>
+</section>
+
+<section class="step" id="s2">
+  <h2>2. What goes in IaC, and what doesn't</h2>
+  <div class="body">
+    <ul>
+      <li><b>Infra pipeline (Terraform):</b> resource groups, network, ACR, the AKS cluster and node pools, Log Analytics, identities and role assignments, Key Vault.</li>
+      <li><b>App pipeline (Chapters 7–11):</b> what runs <i>inside</i> the cluster: Deployments, Services, routes, policies.</li>
+    </ul>
+    <p>They change at different speeds and need different permissions, so they're kept separate.</p>
+  </div>
+</section>
+
+<section class="step" id="s3">
+  <h2>3. Terraform in one picture</h2>
+  <div class="body">
+    <p>You write <code>.tf</code> files. Terraform compares three things:</p>
+    <ul>
+      <li>your <b>code</b> (desired);</li>
+      <li>its <b>state</b> (what it created last time);</li>
+      <li><b>Azure</b> (what really exists).</li>
+    </ul>
+    <p>It then proposes the changes needed. A <b>provider</b> plugin (<code>azurerm</code> for Azure) knows how to talk to each API.</p>
+    <p><b>OpenTofu</b> is the open-source fork of Terraform, created after Terraform's licence change. Everything in this chapter works the same in both.</p>
+  </div>
+</section>
+
+<section class="step" id="s4">
+  <h2>4. The loop</h2>
+  <pre class="code" data-file="terminal">terraform init      # download providers and modules, configure the state backend
+terraform plan      # show what would change (nothing changes yet)
+terraform apply     # make the changes (asks to confirm, or applies a saved plan)
+terraform destroy   # delete everything this configuration manages</pre>
+  <div class="check" data-type="order">
+    <p class="q">Put a first deployment in order.</p>
+    <ol class="options">
+      <li>Write the <code>.tf</code> files</li>
+      <li><code>terraform init</code></li>
+      <li><code>terraform plan</code></li>
+      <li>Review the plan</li>
+      <li><code>terraform apply</code></li>
+    </ol>
+    <div class="explain"><code>init</code> runs once per working directory (and again when providers, modules or the backend change). Plan and review on every change.</div>
+  </div>
+</section>
+
+<section class="step" id="s5">
+  <h2>5. Reading a plan</h2>
+  <pre class="output">Terraform will perform the following actions:
+
+  # azurerm_resource_group.main will be created
+  + resource "azurerm_resource_group" "main" {
+      + location = "westeurope"
+      + name     = "rg-orders-dev"
+    }
+
+  # azurerm_kubernetes_cluster.main will be updated in-place
+  ~ resource "azurerm_kubernetes_cluster" "main" {
+      ~ sku_tier = "Free" -&gt; "Standard"
+    }
+
+  # azurerm_kubernetes_cluster_node_pool.user must be replaced
+-/+ resource "azurerm_kubernetes_cluster_node_pool" "user" {
+      ~ vm_size = "Standard_D4ds_v5" -&gt; "Standard_D8ds_v5" # forces replacement
+    }
+
+Plan: 2 to add, 1 to change, 1 to destroy.</pre>
+  <div class="widget" data-widget="plan-symbols">A small configuration on the left (editable values) and the resulting plan on the right. Changing a tag shows <code>~</code>; changing a node pool's VM size or zones shows <code>-/+</code> with "forces replacement"; removing a block shows <code>-</code>; adding one shows <code>+</code>.</div>
+</section>
+
+<section class="step" id="s6">
+  <h2>6. Match the symbols</h2>
+  <div class="check" data-type="match">
+    <p class="q">Match each plan symbol to its meaning.</p>
+    <table class="pairs">
+      <tr><td><code>+</code></td><td>Create</td></tr>
+      <tr><td><code>~</code></td><td>Update in place</td></tr>
+      <tr><td><code>-/+</code></td><td>Destroy, then create a replacement</td></tr>
+      <tr><td><code>-</code></td><td>Destroy</td></tr>
+      <tr><td><code>&lt;=</code></td><td>Read (a data source)</td></tr>
+    </table>
+    <div class="explain">Always look for <code>-/+</code> and <code>-</code> on stateful resources (clusters, databases, disks) before approving. "forces replacement" on a node pool means its nodes and pods get recreated.</div>
+  </div>
+</section>
+
+<section class="step" id="s7">
+  <h2>7. Providers and the lock file</h2>
+  <div class="body">
+    <p><code>init</code> downloads providers into <code>.terraform/</code>, and records their exact versions and checksums in <code>.terraform.lock.hcl</code>.</p>
+    <p>Commit the <b>lock file</b>, so everyone and every pipeline uses the same provider build. Never commit <code>.terraform/</code>, which is a cache.</p>
+  </div>
+  <div class="check" data-type="multi">
+    <p class="q">Which files belong in Git?</p>
+    <ol class="options">
+      <li class="correct"><code>main.tf</code>, <code>variables.tf</code>, <code>outputs.tf</code></li>
+      <li class="correct"><code>.terraform.lock.hcl</code></li>
+      <li class="correct"><code>dev.tfvars</code> (non-secret values only)</li>
+      <li><code>.terraform/</code> <span class="why">A local cache of downloaded providers.</span></li>
+      <li><code>terraform.tfstate</code> <span class="why">State goes in a remote backend; it can contain secrets (lesson 12.7).</span></li>
+      <li><code>tfplan</code> <span class="why">A saved plan is a pipeline artifact, not source, and can contain sensitive values.</span></li>
+    </ol>
+    <div class="explain">Lesson 0.5's <code>.gitignore</code> already covers <code>.terraform/</code>, <code>*.tfstate</code> and <code>*.tfplan</code>.</div>
+  </div>
+</section>
+
+<section class="step" id="s8">
+  <h2>8. Idempotent by design</h2>
+  <div class="body"><p>Run <code>apply</code> twice with no code change and the second run does nothing: "No changes. Your infrastructure matches the configuration." That's the property CLI scripts lack, and why pipelines can safely run Terraform on every merge.</p></div>
+</section>
+
+<section class="step" id="s9">
+  <h2>9. Where Contoso's code lives</h2>
+  <pre class="code" data-file="infra/terraform/">infra/terraform/
+├─ versions.tf        # terraform + provider requirements, backend
+├─ main.tf            # resource group, network, ACR, Log Analytics
+├─ aks.tf             # cluster + node pools
+├─ identity.tf        # role assignments, workload identities
+├─ variables.tf
+├─ outputs.tf
+├─ dev.tfvars
+└─ prod.tfvars</pre>
+</section>
+
+<section class="step" id="s10">
+  <h2>10. The CLI still has a place</h2>
+  <div class="body"><p>IaC doesn't mean never touching the CLI. You still use <code>az</code> and <code>kubectl</code> to <b>look</b>, debug, and run one-off operations such as <code>az aks command invoke</code>. What you stop doing is <b>changing</b> managed infrastructure by hand. Every change goes through code.</p></div>
+</section>
+
+<section class="step summary" id="s11">
+  <h2>The workflow, sorted</h2>
+  <ul>
+    <li>IaC = desired infrastructure in reviewed files; no more click-ops drift.</li>
+    <li>init → plan → (review) → apply; destroy when done.</li>
+    <li>Plan symbols: <code>+</code> <code>~</code> <code>-/+</code> <code>-</code> <code>&lt;=</code>. Watch for replacements.</li>
+    <li>Commit <code>.tf</code>, the lock file and non-secret tfvars; never <code>.terraform/</code>, state or plans.</li>
+    <li>Infra and app pipelines stay separate.</li>
+  </ul>
+</section>
+</article>
+</body>
+</html>

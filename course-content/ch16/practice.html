@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chapter 16 · Practice</title>
+<link rel="stylesheet" href="../content.css">
+</head>
+<body>
+<main>
+<nav class="crumbs"><a href="../index.html">Course</a> / <a href="index.html">Chapter 16</a> / Practice</nav>
+<p class="kicker">Chapter 16 · Practice</p>
+<h1>Practice: quiz, predict, lab, try it locally</h1>
+
+<h2 id="quiz">Checkpoint quiz (8 drawn from 16)</h2>
+<div class="check" data-type="mcq"><p class="q">Which is NOT a supply-chain hop?</p><ol class="options"><li>Base image</li><li>Build agent</li><li>Registry</li><li class="correct">The user's browser</li></ol><div class="explain">The chain is source → deps → base → build → registry → deploy.</div></div>
+<div class="check" data-type="mcq"><p class="q">Why pin <code>FROM</code> by digest?</p><ol class="options"><li>Smaller images</li><li class="correct">Reproducible builds; a re-pushed tag can't change what you build on</li><li>Faster pulls</li><li>Required by ACR</li></ol><div class="explain">Bots keep pins fresh.</div></div>
+<div class="check" data-type="mcq"><p class="q">What's the main benefit of distroless runtime images?</p><ol class="options"><li>Faster builds</li><li class="correct">Far fewer packages and no shell, so fewer vulnerabilities and less for an attacker to use</li><li>Free licensing</li><li>Windows support</li></ol><div class="explain">Debug with <code>kubectl debug</code>.</div></div>
+<div class="check" data-type="mcq"><p class="q">A sensible pipeline scan fail policy?</p><ol class="options"><li>Fail on any finding</li><li class="correct">Fail on HIGH/CRITICAL with a fix available; track the rest</li><li>Never fail</li><li>Fail on LOW only</li></ol><div class="explain"><code>--severity HIGH,CRITICAL --ignore-unfixed</code>.</div></div>
+<div class="check" data-type="mcq"><p class="q">Is scanning once at build enough?</p><ol class="options"><li>Yes</li><li class="correct">No; new CVEs appear later, so scan the registry and running images continuously</li><li>Only for prod</li><li>Only for base images</li></ol><div class="explain">Defender for Containers does the continuous part.</div></div>
+<div class="check" data-type="mcq"><p class="q">How is an SBOM kept with the image in ACR?</p><ol class="options"><li>As a tag</li><li class="correct">As an OCI referrer attached to the image digest</li><li>In the image layers</li><li>In Key Vault</li></ol><div class="explain"><code>oras attach</code>.</div></div>
+<div class="check" data-type="mcq"><p class="q">When should the image be signed?</p><ol class="options"><li>Before scanning</li><li class="correct">After the scan passes</li><li>After deploying</li><li>Never in CI</li></ol><div class="explain">The signature means "passed our checks".</div></div>
+<div class="check" data-type="mcq"><p class="q">What does a valid signature prove?</p><ol class="options"><li>The image has no vulnerabilities</li><li class="correct">It wasn't changed, and it was signed by a trusted key</li><li>It was tested</li><li>It's the latest</li></ol><div class="explain">Integrity and provenance, not safety.</div></div>
+<div class="check" data-type="mcq"><p class="q">Where does the Notation signing key's private part live?</p><ol class="options"><li>In the repo</li><li>In a pipeline secret variable</li><li class="correct">In Azure Key Vault; the plugin asks Key Vault to sign</li><li>On the agent</li></ol><div class="explain">No key material in the pipeline.</div></div>
+<div class="check" data-type="mcq"><p class="q">An unsigned image in deny mode is…</p><ol class="options"><li>Admitted with a warning</li><li class="correct">Rejected at admission</li><li>Signed automatically</li><li>Scheduled but not started</li></ol><div class="explain">Audit mode would admit it and record it.</div></div>
+<div class="check" data-type="mcq"><p class="q">The Azure Policy add-on runs which engine in the cluster?</p><ol class="options"><li>Kyverno</li><li class="correct">Gatekeeper (OPA)</li><li>Falco</li><li>Istio</li></ol><div class="explain">Policies are assigned from Azure.</div></div>
+<div class="check" data-type="mcq"><p class="q">Why must the registry prefix end with a slash?</p><ol class="options"><li>Style</li><li class="correct">Without it, <code>contosoacr.azurecr.io.evil.com</code> would match</li><li>Kyverno requires it</li><li>For performance</li></ol><div class="explain">Prefix matching pitfalls.</div></div>
+<div class="check" data-type="mcq"><p class="q">The safest rollout of a new deny rule?</p><ol class="options"><li>Deny everywhere now</li><li class="correct">Audit, fix, then deny in dev, then prod</li><li>Audit forever</li><li>Prod first</li></ol><div class="explain">The same as Pod Security rollout.</div></div>
+<div class="check" data-type="mcq"><p class="q">How do developers see policy violations before deploying?</p><ol class="options"><li>They can't</li><li class="correct">Run the same policies against rendered manifests in the PR pipeline</li><li>Ask the platform team</li><li>Read the audit log</li></ol><div class="explain">Shift left.</div></div>
+<div class="check" data-type="mcq"><p class="q">When is mutation better than validation?</p><ol class="options"><li>Never</li><li class="correct">For safe defaults (e.g. adding a seccomp profile) teams don't need to decide</li><li>For image registries</li><li>For resource limits</li></ol><div class="explain">Validate what teams must decide.</div></div>
+<div class="check" data-type="mcq"><p class="q">A monitoring agent needs hostPath. How do you allow it?</p><ol class="options"><li>Disable the policy</li><li class="correct">A scoped policy exception for that workload, with an owner and a review date</li><li>Move it to the app namespace</li><li>Run it privileged everywhere</li></ol><div class="explain">Never weaken the rule itself.</div></div>
+
+<h2 id="predict">Predict the outcome (3)</h2>
+<div class="check" data-type="predict"><p class="q">1 · Signature verification in deny mode; the pipeline skipped the sign step by mistake; the deploy applies the new digest.</p><ol class="options"><li>Pods run</li><li class="correct">New pods are rejected at admission; the rollout stalls; old pods keep serving</li><li>The image is signed at deploy</li></ol><div class="explain">Add <code>notation verify</code> in the pipeline to fail earlier.</div></div>
+<div class="check" data-type="predict"><p class="q">2 · Trivy with <code>--severity HIGH,CRITICAL --ignore-unfixed --exit-code 1</code> finds one CRITICAL with no fix available.</p><ol class="options"><li>The build fails</li><li class="correct">The build passes (unfixed findings ignored); track it and re-check when a fix ships</li><li>Trivy crashes</li></ol><div class="explain">Continuous scanning will flag it once a fix exists.</div></div>
+<div class="check" data-type="predict"><p class="q">3 · An allowed-registries policy in audit mode; a team deploys <code>docker.io/library/redis:7</code>.</p><ol class="options"><li>Rejected</li><li class="correct">Runs; the violation appears in the compliance or policy report</li><li>Pulled into ACR automatically</li></ol><div class="explain">Audit informs; deny protects.</div></div>
+
+<h2 id="lab">Write lab: the supply-chain stage</h2>
+<div class="lab">
+  <p><b>Brief:</b> Extend the Build stage of <code>azure-pipelines.yml</code> and the prod deploy. Graded by <b>pipeline-rules</b>.</p>
+  <ul class="rules">
+    <li class="critical">A scan step runs before push (or before signing and deploy), and fails on fixable HIGH/CRITICAL (<code>--exit-code 1</code>, <code>--severity HIGH,CRITICAL</code>, <code>--ignore-unfixed</code>).</li>
+    <li>An SBOM is generated (SPDX or CycloneDX) and attached or published.</li>
+    <li>A signing step uses a WIF service connection (<code>AzureCLI@2</code> + <code>notation sign</code> with the Key Vault plugin) on the image <b>digest</b>.</li>
+    <li class="critical">No signing key material in the repo or YAML (no <code>.key</code> or <code>.pem</code> files, no inline private keys).</li>
+    <li>The deploy references the image by digest (<code>@sha256:</code> or a digest variable from the build).</li>
+    <li>Sign comes after scan.</li>
+  </ul>
+  <details class="solution"><summary>Reference solution (outline)</summary><p>Lesson <a href="16.3-scanning-sbom.html#s2">16.3, step 2</a> (build, scan, push), plus a step capturing the digest as an output variable, the SBOM steps from 16.3 steps 7–8, the signing step from <a href="16.4-signing.html#s4">16.4, step 4</a>, and <code>containers: contosoacr.azurecr.io/orders-api@$(imageDigest)</code> in the deploy task.</p></details>
+</div>
+
+<h2 id="walkthrough">Walkthrough: scan fails → fix → sign → admission verifies</h2>
+<ol>
+  <li>The build of 1.6.0 fails the scan: CRITICAL in libssl (the runtime stage was Debian-based).</li>
+  <li>Switch the runtime to distroless; rescan: 0 findings.</li>
+  <li>Push, attach the SBOM, <code>notation sign</code> with the Key Vault key.</li>
+  <li>Deploy by digest; admission verifies the signature and policies, and the pods run.</li>
+  <li>Try to deploy an unsigned test image: denied, with the policy message.</li>
+</ol>
+
+<h2 id="try">Try it locally</h2>
+<div class="try" data-lesson="16.2"><p><b>16.2 Image sizes.</b></p>
+<pre>cd lab/examples/ch16
+docker build -f Dockerfile.single -t localhost:5001/oa:single .
+docker build -f Dockerfile.distroless -t localhost:5001/oa:distroless .
+docker images localhost:5001/oa</pre>
+<p>Expected: roughly 800 MB vs about 15 MB.</p><p><b>Cleanup:</b> <code>docker rmi localhost:5001/oa:single localhost:5001/oa:distroless</code></p></div>
+<div class="try" data-lesson="16.3"><p><b>16.3 Scan and SBOM.</b></p>
+<pre>trivy image --severity HIGH,CRITICAL --ignore-unfixed localhost:5001/oa:single
+trivy image --severity HIGH,CRITICAL --ignore-unfixed localhost:5001/oa:distroless
+trivy image --format spdx-json -o sbom.json localhost:5001/oa:distroless &amp;&amp; head -c 300 sbom.json</pre>
+<p>Expected: findings for the single-stage image and few or none for distroless; an SPDX document.</p><p><b>Cleanup:</b> <code>rm sbom.json</code></p></div>
+<div class="try" data-lesson="16.4"><p><b>16.4 cosign sign and verify.</b></p>
+<pre>docker push localhost:5001/oa:distroless
+DIGEST=$(docker inspect --format='{{index .RepoDigests 0}}' localhost:5001/oa:distroless)
+cosign generate-key-pair &amp;&amp; cosign sign --key cosign.key --tlog-upload=false "$DIGEST"
+cosign verify --key cosign.pub --insecure-ignore-tlog "$DIGEST"</pre>
+<p>Expected: "Verification for … The cosign claims were validated". (The transparency log is skipped for the local lab.)</p><p><b>Cleanup:</b> <code>rm cosign.key cosign.pub</code></p></div>
+<div class="try" data-lesson="16.5"><p><b>16.5 Kyverno allowed registries.</b></p>
+<pre>./lab/addons/kyverno.sh
+kubectl apply -f lab/examples/ch16/allowed-registries.yaml      # allows localhost:5001/ only
+kubectl run bad --image=docker.io/library/nginx:1.27
+kubectl run good --image=localhost:5001/oa:distroless</pre>
+<p>Expected: <code>bad</code> is denied ("Images must come from …"); <code>good</code> is created.</p><p><b>Cleanup:</b> <code>kubectl delete pod good; kubectl delete -f lab/examples/ch16/allowed-registries.yaml</code></p></div>
+</main>
+</body>
+</html>

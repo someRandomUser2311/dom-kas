@@ -1,0 +1,207 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>4.6 · Creating a cluster</title>
+<link rel="stylesheet" href="../content.css">
+</head>
+<body>
+<article class="lesson" data-id="4.6" data-chapter="4">
+<nav class="crumbs"><a href="../index.html">Course</a> / <a href="index.html">Chapter 4</a> / 4.6</nav>
+<header>
+  <p class="kicker">Chapter 4 · Lesson 4.6 · ~12 steps · ~15 min</p>
+  <h1>Creating a cluster</h1>
+  <p class="meta">You'll be able to write an <code>az aks create</code> command for a production-shaped baseline cluster, and explain every flag in it.</p>
+</header>
+
+<section class="step" id="s1">
+  <h2>1. Start from the smallest command</h2>
+  <div class="body">
+    <p>This works, but every important decision is left to defaults. Over the next steps we'll add one decision at a time.</p>
+    <p>In real projects this becomes Terraform or Bicep (Chapters 12–13). The settings are the same; only the syntax changes.</p>
+  </div>
+  <pre class="code" data-file="create-cluster.sh">az group create --name rg-orders-dev --location westeurope
+
+az aks create \
+  --resource-group rg-orders-dev \
+  --name aks-orders-dev</pre>
+  <aside class="coming" data-set="A">
+    <dl>
+      <dt>Windows/IIS admin</dt><dd>Think of it as a scripted server build: every flag is a checkbox you'd otherwise click in a wizard, but now it's repeatable.</dd>
+      <dt>Linux admin</dt><dd>It's one long command; keep it in a script under version control, not in shell history.</dd>
+      <dt>Developer (Compose)</dt><dd>Like a very long <code>docker run</code>, except it creates infrastructure for 5–10 minutes.</dd>
+      <dt>Other clouds</dt><dd>The equivalent of <code>eksctl create cluster</code> or <code>gcloud container clusters create</code>.</dd>
+    </dl>
+  </aside>
+</section>
+
+<section class="step" id="s2">
+  <h2>2. Tier, version and the system pool</h2>
+  <pre class="code" data-file="create-cluster.sh" data-diff>az aks create \
+  --resource-group rg-orders-dev \
+  --name aks-orders-dev \
++ --tier standard \
++ --kubernetes-version 1.33 \
++ --nodepool-name system \
++ --node-vm-size Standard_D4ds_v5 \
++ --node-count 3 \
++ --zones 1 2 3 \
++ --nodepool-taints CriticalAddonsOnly=true:NoSchedule</pre>
+  <div class="body"><p>The default pool becomes our tainted <b>system</b> pool: three nodes, one per zone (lesson 4.2). The Standard tier gives the control-plane SLA.</p></div>
+</section>
+
+<section class="step" id="s3">
+  <h2>3. Networking: Azure CNI Overlay with Cilium</h2>
+  <pre class="code" data-file="create-cluster.sh" data-diff>+ --network-plugin azure \
++ --network-plugin-mode overlay \
++ --network-dataplane cilium \
++ --pod-cidr 192.168.0.0/16</pre>
+  <div class="body">
+    <p>Nodes get VNet IPs; pods get IPs from a separate overlay range, so they don't use up the subnet. Cilium provides fast networking and network policy enforcement.</p>
+    <p>Chapter 5 explains the options. In Chapter 5 you'll also add <code>--vnet-subnet-id</code> to put the nodes in Contoso's own subnet.</p>
+  </div>
+</section>
+
+<section class="step" id="s4">
+  <h2>4. Workload identity</h2>
+  <div class="body">
+    <p>Two flags let pods authenticate to Azure services (Key Vault, Storage, SQL) <b>without secrets</b>:</p>
+    <ul>
+      <li>the <b>OIDC issuer</b> publishes the cluster's token-signing keys;</li>
+      <li><b>workload identity</b> installs the webhook that hands pods Azure tokens.</li>
+    </ul>
+    <p>Chapter 5 explains how it works.</p>
+  </div>
+  <div class="check" data-type="command">
+    <p class="q">Contoso's cluster already exists. Turn on workload identity (and the OIDC issuer it needs) with <code>az aks update</code>.</p>
+    <p class="answer"><code>az aks update -g rg-orders-dev -n aks-orders-dev --enable-oidc-issuer --enable-workload-identity</code></p>
+    <p class="accept">Also accepted: <code>--resource-group</code>/<code>--name</code> long forms, flags in any order. Both feature flags are required.</p>
+    <div class="explain">Workload identity depends on the OIDC issuer. Once enabled, the issuer can't be turned off.</div>
+  </div>
+</section>
+
+<section class="step" id="s5">
+  <h2>5. Entra ID and Azure RBAC</h2>
+  <div class="body">
+    <p>These three flags make <b>Entra ID</b> the way humans sign in to the cluster, and <b>Azure RBAC</b> the way their permissions are granted:</p>
+    <ul>
+      <li><code>--enable-aad</code>: users sign in with their Entra ID account (through kubelogin).</li>
+      <li><code>--enable-azure-rbac</code>: Kubernetes permissions are Azure role assignments, such as "Azure Kubernetes Service RBAC Reader" on a namespace, managed like every other Azure permission.</li>
+      <li><code>--disable-local-accounts</code>: removes the static admin kubeconfig, so <code>az aks get-credentials --admin</code> stops working. Every access is a named identity.</li>
+    </ul>
+  </div>
+  <pre class="code" data-file="create-cluster.sh" data-diff>+ --enable-oidc-issuer \
++ --enable-workload-identity \
++ --enable-aad \
++ --enable-azure-rbac \
++ --disable-local-accounts</pre>
+</section>
+
+<section class="step" id="s6">
+  <h2>6. Upgrades on autopilot</h2>
+  <pre class="code" data-file="create-cluster.sh" data-diff>+ --auto-upgrade-channel patch \
++ --node-os-upgrade-channel NodeImage</pre>
+  <div class="body"><p>Patch versions and node images now arrive automatically (lesson 4.4). Add maintenance windows afterwards with <code>az aks maintenanceconfiguration add</code>.</p></div>
+</section>
+
+<section class="step" id="s7">
+  <h2>7. Identity of the cluster itself</h2>
+  <div class="body">
+    <p>AKS uses a <b>managed identity</b> for its own work, such as creating load balancers and attaching disks.</p>
+    <p>For production, create a <b>user-assigned</b> identity first and pass it in. It survives cluster rebuilds, and you can grant it permissions (e.g. on the VNet) before the cluster exists.</p>
+    <p>The <b>kubelet identity</b> (used to pull images) is separate. Chapter 6 grants it AcrPull.</p>
+  </div>
+  <pre class="code" data-file="create-cluster.sh" data-diff>+ --assign-identity /subscriptions/&lt;sub&gt;/resourceGroups/rg-orders-dev/providers/Microsoft.ManagedIdentity/userAssignedIdentities/id-aks-orders-dev \
++ --node-resource-group rg-orders-dev-nodes \
++ --os-sku AzureLinux</pre>
+</section>
+
+<section class="step" id="s8">
+  <h2>8. Spot the safety flag</h2>
+  <div class="check" data-type="tapline" data-match="--disable-local-accounts">
+    <p class="q">Tap the flag that stops anyone from getting a static, all-powerful admin kubeconfig.</p>
+    <pre class="code" data-file="create-cluster.sh">az aks create \
+  --resource-group rg-orders-dev \
+  --name aks-orders-dev \
+  --tier standard \
+  --enable-aad \
+  --enable-azure-rbac \
+  --disable-local-accounts \
+  --auto-upgrade-channel patch</pre>
+    <div class="explain"><code>--disable-local-accounts</code> removes the cluster-admin certificate behind <code>get-credentials --admin</code>. Before turning it on, make sure an Entra ID group has an admin role, or you'll lock yourself out.</div>
+  </div>
+</section>
+
+<section class="step" id="s9">
+  <h2>9. Add the user pool</h2>
+  <div class="check" data-type="fill">
+    <p class="q">Add the pool for apps.</p>
+    <pre class="code" data-file="create-cluster.sh">az aks nodepool add -g rg-orders-dev --cluster-name aks-orders-dev \
+  --name user --mode <span class="blank">?</span> \
+  --node-vm-size Standard_D4ds_v5 --zones 1 2 3 \
+  --enable-cluster-autoscaler --min-count 2 --max-count 10</pre>
+    <ul class="chips">
+      <li class="correct"><code>User</code></li>
+      <li><code>System</code> <span class="why">System pools are for add-ons; this pool is for apps.</span></li>
+      <li><code>Spot</code> <span class="why">Spot is a <code>--priority</code>, not a mode.</span></li>
+      <li><code>Workload</code> <span class="why">Not a valid mode.</span></li>
+    </ul>
+    <div class="explain">Mode <code>User</code> pools can scale to zero and hold application pods.</div>
+  </div>
+</section>
+
+<section class="step" id="s10">
+  <h2>10. Connect and check</h2>
+  <pre class="output">$ az aks get-credentials -g rg-orders-dev -n aks-orders-dev
+Merged "aks-orders-dev" as current context in /home/you/.kube/config
+$ kubectl get nodes -L kubernetes.azure.com/agentpool,topology.kubernetes.io/zone
+To sign in, use a web browser to open the page https://microsoft.com/devicelogin …
+NAME                              STATUS   VERSION   AGENTPOOL   ZONE
+aks-system-12345678-vmss000000    Ready    v1.33.2   system      westeurope-1
+aks-system-12345678-vmss000001    Ready    v1.33.2   system      westeurope-2
+aks-system-12345678-vmss000002    Ready    v1.33.2   system      westeurope-3
+aks-user-87654321-vmss000000      Ready    v1.33.2   user        westeurope-1
+aks-user-87654321-vmss000001      Ready    v1.33.2   user        westeurope-2</pre>
+  <div class="body"><p>The device-login prompt comes from kubelogin (Entra ID). In practice, kubelogin reuses your <code>az login</code> session, using <code>kubelogin convert-kubeconfig -l azurecli</code>.</p></div>
+</section>
+
+<section class="step" id="s11">
+  <h2>11. The full baseline</h2>
+  <pre class="code" data-file="create-cluster.sh">#!/usr/bin/env bash
+set -euo pipefail
+RG=rg-orders-dev; NAME=aks-orders-dev; LOC=westeurope
+
+az group create -n "$RG" -l "$LOC"
+
+az aks create -g "$RG" -n "$NAME" \
+  --tier standard \
+  --kubernetes-version 1.33 \
+  --nodepool-name system --node-vm-size Standard_D4ds_v5 --node-count 3 --zones 1 2 3 \
+  --nodepool-taints CriticalAddonsOnly=true:NoSchedule \
+  --os-sku AzureLinux \
+  --network-plugin azure --network-plugin-mode overlay --network-dataplane cilium \
+  --pod-cidr 192.168.0.0/16 \
+  --enable-oidc-issuer --enable-workload-identity \
+  --enable-aad --enable-azure-rbac --disable-local-accounts \
+  --auto-upgrade-channel patch --node-os-upgrade-channel NodeImage
+
+az aks nodepool add -g "$RG" --cluster-name "$NAME" -n user --mode User \
+  --node-vm-size Standard_D4ds_v5 --zones 1 2 3 \
+  --enable-cluster-autoscaler --min-count 2 --max-count 10</pre>
+</section>
+
+<section class="step summary" id="s12">
+  <h2>Creating a cluster, sorted</h2>
+  <ul>
+    <li>Standard tier, zones 1 2 3, and a tainted system pool plus an autoscaled user pool.</li>
+    <li>Azure CNI Overlay + Cilium.</li>
+    <li>OIDC issuer + workload identity for secretless pod access to Azure.</li>
+    <li>Entra ID + Azure RBAC + local accounts disabled.</li>
+    <li>Patch and NodeImage channels for automatic updates.</li>
+    <li>Next: the network and identity details in Chapter 5.</li>
+  </ul>
+</section>
+</article>
+</body>
+</html>

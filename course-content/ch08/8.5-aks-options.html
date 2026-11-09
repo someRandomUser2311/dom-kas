@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>8.5 · Ingress options on AKS</title>
+<link rel="stylesheet" href="../content.css">
+</head>
+<body>
+<article class="lesson" data-id="8.5" data-chapter="8">
+<nav class="crumbs"><a href="../index.html">Course</a> / <a href="index.html">Chapter 8</a> / 8.5</nav>
+<header>
+  <p class="kicker">Chapter 8 · Lesson 8.5 · ~10 steps · ~13 min</p>
+  <h1>Ingress options on AKS</h1>
+  <p class="meta">You'll be able to compare the managed and self-managed ways to get HTTP traffic into AKS, and pick one for a given set of requirements.</p>
+</header>
+
+<section class="step" id="s1">
+  <h2>1. Someone has to run the proxy</h2>
+  <div class="body">
+    <p>Ingress and Gateway resources need a controller. On AKS you can let <b>Azure manage it</b>, or <b>install and run one yourself</b>. Managed options cost less effort and are patched for you; self-managed options give you more choice.</p>
+    <p>This area changes quickly. Check the current docs before committing.</p>
+  </div>
+  <aside class="coming" data-set="A">
+    <dl>
+      <dt>Windows/IIS admin</dt><dd>Like choosing between Azure Application Gateway (managed) and running your own ARR farm.</dd>
+      <dt>Linux admin</dt><dd>The difference between a managed load balancer service and running nginx yourself, including its upgrades and CVEs.</dd>
+      <dt>Developer (Compose)</dt><dd>Your routes look the same either way; this choice mainly affects the platform team.</dd>
+      <dt>Other clouds</dt><dd>AWS Load Balancer Controller or GKE Gateway are the "managed" analogues; any CNCF controller is the "self-managed" route.</dd>
+    </dl>
+  </aside>
+</section>
+
+<section class="step" id="s2">
+  <h2>2. The application routing add-on</h2>
+  <div class="body">
+    <p>A one-command add-on (<code>az aks approuting enable</code>) that installs and manages an NGINX-based ingress controller inside the cluster, with IngressClass <code>webapprouting.kubernetes.azure.com</code>.</p>
+    <p>It integrates with <b>Azure DNS</b> (automatic records) and <b>Key Vault certificates</b>, and AKS keeps it updated.</p>
+    <p>Microsoft is moving the add-on toward the <b>Gateway API</b>. Check which mode your cluster version supports.</p>
+  </div>
+  <pre class="code" data-file="terminal">az aks approuting enable -g rg-orders-dev -n aks-orders-dev
+kubectl get ingressclass
+# NAME                                 CONTROLLER
+# webapprouting.kubernetes.azure.com   webapprouting.kubernetes.azure.com/nginx</pre>
+</section>
+
+<section class="step" id="s3">
+  <h2>3. Application Gateway for Containers</h2>
+  <div class="body">
+    <p><b>Application Gateway for Containers (AGC)</b> is an Azure-managed layer-7 load balancer that runs <b>outside</b> the cluster. An in-cluster ALB controller programs it from Gateway API resources (GatewayClass <code>azure-alb-external</code>) or Ingress resources.</p>
+    <p>Because the data plane is outside the cluster, there are no proxy pods to scale. It supports traffic splitting, mutual TLS and a web application firewall.</p>
+    <p>It's the successor to the older AGIC (Application Gateway Ingress Controller).</p>
+  </div>
+</section>
+
+<section class="step" id="s4">
+  <h2>4. The Istio-based service mesh add-on</h2>
+  <div class="body">
+    <p>If you enable AKS's Istio add-on for mesh features such as mTLS between services, traffic policies and telemetry, it can also provide <b>ingress gateways</b>, and supports the Gateway API.</p>
+    <p>It's a lot of machinery if you only need ingress, but natural if you want a mesh anyway.</p>
+  </div>
+</section>
+
+<section class="step" id="s5">
+  <h2>5. Self-managed controllers</h2>
+  <div class="body">
+    <p>You can install any controller with Helm, for example Envoy Gateway, Traefik, HAProxy, Contour, or Cilium's Gateway API support. You get full control and portability.</p>
+    <p>You also own upgrades, scaling, high availability and every security patch.</p>
+  </div>
+</section>
+
+<section class="step" id="s6">
+  <h2>6. The community ingress-nginx retirement</h2>
+  <div class="body">
+    <p>The widely used <b>community ingress-nginx</b> project (<code>kubernetes/ingress-nginx</code>) has been <b>retired</b>. After its end-of-maintenance date in March 2026 it gets no further releases or security fixes. Existing installs keep working, but they're unpatched.</p>
+    <p>What it means:</p>
+    <ul>
+      <li>Don't install it on new clusters.</li>
+      <li>Plan a migration for existing clusters, ideally to the <b>Gateway API</b> with a maintained implementation.</li>
+      <li>The AKS application routing add-on is built on NGINX but has its <b>own</b> Microsoft support timeline. Check it rather than assuming either way.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="step" id="s7">
+  <h2>7. Compare</h2>
+  <table>
+    <tr><th></th><th>App routing add-on</th><th>App Gateway for Containers</th><th>Istio add-on</th><th>Self-managed</th></tr>
+    <tr><td>Runs</td><td>In-cluster pods, managed by AKS</td><td>Azure service outside the cluster</td><td>In-cluster, managed by AKS</td><td>In-cluster, managed by you</td></tr>
+    <tr><td>APIs</td><td>Ingress (Gateway API emerging)</td><td>Gateway API + Ingress</td><td>Gateway API + Istio APIs</td><td>Depends</td></tr>
+    <tr><td>WAF</td><td>No</td><td>Yes</td><td>No (put a WAF in front)</td><td>Depends</td></tr>
+    <tr><td>Effort</td><td>Lowest</td><td>Low–medium (subnet, identity)</td><td>Medium–high</td><td>Highest</td></tr>
+  </table>
+</section>
+
+<section class="step" id="s8">
+  <h2>8. Scenarios</h2>
+  <div class="check" data-type="mcq">
+    <p class="q">Contoso's security team requires a web application firewall in front of the shop, and wants the Gateway API with weighted canaries. The platform team is small. Which option fits best?</p>
+    <ol class="options">
+      <li>Community ingress-nginx <span class="why">Retired, and has no WAF.</span></li>
+      <li class="correct">Application Gateway for Containers</li>
+      <li>The app routing add-on in Ingress mode <span class="why">There's no built-in WAF, and the Gateway API support is still emerging.</span></li>
+      <li>A LoadBalancer Service per app <span class="why">No layer-7 features at all.</span></li>
+    </ol>
+    <div class="explain">AGC is managed, supports the Gateway API (including weights) and can attach a WAF policy.</div>
+  </div>
+</section>
+
+<section class="step" id="s9">
+  <h2>9. Which requirements does each meet?</h2>
+  <div class="check" data-type="multi">
+    <p class="q">A dev cluster needs: the cheapest possible setup, little to manage, HTTP routing for three internal apps, and automatic DNS records. Which options meet <b>all</b> of these?</p>
+    <ol class="options">
+      <li class="correct">The application routing add-on</li>
+      <li>Application Gateway for Containers <span class="why">It works, but it's a separate billed Azure resource. Not the cheapest.</span></li>
+      <li>The Istio add-on <span class="why">A lot of machinery for three internal apps.</span></li>
+      <li>Self-managed Envoy Gateway <span class="why">You'd run it, and DNS automation needs extra tooling such as external-dns.</span></li>
+    </ol>
+    <div class="explain">The add-on integrates with Azure DNS and is managed for you, a good fit for simple and dev scenarios.</div>
+  </div>
+</section>
+
+<section class="step summary" id="s10">
+  <h2>AKS ingress options, sorted</h2>
+  <ul>
+    <li>App routing add-on: managed NGINX in-cluster, simplest, with DNS and Key Vault integration.</li>
+    <li>Application Gateway for Containers: managed L7 outside the cluster, Gateway API, WAF.</li>
+    <li>Istio add-on: if you want a mesh anyway.</li>
+    <li>Self-managed: full control, full responsibility.</li>
+    <li>Community ingress-nginx is retired; move to the Gateway API.</li>
+  </ul>
+</section>
+</article>
+</body>
+</html>

@@ -1,0 +1,169 @@
+# Grader rules for the write labs in Chapters 1–6.
+# Rule N here grades rule N of the lab's list in course-content/chNN/practice.html.
+lab: ch01/lab
+rules:
+  - all:
+      - re: '(?i)^FROM\s(?s:.*)^FROM\s'
+      - re: '(?i)^COPY\s+--from='
+    hint: Use two FROM stages and copy the binary with COPY --from.
+  - fn: dockerfile_pinned
+  - before: ['(?i)^COPY\s+go\.mod', '(?i)^COPY\s+\.\s+\.']
+    hint: Copy go.mod and go.sum and download modules before COPY . .
+  - re: '(?i)^EXPOSE\s+8080\b'
+    hint: Add EXPOSE 8080.
+  - not_re: '(?i)^\s*(ENV|ARG)\s+[A-Z0-9_]*(PASSWORD|SECRET|TOKEN|KEY)[A-Z0-9_]*\s*[= ]\s*\S+'
+  - fn: dockerfile_final_user
+  - re: '(?i)^(ENTRYPOINT|CMD)\s*\['
+    hint: Use the exec form, e.g. ENTRYPOINT ["/orders-api"].
+---
+lab: ch02/lab
+start: |
+  # k8s/base/configmap.yaml, deployment.yaml and service.yaml
+  # Write all three documents here, separated by ---
+rules:
+  - parses: true
+    require: [Deployment, Service, ConfigMap]
+  - fn: deploy_selector_matches
+  - fn: service_selects_pods
+  - fn: service_target_port
+  - fn: configmap_refs_exist
+  - fn: images_pinned
+  - path: spec.replicas
+    kind: Deployment
+    op: gte
+    value: 2
+    hint: Set replicas to 2 or more.
+  - fn: no_secrets_in_configmaps
+  - any:
+      - { path: spec.type, kind: Service, op: absent }
+      - { path: spec.type, kind: Service, op: eq, value: ClusterIP }
+    hint: An internal Service is ClusterIP.
+---
+lab: ch03/lab
+start: |
+  # k8s/base/deployment.yaml, hpa.yaml and pdb.yaml
+  # Harden the orders-api Deployment and add an HPA and a PDB (separate documents with ---)
+  apiVersion: apps/v1
+  kind: Deployment
+  metadata:
+    name: orders-api
+    namespace: orders
+  spec:
+    replicas: 3
+    selector:
+      matchLabels:
+        app: orders-api
+    template:
+      metadata:
+        labels:
+          app: orders-api
+      spec:
+        containers:
+          - name: api
+            image: contosoacr.azurecr.io/orders-api:1.4.2
+            ports:
+              - name: http
+                containerPort: 8080
+rules:
+  - all:
+      - { kind: Deployment, each: 'spec.template.spec.containers[*]', path: resources.requests.cpu, op: exists }
+      - { kind: Deployment, each: 'spec.template.spec.containers[*]', path: resources.requests.memory, op: exists }
+    hint: Set cpu and memory requests on every container.
+  - { kind: Deployment, each: 'spec.template.spec.containers[*]', path: resources.limits.memory, op: exists, hint: Set a memory limit. }
+  - { kind: Deployment, each: 'spec.template.spec.containers[*]', path: readinessProbe, op: exists, hint: Add a readinessProbe. }
+  - { kind: Deployment, each: 'spec.template.spec.containers[*]', path: livenessProbe, op: exists, hint: Add a livenessProbe. }
+  - kind: Deployment
+    each: 'spec.template.spec.containers[*]'
+    path: livenessProbe
+    op: not_re
+    value: '(?i)health/db|psql|pg_isready|5432|postgres'
+    hint: Liveness must not depend on the database.
+  - all:
+      - { kind: Deployment, path: 'spec.template.spec.topologySpreadConstraints[*].topologyKey', op: eq, value: topology.kubernetes.io/zone }
+      - { kind: Deployment, path: 'spec.template.spec.topologySpreadConstraints[*].maxSkew', op: eq, value: 1 }
+      - { kind: Deployment, path: 'spec.template.spec.topologySpreadConstraints[*].labelSelector', op: exists }
+    hint: Spread over topology.kubernetes.io/zone with maxSkew 1 and a labelSelector.
+  - all:
+      - { kind: HorizontalPodAutoscaler, path: apiVersion, op: eq, value: autoscaling/v2 }
+      - { kind: HorizontalPodAutoscaler, path: spec.scaleTargetRef.kind, op: eq, value: Deployment }
+      - { kind: HorizontalPodAutoscaler, path: spec.scaleTargetRef.name, op: eq, value: orders-api }
+      - { kind: HorizontalPodAutoscaler, path: spec.minReplicas, op: eq, value: 2 }
+      - { kind: HorizontalPodAutoscaler, path: spec.maxReplicas, op: eq, value: 10 }
+    hint: An autoscaling/v2 HPA on Deployment orders-api, min 2, max 10.
+  - fn: pdb_matches
+  - fn: replicas_within_hpa
+---
+lab: ch04/lab
+start: |
+  #!/usr/bin/env bash
+  # create-cluster.sh: create the dev AKS cluster for Contoso Orders
+rules:
+  - re: '^set\s+-E?euo\s+pipefail'
+    hint: Start with set -euo pipefail.
+  - re: 'az\s+group\s+create'
+  - re: '(?i)az\s+aks\s+create(?s:.*)--tier\s+standard'
+    hint: Use --tier standard for the uptime SLA.
+  - all:
+      - re: 'az\s+aks\s+create(?s:.*)--zones\s+1\s+2\s+3'
+      - re: 'az\s+aks\s+create(?s:.*)--node-count\s+([2-9]|\d\d+)'
+    hint: The system pool needs --zones 1 2 3 and at least 2 nodes.
+  - all:
+      - re: '--network-plugin\s+azure\b'
+      - re: '--network-plugin-mode\s+overlay\b'
+  - all:
+      - re: '--enable-oidc-issuer'
+      - re: '--enable-workload-identity'
+  - all:
+      - re: '--enable-aad'
+      - re: '--enable-azure-rbac'
+  - re: '--disable-local-accounts'
+  - all:
+      - re: '--auto-upgrade-channel\s+(patch|stable|rapid|node-image)'
+      - re: '--node-os-upgrade-channel\s+(NodeImage|SecurityPatch|Unmanaged)'
+    hint: Pick an --auto-upgrade-channel (e.g. patch) and a --node-os-upgrade-channel (e.g. NodeImage).
+  - all:
+      - re: 'az\s+aks\s+nodepool\s+add'
+      - re: 'nodepool\s+add(?s:.*)--mode\s+User'
+      - re: 'nodepool\s+add(?s:.*)--zones\s+1\s+2\s+3'
+      - re: 'nodepool\s+add(?s:.*)--enable-cluster-autoscaler'
+    hint: Add a User pool across zones 1 2 3 with the cluster autoscaler.
+---
+lab: ch05/lab
+start: |
+  # k8s/base/serviceaccount.yaml and the updated deployment.yaml (separate with ---)
+rules:
+  - kind: ServiceAccount
+    path: 'metadata.annotations["azure.workload.identity/client-id"]'
+    op: eq
+    value: 6c1f2a9e-0000-4b1d-9c55-1a2b3c4d5e6f
+    hint: Annotate the ServiceAccount with the client ID from the brief.
+  - fn: sa_reference
+  - re: 'azure\.workload\.identity/use:\s*["'']true["'']'
+    hint: The label value must be the quoted string "true".
+  - all:
+      - { kind: ServiceAccount, path: metadata.name, op: eq, value: orders-api }
+      - { kind: ServiceAccount, path: metadata.namespace, op: eq, value: orders }
+    hint: The subject is system:serviceaccount:orders:orders-api.
+  - all:
+      - not_re: '(?i)AZURE_CLIENT_SECRET|client[-_]?secret'
+      - fn: no_secret_objects_with_data
+  - not_re: 'name:\s*["'']?AZURE_CLIENT_ID'
+    hint: The workload identity webhook injects AZURE_CLIENT_ID; don't hard-code it.
+---
+lab: ch06/lab
+start: |
+  #!/usr/bin/env bash
+  # deploy-private.sh: apply k8s/base/ to the private cluster aks-orders-prod
+rules:
+  - re: '^set\s+-E?euo\s+pipefail'
+  - all:
+      - re: 'az\s+aks\s+command\s+invoke'
+      - re: '(-g|--resource-group)[ =]rg-orders-prod\b'
+      - re: '(-n|--name)[ =]aks-orders-prod\b'
+  - re: '--command\s+["''][^"'']*kubectl\s+apply[^"'']*(-n|--namespace)[ =]orders'
+    hint: --command "kubectl apply -f … -n orders"
+  - all:
+      - re: '--file\s+\S+'
+      - re: '--command\s+["''][^"'']*-f\s+\S+'
+  - not_re: '(az\s+aks\s+update[^\n]*(--api-server-authorized-ip-ranges|--disable-private-cluster))|--api-server-authorized-ip-ranges'
+  - not_re: '(?i)(az\s+login[^\n]*\s-p\s)|--password|client[-_]?secret|AZURE_CLIENT_SECRET'

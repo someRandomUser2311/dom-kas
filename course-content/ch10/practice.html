@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chapter 10 · Practice</title>
+<link rel="stylesheet" href="../content.css">
+</head>
+<body>
+<main>
+<nav class="crumbs"><a href="../index.html">Course</a> / <a href="index.html">Chapter 10</a> / Practice</nav>
+<p class="kicker">Chapter 10 · Practice</p>
+<h1>Practice: quiz, predict, labs, try it locally</h1>
+
+<h2 id="quiz">Checkpoint quiz (10 drawn from 20)</h2>
+<div class="check" data-type="mcq"><p class="q">Kustomize's core idea is…</p><ol class="options"><li>Go templates</li><li class="correct">A plain-YAML base plus per-environment patches</li><li>Releases with rollback</li><li>A package registry</li></ol><div class="explain">Overlays, not templates.</div></div>
+<div class="check" data-type="mcq"><p class="q">Which tool tracks installs as revisions you can roll back?</p><ol class="options"><li>Kustomize</li><li class="correct">Helm</li><li>kubectl apply</li><li>Both</li></ol><div class="explain">Helm stores each revision in the namespace.</div></div>
+<div class="check" data-type="mcq"><p class="q">How do you set the image tag in a Kustomize overlay without editing the Deployment?</p><ol class="options"><li>A JSON patch only</li><li class="correct">The <code>images:</code> field (<code>newTag</code>)</li><li><code>replicas:</code></li><li><code>labels:</code></li></ol><div class="explain">The pipeline uses <code>kustomize edit set image</code>.</div></div>
+<div class="check" data-type="mcq"><p class="q">Which command shows the fully rendered output of an overlay?</p><ol class="options"><li><code>kubectl get -k</code></li><li class="correct"><code>kubectl kustomize k8s/overlays/prod</code></li><li><code>helm template</code></li><li><code>kubectl explain</code></li></ol><div class="explain">Then <code>kubectl diff -k</code> against the cluster.</div></div>
+<div class="check" data-type="mcq"><p class="q">Why use <code>labels:</code> rather than <code>commonLabels:</code>?</p><ol class="options"><li>It's shorter</li><li class="correct"><code>commonLabels</code> is deprecated and also changes selectors, which are immutable on Deployments</li><li>Only <code>labels</code> works with Helm</li><li>No difference</li></ol><div class="explain"><code>labels</code> leaves selectors alone by default.</div></div>
+<div class="check" data-type="mcq"><p class="q">What does <code>configMapGenerator</code> add?</p><ol class="options"><li>Encryption</li><li class="correct">A content-hash name suffix, so config changes roll pods automatically</li><li>Secrets from Key Vault</li><li>Validation</li></ol><div class="explain">The reference changes, so the template changes.</div></div>
+<div class="check" data-type="mcq"><p class="q">Base sets replicas 2; the overlay's <code>replicas</code> field sets 4. Rendered?</p><ol class="options"><li>2</li><li class="correct">4</li><li>6</li><li>Error</li></ol><div class="explain">The overlay wins.</div></div>
+<div class="check" data-type="mcq"><p class="q">In a Helm template, what is <code>.Release.Name</code>?</p><ol class="options"><li>The chart name</li><li class="correct">The name given at install</li><li>The app version</li><li>The namespace</li></ol><div class="explain"><code>.Release.Namespace</code> is the namespace.</div></div>
+<div class="check" data-type="mcq"><p class="q">Which function keeps a value as a YAML string?</p><ol class="options"><li>toYaml</li><li class="correct">quote</li><li>default</li><li>include</li></ol><div class="explain">Important for ConfigMap and env values.</div></div>
+<div class="check" data-type="mcq"><p class="q"><code>{{ .Values.replicas | default 2 }}</code> with <code>replicas: 0</code> renders…</p><ol class="options"><li>0</li><li class="correct">2</li><li>Empty</li><li>Error</li></ol><div class="explain"><code>default</code> treats 0 as empty. A trap!</div></div>
+<div class="check" data-type="mcq"><p class="q">Which command renders a chart locally without a cluster?</p><ol class="options"><li><code>helm install --dry-run</code> only</li><li class="correct"><code>helm template</code></li><li><code>helm get manifest</code></li><li><code>helm status</code></li></ol><div class="explain">Combine with <code>helm lint</code> in CI.</div></div>
+<div class="check" data-type="mcq"><p class="q">What does <code>--atomic</code> do on a failed upgrade?</p><ol class="options"><li>Retries forever</li><li class="correct">Rolls back to the previous revision automatically</li><li>Deletes the release</li><li>Ignores the failure</li></ol><div class="explain">Helm 4 calls it <code>--rollback-on-failure</code>.</div></div>
+<div class="check" data-type="mcq"><p class="q">"another operation (install/upgrade/rollback) is in progress" usually means…</p><ol class="options"><li>A cluster outage</li><li class="correct">A previous operation was interrupted, leaving a pending revision that locks the release</li><li>A wrong chart version</li><li>A quota error</li></ol><div class="explain">Roll back to the last good revision.</div></div>
+<div class="check" data-type="mcq"><p class="q">Why not put a database password in <code>values-prod.yaml</code>?</p><ol class="options"><li>Helm can't read it</li><li class="correct">It's in Git and in every stored release revision</li><li>It's too long</li><li>Values are public</li></ol><div class="explain">Reference Key Vault instead.</div></div>
+<div class="check" data-type="mcq"><p class="q">You add a template to the chart; the app is unchanged. Bump…</p><ol class="options"><li>appVersion</li><li class="correct">The chart version</li><li>Both</li><li>Neither</li></ol><div class="explain">They're independent.</div></div>
+<div class="check" data-type="mcq"><p class="q">How is a chart pushed to ACR?</p><ol class="options"><li><code>docker push</code></li><li class="correct"><code>helm push chart.tgz oci://contosoacr.azurecr.io/helm</code></li><li><code>az acr chart push</code></li><li><code>helm repo add</code> then push</li></ol><div class="explain">Charts are OCI artifacts.</div></div>
+<div class="check" data-type="mcq"><p class="q">Why must selector labels never change between chart versions?</p><ol class="options"><li>Style</li><li class="correct">Deployment selectors are immutable, so the upgrade fails</li><li>Helm forbids it</li><li>Services break silently</li></ol><div class="explain">Keep them in a stable helper.</div></div>
+<div class="check" data-type="mcq"><p class="q">What does "build once, promote" mean?</p><ol class="options"><li>Build per environment with different flags</li><li class="correct">One image (tag or digest) goes to dev, then the same to prod; only config differs</li><li>Build only for prod</li><li>Promote the source code</li></ol><div class="explain">Prod runs what dev tested.</div></div>
+<div class="check" data-type="mcq"><p class="q">Where is the image tag set in a Kustomize-based deploy job?</p><ol class="options"><li>In Git before each run</li><li class="correct"><code>kustomize edit set image …:$(Build.BuildId)</code> in the agent's working copy</li><li>In the base deployment.yaml</li><li>In the cluster</li></ol><div class="explain">Nothing is committed back (unless you use GitOps).</div></div>
+<div class="check" data-type="mcq"><p class="q">Can Kustomize and Helm be combined?</p><ol class="options"><li>No</li><li class="correct">Yes: Kustomize can render a Helm chart and patch the output</li><li>Only with Helm 4</li><li>Only in AKS</li></ol><div class="explain">Using <code>helmCharts:</code> in kustomization.yaml.</div></div>
+
+<h2 id="predict">Predict the outcome (3)</h2>
+<div class="check" data-type="predict"><p class="q">1 · Patch precedence: the base memory limit is 512Mi. The prod overlay has a patch setting 1Gi, and then a second patch, listed after it, setting 768Mi on the same container.</p><ol class="options"><li>512Mi</li><li>1Gi</li><li class="correct">768Mi</li><li>Error</li></ol><div class="explain">Patches apply in order; the last one wins.</div></div>
+<div class="check" data-type="predict"><p class="q">2 · Helm <code>default</code> with an empty string: <code>image.tag: ""</code> and the template uses <code>{{ .Values.image.tag | default .Chart.AppVersion }}</code> with appVersion 1.4.2.</p><ol class="options"><li>An empty tag</li><li class="correct">1.4.2</li><li>latest</li><li>Render error</li></ol><div class="explain">An empty string counts as empty.</div></div>
+<div class="check" data-type="predict"><p class="q">3 · <code>helm upgrade --install … --atomic --wait --timeout 3m</code> with an image tag that doesn't exist.</p><ol class="options"><li>The release shows deployed with broken pods</li><li class="correct">After 3 minutes the upgrade fails, Helm rolls back to the previous revision, and the pipeline step fails</li><li>Helm retries forever</li><li>The release is deleted</li></ol><div class="explain">Users keep the old version throughout.</div></div>
+
+<h2 id="lab">Write lab A: the prod overlay</h2>
+<div class="lab">
+  <p><b>Brief:</b> Write <code>k8s/overlays/prod/kustomization.yaml</code> (and any patch files) on top of the given base. Graded by <b>kustomize-lite</b>, which renders it and compares with the target:</p>
+  <ul>
+    <li>namespace <code>orders</code>;</li>
+    <li>Deployment <code>orders-api</code> with image <code>contosoacr.azurecr.io/orders-api:1.4.2</code>;</li>
+    <li>container <code>api</code> requests 500m CPU / 512Mi, limit 1Gi memory;</li>
+    <li>HPA min 4 / max 20;</li>
+    <li>everything else identical to the base.</li>
+  </ul>
+  <ul class="rules">
+    <li>It renders without errors.</li>
+    <li>All objects are in namespace <code>orders</code>.</li>
+    <li>The image matches the target.</li>
+    <li>Resources match the target.</li>
+    <li>The HPA bounds match the target.</li>
+    <li>The base files are unchanged; probes, securityContext and policies are identical to the base.</li>
+    <li class="critical">The prod image is pinned to a version (or digest), not <code>latest</code> and not untagged.</li>
+  </ul>
+  <details class="solution"><summary>Reference solution</summary><p>Lesson <a href="10.2-kustomize.html#s7">10.2, step 7</a>, plus a second JSON patch for <code>/spec/minReplicas</code> = 4 (and no <code>replicas:</code> field, since the HPA manages the count).</p></details>
+</div>
+
+<h2 id="lab-b">Write lab B: the promote-everywhere deploy stage</h2>
+<div class="lab">
+  <p><b>Brief:</b> Write the DeployDev and DeployProd stages of <code>azure-pipelines.yml</code> using a deploy template. Graded by <b>pipeline-rules</b> and <b>stage-sim</b>.</p>
+  <ul class="rules">
+    <li>The image tag in every deploy comes from <code>$(Build.BuildId)</code> (or the Build stage's digest output).</li>
+    <li class="critical">The same image artifact is used in all environments: no Docker build or push in any deploy stage.</li>
+    <li>Each deploy uses a <b>deployment job</b> with an <code>environment</code> (<code>dev</code>, <code>prod</code>).</li>
+    <li class="critical">Prod runs only after DeployDev succeeds, on <code>main</code>, through the approved <code>prod</code> environment.</li>
+    <li>The deploy logic is a template used by both stages, with different parameters.</li>
+    <li>The prod job runs on an agent pool inside the network (<code>pool: name: …</code>, not <code>vmImage</code>).</li>
+  </ul>
+  <details class="solution"><summary>Reference solution</summary><p>Lesson <a href="10.6-pipeline.html#s6">10.6, step 6</a>, with <code>pool: { name: mdp-orders-prod }</code> added to the prod template parameters.</p></details>
+</div>
+
+<h2 id="walkthrough">Walkthrough: template → install → bad upgrade → automatic rollback</h2>
+<ol>
+  <li><code>helm lint</code> and <code>helm template … -f values-prod.yaml</code>; read the output.</li>
+  <li><code>helm upgrade --install … --atomic --wait</code> → revision 1, deployed.</li>
+  <li>Upgrade with <code>--set image.tag=does-not-exist</code>: pods in ImagePullBackOff, then the timeout, then the automatic rollback to revision 1.</li>
+  <li><code>helm history</code> shows revision 2 failed and revision 3 is the rollback.</li>
+</ol>
+
+<h2 id="try">Try it locally</h2>
+<div class="try" data-lesson="10.2"><p><b>10.2 Overlays.</b></p>
+<pre>cd lab/examples/ch10/k8s
+kubectl kustomize overlays/prod | grep -E "replicas|image:|namespace:" | sort -u
+kubectl create ns orders; kubectl apply -k overlays/dev
+kubectl get deploy -n orders</pre>
+<p>Expected: prod renders 4 replicas and tag 1.0.0; dev is applied with 1 replica.</p><p><b>Cleanup:</b> <code>kubectl delete ns orders</code></p></div>
+<div class="try" data-lesson="10.3-10.4"><p><b>10.3–10.4 Atomic rollback.</b></p>
+<pre>cd lab/examples/ch10
+helm upgrade --install oa ./charts/orders-api -n orders --create-namespace --set image.tag=1.0.0 --atomic --wait --timeout 2m
+helm upgrade --install oa ./charts/orders-api -n orders --set image.tag=does-not-exist --atomic --wait --timeout 1m
+helm history oa -n orders</pre>
+<p>Expected: the second command fails after ~1 minute and reports a rollback. The history shows deployed, failed, then rolled back.</p>
+<p><b>Cleanup:</b> <code>helm uninstall oa -n orders; kubectl delete ns orders</code></p></div>
+<div class="try" data-lesson="10.5"><p><b>10.5 Push a chart to the local registry.</b></p>
+<pre>cd lab/examples/ch10
+helm package charts/orders-api
+helm push orders-api-0.1.0.tgz oci://localhost:5001/helm --plain-http
+helm show chart oci://localhost:5001/helm/orders-api --version 0.1.0 --plain-http</pre>
+<p>Expected: <code>Pushed: localhost:5001/helm/orders-api:0.1.0</code>, then the Chart.yaml contents.</p>
+<p><b>Cleanup:</b> <code>rm orders-api-0.1.0.tgz</code></p>
+<p class="muted">On ACR: no <code>--plain-http</code>; log in with an Entra ID token.</p></div>
+</main>
+</body>
+</html>

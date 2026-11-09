@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chapter 3 · Practice</title>
+<link rel="stylesheet" href="../content.css">
+</head>
+<body>
+<main>
+<nav class="crumbs"><a href="../index.html">Course</a> / <a href="index.html">Chapter 3</a> / Practice</nav>
+<p class="kicker">Chapter 3 · Practice</p>
+<h1>Practice: quiz, predict, lab, try it locally</h1>
+
+<h2 id="quiz">Checkpoint quiz (10 drawn from 20)</h2>
+<div class="check" data-type="mcq"><p class="q">Which value does the scheduler use to decide whether a pod fits on a node?</p><ol class="options"><li class="correct">Requests</li><li>Limits</li><li>Actual usage</li><li>The image size</li></ol><div class="explain">Placement is based on the sum of requests.</div></div>
+<div class="check" data-type="mcq"><p class="q">A container exceeds its CPU limit. What happens?</p><ol class="options"><li>It's OOMKilled</li><li class="correct">It's throttled</li><li>The pod is evicted</li><li>Nothing</li></ol><div class="explain">CPU is compressible.</div></div>
+<div class="check" data-type="mcq"><p class="q">Exit code 137 with reason OOMKilled means…</p><ol class="options"><li>The node rebooted</li><li class="correct">The container exceeded its memory limit</li><li>A liveness probe failed</li><li>The image is wrong</li></ol><div class="explain">The kernel killed it with SIGKILL (128 + 9).</div></div>
+<div class="check" data-type="mcq"><p class="q">A pod with no requests or limits has which QoS class?</p><ol class="options"><li>Guaranteed</li><li>Burstable</li><li class="correct">BestEffort</li><li>None</li></ol><div class="explain">It's the first to be evicted under memory pressure.</div></div>
+<div class="check" data-type="mcq"><p class="q">Which is true of limits?</p><ol class="options"><li>They reserve capacity on the node</li><li class="correct">They cap usage but reserve nothing</li><li>The scheduler sums them</li><li>They're required</li></ol><div class="explain">Only requests are reserved.</div></div>
+<div class="check" data-type="mcq"><p class="q">A pod has a toleration for <code>gpu=true:NoSchedule</code> and nothing else. Where can it land?</p><ol class="options"><li>Only on the GPU node</li><li class="correct">On the GPU node or any untainted node</li><li>Nowhere</li><li>Only on untainted nodes</li></ol><div class="explain">A toleration allows; it doesn't attract.</div></div>
+<div class="check" data-type="mcq"><p class="q">Which field spreads replicas evenly across zones?</p><ol class="options"><li>nodeSelector</li><li class="correct">topologySpreadConstraints</li><li>tolerations</li><li>priorityClassName</li></ol><div class="explain">With topologyKey <code>topology.kubernetes.io/zone</code>.</div></div>
+<div class="check" data-type="mcq"><p class="q">What does "IgnoredDuringExecution" in node affinity mean?</p><ol class="options"><li>The rule is optional</li><li class="correct">Running pods aren't moved if node labels change later</li><li>The rule is only checked at execution</li><li>It's ignored by the kubelet</li></ol><div class="explain">It applies at scheduling time only.</div></div>
+<div class="check" data-type="mcq"><p class="q">The event says <code>0/3 nodes are available: 3 Insufficient memory</code>. The best first step?</p><ol class="options"><li>Add a toleration</li><li class="correct">Check the pod's memory request against node allocatable (and scale nodes if needed)</li><li>Restart the scheduler</li><li>Remove the liveness probe</li></ol><div class="explain">The request doesn't fit any node.</div></div>
+<div class="check" data-type="mcq"><p class="q">A readiness probe fails. The pod is…</p><ol class="options"><li>Restarted</li><li class="correct">Removed from Service endpoints until it passes</li><li>Deleted</li><li>Moved to another node</li></ol><div class="explain">Readiness controls traffic only.</div></div>
+<div class="check" data-type="mcq"><p class="q">Why must liveness never check the database?</p><ol class="options"><li>It's slow</li><li class="correct">A database problem would restart every pod at once, making things worse</li><li>Probes can't make network calls</li><li>The database would crash</li></ol><div class="explain">That's the death spiral.</div></div>
+<div class="check" data-type="mcq"><p class="q">An app takes up to 3 minutes to start. The best probe setup?</p><ol class="options"><li>Liveness with <code>initialDelaySeconds: 180</code></li><li class="correct">A startupProbe allowing ~180 s, then normal liveness</li><li>No probes</li><li>Readiness only</li></ol><div class="explain">The startup probe pauses liveness only until the app is up.</div></div>
+<div class="check" data-type="mcq"><p class="q">Which access mode does an Azure Disk support for read-write?</p><ol class="options"><li class="correct">ReadWriteOnce (or ReadWriteOncePod)</li><li>ReadWriteMany</li><li>Both</li><li>Neither</li></ol><div class="explain">Use Azure Files for RWX.</div></div>
+<div class="check" data-type="mcq"><p class="q">Why do AKS disk StorageClasses use <code>WaitForFirstConsumer</code>?</p><ol class="options"><li>To save money</li><li class="correct">So the disk is created in the zone where the pod is scheduled</li><li>To allow RWX</li><li>To encrypt the disk</li></ol><div class="explain">LRS disks are zonal.</div></div>
+<div class="check" data-type="mcq"><p class="q">With reclaim policy <code>Delete</code>, deleting the PVC…</p><ol class="options"><li>Keeps the disk</li><li class="correct">Deletes the PV and the Azure disk</li><li>Moves the data to a snapshot</li><li>Fails if a pod used it before</li></ol><div class="explain">Use <code>Retain</code> and backups for important data.</div></div>
+<div class="check" data-type="mcq"><p class="q">An HPA targets 60% CPU. 4 pods average 90%. Desired replicas?</p><ol class="options"><li>5</li><li class="correct">6</li><li>8</li><li>4</li></ol><div class="explain">ceil(4 × 90 / 60) = 6.</div></div>
+<div class="check" data-type="mcq"><p class="q">An HPA shows <code>&lt;unknown&gt;/70%</code>. The likeliest cause?</p><ol class="options"><li>maxReplicas is too low</li><li class="correct">Missing CPU requests (or metrics-server not running)</li><li>The Deployment has a PDB</li><li>Using autoscaling/v2</li></ol><div class="explain">Utilisation is relative to requests.</div></div>
+<div class="check" data-type="mcq"><p class="q">What does a PodDisruptionBudget protect against?</p><ol class="options"><li>Node crashes</li><li class="correct">Voluntary evictions such as drains and upgrades</li><li>OOM kills</li><li>Bad deployments</li></ol><div class="explain">Involuntary disruptions ignore it.</div></div>
+<div class="check" data-type="mcq"><p class="q">A CronJob's previous run is still going when the next is due, and <code>concurrencyPolicy: Forbid</code> is set. What happens?</p><ol class="options"><li>Both run</li><li class="correct">The new run is skipped</li><li>The old run is stopped</li><li>The CronJob is suspended</li></ol><div class="explain"><code>Replace</code> would stop the old one.</div></div>
+<div class="check" data-type="mcq"><p class="q">Which controller runs one pod on every node?</p><ol class="options"><li>Deployment</li><li>StatefulSet</li><li class="correct">DaemonSet</li><li>Job</li></ol><div class="explain">Add tolerations for tainted nodes.</div></div>
+
+<h2 id="predict">Predict the outcome (3)</h2>
+<div class="check" data-type="predict"><p class="q">1 · Three nodes each have 1.2 CPU free. You deploy a pod requesting <code>cpu: 2</code>.</p><ol class="options"><li>It runs split across nodes</li><li class="correct">Pending: "0/3 nodes are available: 3 Insufficient cpu" (the cluster autoscaler may add a node)</li><li>It runs throttled</li><li>It's OOMKilled</li></ol><div class="explain">A pod must fit on one node.</div></div>
+<div class="check" data-type="predict"><p class="q">2 · Liveness hits <code>/health/db</code>. The database is slow for 90 s.</p><ol class="options"><li>Pods leave rotation briefly</li><li class="correct">All pods restart, possibly repeatedly, causing an outage</li><li>Nothing</li><li>Only one pod restarts</li></ol><div class="explain">Liveness fails everywhere at once.</div></div>
+<div class="check" data-type="predict"><p class="q">3 · 3 replicas, PDB <code>maxUnavailable: 1</code>, all on two nodes (2 + 1). You drain the node with 2 pods.</p><ol class="options"><li>Both evicted immediately</li><li class="correct">One is evicted; the second waits until the first replacement is Ready</li><li>The drain fails immediately</li><li>None are evicted</li></ol><div class="explain">At most one may be unavailable at a time.</div></div>
+
+<h2 id="lab">Write lab: harden the orders-api Deployment</h2>
+<div class="lab">
+  <p><b>Brief:</b> Start from the Chapter 2 Deployment. Make it production-ready and add an HPA and a PDB. The app exposes <code>/healthz</code> (process) and <code>/readyz</code> (ready to serve), plus <code>/health/db</code>. Graded by <b>manifest-lint</b> and <b>cross-ref</b>.</p>
+  <ul class="rules">
+    <li>CPU and memory requests are set on every container.</li>
+    <li class="critical">A memory limit is set on every container.</li>
+    <li>A readiness probe exists.</li>
+    <li>A liveness probe exists.</li>
+    <li class="critical">The liveness probe doesn't depend on the database (not <code>/health/db</code>, and no command that connects to the DB).</li>
+    <li><code>topologySpreadConstraints</code> on <code>topology.kubernetes.io/zone</code> with <code>maxSkew: 1</code>, selecting the pod's own labels.</li>
+    <li>An <code>autoscaling/v2</code> HPA targets the Deployment with <code>minReplicas: 2</code> and <code>maxReplicas: 10</code>.</li>
+    <li>A PDB selects the same pods and allows at least one disruption.</li>
+    <li>The Deployment doesn't hard-code <code>replicas</code> above the HPA's max.</li>
+  </ul>
+  <details class="solution"><summary>Reference solution (Deployment pod spec excerpt, HPA, PDB)</summary>
+<pre>    spec:
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels: { app: orders-api }
+      containers:
+        - name: api
+          image: contosoacr.azurecr.io/orders-api:1.4.2
+          ports:
+            - { name: http, containerPort: 8080 }
+          resources:
+            requests: { cpu: 250m, memory: 256Mi }
+            limits:   { memory: 512Mi }
+          startupProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 5
+            failureThreshold: 24
+          readinessProbe:
+            httpGet: { path: /readyz, port: http }
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 10
+            timeoutSeconds: 2
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata: { name: orders-api, namespace: orders }
+spec:
+  scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: orders-api }
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource: { name: cpu, target: { type: Utilization, averageUtilization: 70 } }
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata: { name: orders-api, namespace: orders }
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels: { app: orders-api }</pre></details>
+</div>
+
+<h2 id="walkthrough">Walkthrough: scale up under load, then drain a node</h2>
+<ol>
+  <li>Start load: <code>kubectl get hpa -w</code> shows CPU climbing and replicas going from 2 to 6.</li>
+  <li>Two pods are Pending with "Insufficient cpu"; the cluster autoscaler adds a node, and they schedule.</li>
+  <li>Stop the load; after ~5 minutes the HPA scales down.</li>
+  <li><code>kubectl drain &lt;node&gt; --ignore-daemonsets --delete-emptydir-data</code>: evictions respect the PDB, one pod at a time.</li>
+  <li><code>kubectl uncordon &lt;node&gt;</code>.</li>
+</ol>
+
+<h2 id="try">Try it locally</h2>
+<div class="try" data-lesson="3.1"><p><b>3.1 OOMKilled.</b></p>
+<pre>kubectl apply -f lab/examples/ch03/memory-hog.yaml   # limit 64Mi, allocates 200Mi
+kubectl get pod memory-hog -w
+kubectl describe pod memory-hog | grep -A3 "Last State"</pre>
+<p>Expected: <code>OOMKilled</code>, exit code 137, and restarts climbing.</p><p><b>Cleanup:</b> <code>kubectl delete -f lab/examples/ch03/memory-hog.yaml</code></p></div>
+
+<div class="try" data-lesson="3.2"><p><b>3.2 Taints and zone spread</b> (needs the full lab, not <code>--small</code>).</p>
+<pre>kubectl apply -f lab/examples/ch03/gpu-pod-no-toleration.yaml; kubectl describe pod train-model | tail -3
+kubectl apply -f lab/examples/ch03/gpu-pod.yaml; kubectl get pod train-model -o wide
+kubectl apply -f lab/examples/ch03/spread.yaml; kubectl get pods -l app=spread -o wide</pre>
+<p>Expected: first Pending with "untolerated taint", then running on <code>kq-worker4</code>; the 6 spread pods land 2 per zone.</p>
+<p><b>Cleanup:</b> <code>kubectl delete -f lab/examples/ch03/</code></p>
+<p class="muted">On AKS, zones are real datacentres and the zone label looks like <code>westeurope-1</code>.</p></div>
+
+<div class="try" data-lesson="3.3"><p><b>3.3 A failing liveness probe.</b></p>
+<pre>kubectl apply -f lab/examples/ch03/bad-liveness.yaml
+kubectl get pod bad-liveness -w</pre>
+<p>Expected: the RESTARTS count climbs every ~30 s; <code>kubectl describe</code> shows "Liveness probe failed".</p><p><b>Cleanup:</b> <code>kubectl delete -f lab/examples/ch03/bad-liveness.yaml</code></p></div>
+
+<div class="try" data-lesson="3.4"><p><b>3.4 A PVC.</b></p>
+<pre>kubectl apply -f lab/examples/ch03/pvc-demo.yaml
+kubectl get pvc,pv
+kubectl exec deploy/pvc-demo -- sh -c 'echo hello &gt; /data/f; cat /data/f'</pre>
+<p>Expected: the PVC is <code>Bound</code> to a PV from the <code>standard</code> (local-path) class.</p><p><b>Cleanup:</b> <code>kubectl delete -f lab/examples/ch03/pvc-demo.yaml</code></p>
+<p class="muted">On AKS: <code>managed-csi</code> creates a real Azure Disk, zonal and RWO.</p></div>
+
+<div class="try" data-lesson="3.5"><p><b>3.5 HPA and a drain with a PDB.</b></p>
+<pre>kubectl apply -f lab/examples/ch03/hpa-demo.yaml      # deployment + HPA + PDB + load generator
+kubectl get hpa hpa-demo -w                           # Ctrl-C after it scales
+kubectl drain kq-worker2 --ignore-daemonsets --delete-emptydir-data</pre>
+<p>Expected: replicas rise from 2; the drain evicts pods one at a time, printing "Cannot evict pod as it would violate the pod's disruption budget" while it waits.</p>
+<p><b>Cleanup:</b> <code>kubectl uncordon kq-worker2; kubectl delete -f lab/examples/ch03/hpa-demo.yaml</code></p></div>
+
+<div class="try" data-lesson="3.6"><p><b>3.6 A CronJob every minute.</b></p>
+<pre>kubectl create cronjob hello --image=busybox:1.36 --schedule='*/1 * * * *' -- date
+kubectl get jobs -w</pre>
+<p>Expected: a new Job each minute, each <code>Complete 1/1</code>.</p><p><b>Cleanup:</b> <code>kubectl delete cronjob hello</code></p></div>
+</main>
+</body>
+</html>

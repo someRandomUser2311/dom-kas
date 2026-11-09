@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>14.5 · Monitoring AKS</title>
+<link rel="stylesheet" href="../content.css">
+</head>
+<body>
+<article class="lesson" data-id="14.5" data-chapter="14">
+<nav class="crumbs"><a href="../index.html">Course</a> / <a href="index.html">Chapter 14</a> / 14.5</nav>
+<header>
+  <p class="kicker">Chapter 14 · Lesson 14.5 · ~11 steps · ~15 min</p>
+  <h1>Monitoring AKS</h1>
+  <p class="meta">You'll be able to turn on AKS logs and metrics, know which data source answers which question, query logs with KQL, and write alerts people don't ignore.</p>
+</header>
+
+<section class="step" id="s1">
+  <h2>1. Three kinds of telemetry</h2>
+  <div class="body">
+    <ul>
+      <li><b>Metrics</b>: numbers over time (CPU, request rate, error rate). Cheap, good for alerts and dashboards.</li>
+      <li><b>Logs</b>: events and text (container stdout, Kubernetes events, audit logs). For investigating.</li>
+      <li><b>Traces</b>: one request's path across services (OpenTelemetry → Application Insights). For distributed latency.</li>
+    </ul>
+  </div>
+  <aside class="coming" data-set="A">
+    <dl>
+      <dt>Windows/IIS admin</dt><dd>Perfmon counters (metrics), Event Viewer and IIS logs (logs), and Application Insights (traces), all centralised.</dd>
+      <dt>Linux admin</dt><dd>Prometheus (metrics), journald/ELK (logs), Jaeger (traces), offered as managed Azure services.</dd>
+      <dt>Developer (Compose)</dt><dd>Instead of <code>docker logs</code> on one host, everything lands in one queryable place.</dd>
+      <dt>Other clouds</dt><dd>Like CloudWatch Container Insights + Amazon Managed Prometheus/Grafana, or Google Cloud Monitoring and Logging.</dd>
+    </dl>
+  </aside>
+</section>
+
+<section class="step" id="s2">
+  <h2>2. AKS's monitoring stack</h2>
+  <table>
+    <tr><th>Service</th><th>Collects</th><th>Where it goes</th></tr>
+    <tr><td><b>Container Insights</b> (Azure Monitor agent)</td><td>Container logs, Kubernetes events, inventory (pods, nodes)</td><td>Log Analytics (<code>ContainerLogV2</code>, <code>KubeEvents</code>, <code>KubePodInventory</code>)</td></tr>
+    <tr><td><b>Azure Monitor managed Prometheus</b></td><td>Prometheus metrics: cluster, nodes, and your app's <code>/metrics</code></td><td>An Azure Monitor workspace</td></tr>
+    <tr><td><b>Azure Managed Grafana</b></td><td>Dashboards over Prometheus, Log Analytics and more</td><td>Grafana</td></tr>
+    <tr><td><b>Diagnostic settings</b></td><td>Control-plane logs: API server, audit, scheduler, autoscaler…</td><td>Log Analytics (<code>AKSAudit</code>, <code>AKSAuditAdmin</code>, <code>AKSControlPlane</code>)</td></tr>
+  </table>
+  <pre class="code" data-file="enable.sh">az aks enable-addons -a monitoring -g rg-orders-prod -n aks-orders-prod --workspace-resource-id "$LAW_ID"
+az aks update -g rg-orders-prod -n aks-orders-prod --enable-azure-monitor-metrics \
+  --azure-monitor-workspace-resource-id "$AMW_ID" --grafana-resource-id "$GRAFANA_ID"</pre>
+</section>
+
+<section class="step" id="s3">
+  <h2>3. Which source answers which question?</h2>
+  <div class="check" data-type="match">
+    <p class="q">Match each question to where you'd look.</p>
+    <table class="pairs">
+      <tr><td>Who deleted the <code>orders-api</code> Deployment last night?</td><td>Control-plane audit logs (<code>kube-audit-admin</code> → <code>AKSAuditAdmin</code>)</td></tr>
+      <tr><td>What did the app log just before it crashed?</td><td>Container logs (<code>ContainerLogV2</code>)</td></tr>
+      <tr><td>Is the 5xx rate above 1% right now?</td><td>Managed Prometheus metrics</td></tr>
+      <tr><td>Why didn't the cluster autoscaler add a node at 02:00?</td><td>Control-plane logs (<code>cluster-autoscaler</code> category)</td></tr>
+      <tr><td>Which pods were OOMKilled this week?</td><td><code>KubeEvents</code> / <code>KubePodInventory</code> (Container Insights)</td></tr>
+    </table>
+    <div class="explain">Metrics for "is something wrong", logs for "what and why", audit for "who".</div>
+  </div>
+</section>
+
+<section class="step" id="s4">
+  <h2>4. Audit logs: who did what</h2>
+  <div class="check" data-type="mcq">
+    <p class="q">Which control-plane log category should Contoso enable to answer "who deleted this Deployment?" without the cost of logging every read request?</p>
+    <ol class="options">
+      <li><code>kube-apiserver</code> <span class="why">API server operational logs, not a per-request audit trail.</span></li>
+      <li class="correct"><code>kube-audit-admin</code></li>
+      <li><code>kube-audit</code> <span class="why">Includes all requests, reads too, so it's much bigger and pricier. Use it only when you need reads.</span></li>
+      <li><code>guard</code> <span class="why">Entra ID authentication and authorization decisions, useful too, but not the change record.</span></li>
+    </ol>
+    <div class="explain"><code>kube-audit-admin</code> excludes get/list/watch, keeping the writes (create, update, patch, delete) at a fraction of the volume.</div>
+  </div>
+</section>
+
+<section class="step" id="s5">
+  <h2>5. KQL basics</h2>
+  <div class="body"><p>Log Analytics uses <b>KQL</b>: a table, then a pipeline of operators (<code>where</code>, <code>project</code>, <code>summarize</code>, <code>order by</code>).</p></div>
+  <pre class="code" data-file="KQL">ContainerLogV2
+| where TimeGenerated &gt; ago(30m)
+| where PodNamespace == "orders" and ContainerName == "api"
+| where LogMessage has "FATAL"
+| project TimeGenerated, PodName, LogMessage
+| order by TimeGenerated desc</pre>
+  <div class="check" data-type="fill">
+    <p class="q">Find who deleted Deployments in namespace <code>orders</code>.</p>
+    <pre class="code" data-file="KQL">AKSAuditAdmin
+| <span class="blank">?</span> Verb == "delete" and ObjectRef.resource == "deployments" and ObjectRef.namespace == "orders"
+| project TimeGenerated, User.username, ObjectRef.name, SourceIps</pre>
+    <ul class="chips">
+      <li class="correct"><code>where</code></li>
+      <li><code>filter</code> <span class="why">KQL's filter operator is <code>where</code>.</span></li>
+      <li><code>select</code> <span class="why">That's SQL; KQL uses <code>project</code> for columns.</span></li>
+      <li><code>grep</code> <span class="why">Not KQL.</span></li>
+    </ul>
+    <div class="explain"><code>where</code> filters rows; <code>project</code> picks columns.</div>
+  </div>
+</section>
+
+<section class="step" id="s6">
+  <h2>6. The four golden signals</h2>
+  <div class="body">
+    <p>For each user-facing service, track:</p>
+    <ul>
+      <li><b>Latency</b> (p95/p99, successful vs failed);</li>
+      <li><b>Traffic</b> (requests per second);</li>
+      <li><b>Errors</b> (5xx rate);</li>
+      <li><b>Saturation</b> (CPU and memory against limits, queue depth).</li>
+    </ul>
+    <p>Expose them from the app (<code>/metrics</code>, scraped by managed Prometheus), and build one Grafana dashboard per service.</p>
+  </div>
+  <pre class="code" data-file="PromQL (5xx ratio)">sum(rate(http_requests_total{namespace="orders",app="orders-api",code=~"5.."}[5m]))
+/ sum(rate(http_requests_total{namespace="orders",app="orders-api"}[5m]))</pre>
+</section>
+
+<section class="step" id="s7">
+  <h2>7. Alerts that matter</h2>
+  <div class="body">
+    <ul>
+      <li><b>Alert on symptoms users feel</b>, such as a high error rate or latency (SLO burn), not on every pod restart.</li>
+      <li>Turn on the <b>recommended alerts</b> for AKS: node NotReady, pods OOMKilled, CPU/memory saturation, PV usage.</li>
+      <li>Every alert needs an <b>owner</b> and a <b>runbook</b> link. An alert nobody acts on trains people to ignore alerts.</li>
+      <li>Route by severity: page for user impact, email or ticket for slow-burning issues (certificates expiring in 14 days).</li>
+    </ul>
+  </div>
+</section>
+
+<section class="step" id="s8">
+  <h2>8. A Prometheus alert rule</h2>
+  <pre class="code" data-file="alert (Prometheus rule group excerpt)">- alert: OrdersApiHighErrorRate
+  expr: |
+    sum(rate(http_requests_total{app="orders-api",code=~"5.."}[5m]))
+    / sum(rate(http_requests_total{app="orders-api"}[5m])) &gt; 0.02
+  for: 10m
+  labels: { severity: page, team: orders }
+  annotations:
+    summary: "orders-api 5xx above 2% for 10 minutes"
+    runbook: "https://dev.azure.com/contoso/orders/_wiki/runbooks/high-error-rate"</pre>
+  <div class="body"><p>This same signal is what the canary check (lesson 11.4) and the environment's "Query Azure Monitor alerts" gate use.</p></div>
+</section>
+
+<section class="step" id="s9">
+  <h2>9. Cost control</h2>
+  <div class="body">
+    <ul>
+      <li>Log ingestion is the usual cost surprise. Collect less: filter namespaces in the agent's ConfigMap or data collection rule, and drop chatty debug logs.</li>
+      <li>Use the <b>Basic</b> logs tier for high-volume, rarely queried tables.</li>
+      <li>Metrics are much cheaper than logs, so count things in metrics and keep the details in logs.</li>
+      <li>Set retention per table.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="step" id="s10">
+  <h2>10. Monitoring as code</h2>
+  <div class="body"><p>Workspaces, data collection rules, alert rules and Grafana dashboards are Azure resources. Define them in Terraform or Bicep (Chapters 12–13), next to the cluster, so every environment gets the same monitoring.</p></div>
+</section>
+
+<section class="step summary" id="s11">
+  <h2>Monitoring, sorted</h2>
+  <ul>
+    <li>Container Insights (logs, events, inventory) + managed Prometheus (metrics) + Grafana + diagnostic settings (control plane).</li>
+    <li>Audit: <code>kube-audit-admin</code> for "who changed what".</li>
+    <li>KQL: table | where | project | summarize.</li>
+    <li>Golden signals; alert on symptoms, with owners and runbooks; watch ingestion cost.</li>
+  </ul>
+</section>
+</article>
+</body>
+</html>

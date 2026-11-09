@@ -1,0 +1,213 @@
+# Grader rules for the write labs in Chapters 7–11.
+lab: ch07/lab
+rules:
+  - parses: true
+  - fn: known_top_keys
+    args:
+      keys: [name, trigger, pr, pool, variables, stages, jobs, steps, resources, parameters, extends, schedules, lockBehavior, appendCommitMessageToRunName]
+  - any:
+      - re: '^trigger:\s*\[\s*["'']?main["'']?\s*\]'
+      - re: '^trigger:\s*\n\s+-\s*["'']?main["'']?\s*$'
+      - re: '^trigger:\s*\n\s+branches:\s*\n\s+include:\s*(\[\s*["'']?main["'']?\s*\]|\n\s+-\s*["'']?main["'']?\s*$)'
+    hint: 'trigger: [main] (or branches: include: [main]).'
+  - all:
+      - re: 'task:\s*Docker@2'
+      - re: 'command:\s*["'']?buildAndPush'
+      - re: 'containerRegistry:\s*["'']?acr-connection'
+      - re: 'repository:\s*["'']?(orders-api|\$\(\w+\))'
+      - re: 'orders-api'
+  - all:
+      - re: '\$\((Build\.BuildId|Build\.SourceVersion)\)'
+      - not_re: '(?i)(:latest\b)|(^\s*(tags:\s*)?-?\s*["'']?latest["'']?\s*$)'
+    hint: Tag images with $(Build.BuildId), never latest.
+  - re: 'stage:\s*Deploy\w*(?s:.*?)dependsOn:\s*\[?\s*["'']?Build\b'
+  - all:
+      - re: 'condition:\s*and\('
+      - re: 'succeeded\(\)'
+      - re: 'refs/heads/main'
+    hint: "condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))"
+  - all:
+      - re: '-\s*deployment:\s*\S+'
+      - any:
+          - re: 'environment:\s*["'']?prod\b'
+          - re: 'environment:\s*\n\s+name:\s*["'']?prod\b'
+  - re: '-\s*checkout:\s*self'
+  - all:
+      - re: 'task:\s*KubernetesManifest@1'
+      - re: '(kubernetesServiceConnection|azureSubscriptionConnection|azureSubscriptionEndpoint):\s*\S+'
+      - re: 'namespace:\s*["'']?orders\b'
+      - re: 'manifests:[^\n]*k8s/'
+      - not_re: '(?i)kubeconfig'
+  - not_re: '(?i)^\s*[\w.-]*(password|secret|token|apikey)[\w.-]*\s*:\s*["'']?[A-Za-z0-9+/=_-]{6,}'
+---
+lab: ch07/lab-b
+rules:
+  - all:
+      - re: 'resources:\s*\n\s+repositories:'
+      - re: 'name:\s*["'']?platform/pipeline-templates'
+      - re: 'ref:\s*["'']?refs/(tags|heads)/\S+'
+  - re: '^extends:\s*\n\s+template:\s*["'']?templates/secure-pipeline\.yml@\w+'
+  - all:
+      - re: 'buildSteps:'
+      - re: 'buildSteps:(?s:.*)(?i)(test)'
+      - re: 'imageRepository:\s*["'']?orders-api\b'
+  - not_re: '^(stages|jobs|steps):'
+    hint: Everything goes through extends; no top-level stages, jobs or steps.
+  - re: 'ref:\s*["'']?refs/tags/\S+'
+    hint: Pin to a tag (refs/tags/…), not a moving branch.
+  - not_re: '(?i)^\s*[\w.-]*(password|secret|token|apikey)[\w.-]*\s*:\s*["'']?[A-Za-z0-9+/=_-]{6,}'
+---
+lab: ch08/lab
+start: |
+  # k8s/gateway/gateway.yaml, orders-route.yaml and web-route.yaml (separate with ---)
+rules:
+  - all:
+      - { kind: Gateway, path: apiVersion, op: eq, value: gateway.networking.k8s.io/v1 }
+      - { kind: HTTPRoute, path: apiVersion, op: eq, value: gateway.networking.k8s.io/v1 }
+  - all:
+      - { kind: Gateway, path: 'spec.listeners[*].protocol', op: eq, value: HTTPS }
+      - { kind: Gateway, path: 'spec.listeners[*].port', op: eq, value: 443 }
+      - { kind: Gateway, path: 'spec.listeners[*].tls.mode', op: eq, value: Terminate }
+      - { kind: Gateway, path: 'spec.listeners[*].tls.certificateRefs[*].name', op: exists }
+  - all:
+      - not_re: 'tls\.key\s*:'
+      - not_re: '-----BEGIN [A-Z ]*PRIVATE KEY-----'
+  - fn: gateway_parent_refs
+  - kind: Gateway
+    path: 'spec.listeners[*].allowedRoutes.namespaces.selector.matchLabels["shop-routes"]'
+    op: eq
+    value: allowed
+    hint: 'allowedRoutes: namespaces: from: Selector, selector: matchLabels: shop-routes: allowed'
+  - fn: route_hostnames
+  - fn: route_backends_exist
+    args:
+      services: ['orders/orders-api:80', 'web/web:80']
+  - all:
+      - re: 'type:\s*RequestRedirect'
+      - re: 'scheme:\s*https'
+    hint: Attach a route to the HTTP listener that only redirects to HTTPS.
+---
+lab: ch09/lab
+start: |
+  # k8s/policies/*.yaml: write every NetworkPolicy here, separated by ---
+fixture:
+  pods:
+    - { name: web, ns: web, labels: { app: web }, ports: [8080] }
+    - { name: orders-api, ns: orders, labels: { app: orders-api }, ports: [8080] }
+    - { name: orders-worker, ns: orders, labels: { app: orders-worker } }
+    - { name: postgres, ns: db, labels: { app: postgres }, ports: [5432] }
+    - { name: gateway, ns: gateway-infra, labels: { app: gateway } }
+    - { name: kube-dns, ns: kube-system, labels: { k8s-app: kube-dns }, ports: [53] }
+  expect:
+    - 'gateway -> web:8080'
+    - 'gateway -> orders-api:8080'
+    - 'web -> orders-api:8080'
+    - 'orders-api,orders-worker -> postgres:5432'
+    - '* -> kube-dns:53'
+rules:
+  - fn: netpol
+    args: { mode: default_deny, namespaces: [web, orders, db] }
+  - fn: netpol
+    args: { mode: matrix, to: postgres }
+  - fn: netpol
+    args: { mode: matrix, port: 53 }
+  - fn: netpol
+    args: { mode: matrix, expected_only: true }
+  - fn: netpol
+    args: { mode: no_allow_all }
+  - fn: netpol
+    args: { mode: matrix }
+---
+lab: ch10/lab
+start: |
+  # k8s/overlays/prod/kustomization.yaml (add patch documents below it if you use inline patches)
+  # The base (k8s/base) holds: deployment.yaml, service.yaml, configmap.yaml, hpa.yaml, pdb.yaml
+rules:
+  - all:
+      - parses: true
+      - re: 'resources:\s*\n\s*-\s*["'']?\.\./\.\./base'
+    hint: 'resources: [../../base]'
+  - re: '^namespace:\s*["'']?orders\b'
+  - any:
+      - all:
+          - re: 'newName:\s*["'']?contosoacr\.azurecr\.io/orders-api'
+          - re: 'newTag:\s*["'']?1\.4\.2\b'
+      - all:
+          - re: 'name:\s*["'']?contosoacr\.azurecr\.io/orders-api'
+          - re: 'newTag:\s*["'']?1\.4\.2\b'
+      - all:
+          - re: 'name:\s*["'']?orders-api'
+          - re: 'newName:\s*["'']?contosoacr\.azurecr\.io/orders-api'
+          - re: 'newTag:\s*["'']?1\.4\.2\b'
+  - all:
+      - re: 'cpu:\s*["'']?500m'
+      - re: 'memory:\s*["'']?512Mi'
+      - re: 'memory:\s*["'']?1Gi'
+  - all:
+      - re: 'minReplicas:\s*4\b'
+      - re: 'maxReplicas:\s*20\b'
+  - not_re: '(livenessProbe|readinessProbe|securityContext|kind:\s*NetworkPolicy)'
+    hint: Leave probes, securityContext and policies to the base.
+  - all:
+      - not_re: 'newTag:\s*["'']?latest'
+      - any:
+          - re: 'newTag:\s*["'']?\d+\.\d+'
+          - re: 'digest:\s*["'']?sha256:'
+---
+lab: ch10/lab-b
+start: |
+  # azure-pipelines.yml: the DeployDev and DeployProd stages (the Build stage exists already)
+  # plus templates/deploy.yml (put it after a line "# templates/deploy.yml")
+rules:
+  - re: '\$\(Build\.BuildId\)|dependencies\.Build\.outputs|stageDependencies\.Build'
+  - not_re: '(?i)task:\s*Docker@2|docker\s+(build|push)|buildAndPush'
+    hint: Deploy stages must not build or push images.
+  - all:
+      - re: '-\s*deployment:\s*\S+'
+      - any:
+          - all:
+              - re: 'environment:\s*["'']?dev\b'
+              - re: 'environment:\s*["'']?prod\b'
+          - all:
+              - re: 'environment:\s*["'']?\$\{\{\s*parameters\.\w+'
+              - re: ':\s*["'']?dev\b'
+              - re: ':\s*["'']?prod\b'
+  - all:
+      - re: 'stage:\s*DeployProd(?s:.*?)dependsOn:\s*\[?\s*["'']?DeployDev'
+      - re: 'refs/heads/main'
+      - re: 'succeeded\('
+  - all:
+      - re: 'template:\s*["'']?[\w/.-]+\.ya?ml(?s:.*)template:\s*["'']?[\w/.-]+\.ya?ml'
+      - re: 'parameters:'
+    hint: Use the same template in both stages with different parameters.
+  - re: 'pool:\s*\n\s+name:\s*\S+'
+    hint: 'Prod runs on a private agent pool: pool: name: …'
+---
+lab: ch11/lab
+start: |
+  # azure-pipelines.yml: the DeployProd stage as a canary release
+rules:
+  - all:
+      - re: '-\s*deployment:\s*\S+'
+      - re: 'strategy:\s*\n\s+canary:'
+  - any:
+      - re: 'increments:\s*\[\s*([1-9]\d?)\s*,\s*([1-9]\d?)\b'
+      - re: 'increments:\s*\n\s*-\s*[1-9]\d?\s*\n\s*-\s*[1-9]\d?\b'
+    hint: 'increments: [10, 50]'
+  - all:
+      - re: 'task:\s*KubernetesManifest@1'
+      - re: 'strategy:\s*["'']?canary\b'
+      - re: 'percentage:\s*["'']?\$\(strategy\.increment\)'
+  - all:
+      - re: '(postRouteTraffic|routeTraffic):'
+      - re: '(postRouteTraffic|routeTraffic):(?s:.*?)(curl|AzureCLI@2|script:|bash:|pwsh:|InvokeRESTAPI|exit 1)'
+    hint: The check must be able to fail, e.g. a script that queries the error rate.
+  - re: 'on:\s*\n\s+failure:(?s:.*?)action:\s*["'']?reject'
+  - re: 'success:(?s:.*?)action:\s*["'']?promote'
+  - all:
+      - any:
+          - re: 'environment:\s*["'']?prod\b'
+          - re: 'environment:\s*\n\s+name:\s*["'']?prod\b'
+      - re: 'refs/heads/main'
+      - re: 'dependsOn:'
+  - re: '\$\(Build\.BuildId\)'

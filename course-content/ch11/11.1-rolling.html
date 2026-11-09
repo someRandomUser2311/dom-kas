@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>11.1 · Rolling updates in depth</title>
+<link rel="stylesheet" href="../content.css">
+</head>
+<body>
+<article class="lesson" data-id="11.1" data-chapter="11">
+<nav class="crumbs"><a href="../index.html">Course</a> / <a href="index.html">Chapter 11</a> / 11.1</nav>
+<header>
+  <p class="kicker">Chapter 11 · Lesson 11.1 · ~12 steps · ~15 min</p>
+  <h1>Rolling updates in depth</h1>
+  <p class="meta">You'll be able to calculate exactly how a rolling update proceeds, tune it for zero downtime within a capacity budget, and make it stop on its own when the new version is bad.</p>
+</header>
+
+<section class="step" id="s1">
+  <h2>1. The default strategy, revisited</h2>
+  <div class="body">
+    <p>Lesson 2.3 introduced rolling updates. Now the details: how many pods exist at each moment, what "available" really means, and how to make a bad release stop itself.</p>
+  </div>
+  <div class="widget" data-widget="rollout-sim">Rollout simulator with sliders: replicas (1–10), maxSurge (0–5 or %), maxUnavailable (0–5 or %), minReadySeconds, and toggles "new version fails readiness" and "new version crashes after 20s". It steps through time showing old and new pods (starting, ready, available, terminating), the counts against the limits, and a "capacity serving traffic" line.</div>
+  <aside class="coming" data-set="A">
+    <dl>
+      <dt>Windows/IIS admin</dt><dd>Like draining servers from a web farm one at a time for patching. Here you set how many may be out and how many extra may be added.</dd>
+      <dt>Linux admin</dt><dd>Like a load balancer rolling restart with a batch size and health checks between batches.</dd>
+      <dt>Developer (Compose)</dt><dd><code>docker compose up</code> recreates containers; a rolling update replaces them gradually, with checks.</dd>
+      <dt>Other clouds</dt><dd>Like ECS deployments' minimum healthy percent (≈ maxUnavailable) and maximum percent (≈ maxSurge).</dd>
+    </dl>
+  </aside>
+</section>
+
+<section class="step" id="s2">
+  <h2>2. The two limits</h2>
+  <div class="body">
+    <p>During the rollout, Kubernetes keeps both limits true at all times:</p>
+    <ul>
+      <li>Total pods ≤ <code>replicas + maxSurge</code>.</li>
+      <li>Available pods ≥ <code>replicas − maxUnavailable</code>.</li>
+    </ul>
+    <p>Percentages are converted to pod counts: maxSurge rounds <b>up</b>, maxUnavailable rounds <b>down</b>. With 4 replicas and the default 25%/25%, that's surge 1, unavailable 1.</p>
+    <p>Both can't be 0, or nothing could move.</p>
+  </div>
+</section>
+
+<section class="step" id="s3">
+  <h2>3. Predict the pod counts</h2>
+  <div class="check" data-type="predict">
+    <p class="q">4 replicas, <code>maxSurge: 1</code>, <code>maxUnavailable: 0</code>. You change the image. What's the maximum total number of pods, and the minimum number available, during the rollout?</p>
+    <ol class="options">
+      <li>4 total, 3 available <span class="why">That's surge 0 / unavailable 1.</span></li>
+      <li class="correct">5 total, never fewer than 4 available</li>
+      <li>8 total, 4 available <span class="why">That would be maxSurge 4 (100%).</span></li>
+      <li>5 total, 3 available <span class="why">maxUnavailable 0 keeps all 4 available.</span></li>
+    </ol>
+    <div class="explain">One extra pod at a time: start a new one, wait until it's ready, remove an old one, repeat. It's slow but capacity never dips. That's the usual production choice.</div>
+  </div>
+</section>
+
+<section class="step" id="s4">
+  <h2>4. Speed vs capacity</h2>
+  <table>
+    <tr><th>Settings (10 replicas)</th><th>Extra capacity needed</th><th>Capacity dip</th><th>Speed</th></tr>
+    <tr><td>surge 1, unavailable 0</td><td>+1 pod</td><td>None</td><td>Slowest</td></tr>
+    <tr><td>surge 25%, unavailable 0</td><td>+3 pods</td><td>None</td><td>Faster</td></tr>
+    <tr><td>surge 0, unavailable 1</td><td>None</td><td>−1 pod</td><td>Slow; for clusters with no spare room</td></tr>
+    <tr><td>surge 100%, unavailable 0</td><td>Double</td><td>None</td><td>Fastest; blue/green-like</td></tr>
+  </table>
+</section>
+
+<section class="step" id="s5">
+  <h2>5. Configure it</h2>
+  <div class="check" data-type="custom">
+    <p class="q">In the simulator: 4 replicas. Make the rollout zero-downtime, with no more than one extra pod at any time.</p>
+    <div class="widget" data-widget="rollout-sim">Success when replicas=4, maxSurge=1, maxUnavailable=0, and a simulated rollout keeps "available ≥ 4" throughout with "total ≤ 5".</div>
+    <div class="explain"><code>maxSurge: 1</code>, <code>maxUnavailable: 0</code>. "Zero downtime" also needs a readiness probe (next step).</div>
+  </div>
+</section>
+
+<section class="step" id="s6">
+  <h2>6. Readiness gates everything</h2>
+  <div class="body">
+    <p>"Available" means <b>ready</b> (and ready for at least <code>minReadySeconds</code>). Without a readiness probe, a container counts as ready the moment it <b>starts</b>, before the app has loaded anything. The rollout then races ahead, removing old pods while new ones can't serve yet.</p>
+    <p>"Rolling updates are always zero-downtime" is only true with a real readiness probe <i>and</i> enough capacity.</p>
+  </div>
+</section>
+
+<section class="step" id="s7">
+  <h2>7. <code>minReadySeconds</code>: catch slow failures</h2>
+  <div class="body">
+    <p>Some bad versions pass readiness, then crash 20 seconds later. <code>minReadySeconds: 30</code> makes a new pod count as available only after it's been ready for 30 seconds without failing.</p>
+    <p>A version that crashes shortly after starting then never becomes available, so the rollout stalls before it touches more old pods.</p>
+  </div>
+  <pre class="code" data-file="k8s/base/deployment.yaml (spec)">spec:
+  replicas: 4
+  minReadySeconds: 30
+  progressDeadlineSeconds: 300
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0</pre>
+</section>
+
+<section class="step" id="s8">
+  <h2>8. When the new version is broken</h2>
+  <div class="body">
+    <p>With <code>maxUnavailable: 0</code>, a new pod that never becomes ready means the rollout <b>stops</b> after the first new pod. The four old pods keep serving.</p>
+    <p>After <code>progressDeadlineSeconds</code>, the Deployment reports <code>ProgressDeadlineExceeded</code>. Kubernetes does <b>not</b> roll back by itself. The pipeline notices (<code>kubectl rollout status</code> fails) and runs <code>kubectl rollout undo</code>, or Helm's <code>--atomic</code> does.</p>
+  </div>
+  <pre class="output">$ kubectl get deploy orders-api -n orders
+NAME         READY   UP-TO-DATE   AVAILABLE   AGE
+orders-api   4/4     1            4           12d
+$ kubectl get deploy orders-api -n orders -o jsonpath='{.status.conditions[?(@.type=="Progressing")].reason}'
+ProgressDeadlineExceeded</pre>
+</section>
+
+<section class="step" id="s9">
+  <h2>9. Rollback</h2>
+  <pre class="code" data-file="pipeline step">kubectl rollout status deploy/orders-api -n orders --timeout=5m \
+  || { kubectl rollout undo deploy/orders-api -n orders; exit 1; }</pre>
+  <div class="body"><p>The rollback is itself a rolling update back to the previous ReplicaSet, using the same safe limits.</p></div>
+</section>
+
+<section class="step" id="s10">
+  <h2>10. Pause and resume</h2>
+  <div class="body"><p><code>kubectl rollout pause</code> freezes a rollout midway, leaving some new and some old pods running. That's a crude canary for a quick look. <code>kubectl rollout resume</code> continues. Lesson 11.3 shows the precise way.</p></div>
+</section>
+
+<section class="step" id="s11">
+  <h2>11. Mixed versions during a rollout</h2>
+  <div class="body"><p>During any rolling update, old and new versions serve traffic <b>at the same time</b>. API changes, message formats and database schema must work with both, which is called backward compatibility. Lesson 11.2 covers database changes.</p></div>
+</section>
+
+<section class="step summary" id="s12">
+  <h2>Rolling updates, sorted</h2>
+  <ul>
+    <li>Total ≤ replicas + maxSurge (rounds up); available ≥ replicas − maxUnavailable (rounds down).</li>
+    <li>Production default: <code>maxSurge: 1</code> (or 25%), <code>maxUnavailable: 0</code>.</li>
+    <li>Readiness and <code>minReadySeconds</code> decide "available"; bad versions stall the rollout.</li>
+    <li>Kubernetes doesn't auto-rollback; the pipeline (or Helm <code>--atomic</code>) does.</li>
+    <li>Old and new run together; stay backward compatible.</li>
+  </ul>
+</section>
+</article>
+</body>
+</html>

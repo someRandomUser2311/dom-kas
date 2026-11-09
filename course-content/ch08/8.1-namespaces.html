@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>8.1 · Namespaces as boundaries</title>
+<link rel="stylesheet" href="../content.css">
+</head>
+<body>
+<article class="lesson" data-id="8.1" data-chapter="8">
+<nav class="crumbs"><a href="../index.html">Course</a> / <a href="index.html">Chapter 8</a> / 8.1</nav>
+<header>
+  <p class="kicker">Chapter 8 · Lesson 8.1 · ~11 steps · ~13 min</p>
+  <h1>Namespaces as boundaries</h1>
+  <p class="meta">You'll be able to explain exactly what a namespace isolates and what it doesn't, choose a namespace strategy, and tell namespaced objects from cluster-wide ones.</p>
+</header>
+
+<section class="step" id="s1">
+  <h2>1. More teams, one cluster</h2>
+  <div class="body">
+    <p>Contoso's cluster now runs three things:</p>
+    <ul>
+      <li><code>orders-api</code> and its worker;</li>
+      <li>the <code>web</code> frontend;</li>
+      <li>a new <code>payments</code> team's services.</li>
+    </ul>
+    <p>Everyone deploying into <code>default</code> would be chaos: name clashes, everybody able to change everything, and no way to see who uses what.</p>
+    <p><b>Namespaces</b> divide one cluster into named sections.</p>
+  </div>
+  <aside class="coming" data-set="A">
+    <dl>
+      <dt>Windows/IIS admin</dt><dd>Like separate IIS sites or OUs: separate names and permissions, but still on the same servers.</dd>
+      <dt>Linux admin</dt><dd><b>Careful:</b> not Linux namespaces. A Kubernetes namespace is an API grouping, not kernel isolation.</dd>
+      <dt>Developer (Compose)</dt><dd>Like separate Compose projects: same names can repeat in each.</dd>
+      <dt>Other clouds</dt><dd>Same Kubernetes concept everywhere. In Azure terms it's closer to a resource group inside the cluster than to a subscription.</dd>
+    </dl>
+  </aside>
+</section>
+
+<section class="step" id="s2">
+  <h2>2. What a namespace isolates</h2>
+  <div class="body">
+    <ul>
+      <li><b>Names</b>: <code>orders-api</code> can exist in both <code>orders-dev</code> and <code>orders-prod</code>.</li>
+      <li><b>Access</b>: RBAC roles can be granted per namespace (lesson 5.5).</li>
+      <li><b>Resource budgets</b>: quotas and limit ranges apply per namespace (next lesson).</li>
+      <li><b>Policies</b>: NetworkPolicies (Chapter 9) and Pod Security levels (Chapter 15) are set per namespace.</li>
+      <li><b>Cleanup</b>: deleting a namespace deletes everything in it.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="step" id="s3">
+  <h2>3. What it doesn't isolate</h2>
+  <div class="body">
+    <ul>
+      <li><b>Nodes</b>: pods from all namespaces share the same nodes, kernel and CPU, unless you steer them (Chapter 3).</li>
+      <li><b>Network</b>: by default, any pod can reach any pod in any namespace. Namespaces are <i>not</i> a network boundary until you add NetworkPolicies.</li>
+      <li><b>Cluster-wide objects</b>: CRDs, nodes, StorageClasses and ClusterRoles affect everyone.</li>
+      <li><b>The control plane</b>: one noisy namespace can still load the shared API server.</li>
+    </ul>
+  </div>
+  <div class="check" data-type="mcq">
+    <p class="q">Contoso runs dev and prod in the same cluster, separated only by namespaces <code>orders-dev</code> and <code>orders-prod</code>. What's still shared?</p>
+    <ol class="options">
+      <li>Nothing; namespaces fully isolate them <span class="why">They isolate names and API access, not compute or network.</span></li>
+      <li class="correct">Nodes, the network (pods can reach each other), the control plane and cluster-wide objects</li>
+      <li>Only the names <span class="why">Names are exactly what is <i>not</i> shared.</span></li>
+      <li>Only RBAC <span class="why">RBAC can be separated per namespace.</span></li>
+    </ol>
+    <div class="explain">A dev load test can starve prod pods, and a compromised dev pod can call prod Services. That's why Contoso runs separate clusters for prod.</div>
+  </div>
+</section>
+
+<section class="step" id="s4">
+  <h2>4. Namespaced vs cluster-scoped</h2>
+  <div class="body"><p>Some kinds live inside a namespace, others are cluster-wide. <code>kubectl api-resources --namespaced=true</code> (or <code>false</code>) lists them.</p></div>
+  <div class="check" data-type="match">
+    <p class="q">Match each object to its scope.</p>
+    <table class="pairs">
+      <tr><td>Deployment</td><td>Namespaced</td></tr>
+      <tr><td>Node</td><td>Cluster-scoped</td></tr>
+      <tr><td>ConfigMap</td><td>Namespaced</td></tr>
+      <tr><td>StorageClass</td><td>Cluster-scoped</td></tr>
+      <tr><td>ClusterRole</td><td>Cluster-scoped</td></tr>
+      <tr><td>PersistentVolumeClaim</td><td>Namespaced (its PV is cluster-scoped)</td></tr>
+    </table>
+    <div class="explain">Cluster-scoped objects need more care: only platform admins should change them.</div>
+  </div>
+</section>
+
+<section class="step" id="s5">
+  <h2>5. Strategies</h2>
+  <table>
+    <tr><th>Strategy</th><th>Example</th><th>Good for</th></tr>
+    <tr><td>Per team</td><td><code>team-orders</code>, <code>team-payments</code></td><td>Clear ownership and quotas</td></tr>
+    <tr><td>Per app</td><td><code>orders</code>, <code>web</code>, <code>payments</code></td><td>Fine-grained policies per app</td></tr>
+    <tr><td>Per app and environment</td><td><code>orders-dev</code>, <code>orders-test</code></td><td>Several non-prod environments in one shared cluster</td></tr>
+  </table>
+  <div class="body"><p>Contoso uses <b>per app</b> namespaces (<code>orders</code>, <code>web</code>, <code>payments</code>), with dev and prod in <b>separate clusters</b>. The same manifests then work in both, with only the cluster changing.</p></div>
+</section>
+
+<section class="step" id="s6">
+  <h2>6. A namespace manifest</h2>
+  <div class="body"><p>Create namespaces from YAML, with labels. Policies, Pod Security levels and cost reports select on them.</p></div>
+  <pre class="code" data-file="k8s/namespaces/orders.yaml">apiVersion: v1
+kind: Namespace
+metadata:
+  name: orders
+  labels:
+    team: orders
+    pod-security.kubernetes.io/enforce: restricted
+    kubernetes.io/metadata.name: orders   # added automatically</pre>
+</section>
+
+<section class="step" id="s7">
+  <h2>7. Reserved namespaces</h2>
+  <div class="body">
+    <ul>
+      <li><code>kube-system</code>: system add-ons. Never deploy apps here.</li>
+      <li><code>kube-public</code> and <code>kube-node-lease</code>: internal.</li>
+      <li><code>default</code>: where objects go if you don't say. Leave it empty in real clusters.</li>
+      <li>AKS add-ons create their own, such as <code>app-routing-system</code> and <code>gatekeeper-system</code>.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="step" id="s8">
+  <h2>8. Cross-namespace references</h2>
+  <div class="body">
+    <p>Most references must stay in the same namespace:</p>
+    <ul>
+      <li>a pod can't mount a Secret or ConfigMap from another namespace;</li>
+      <li>a Service only selects pods in its own namespace.</li>
+    </ul>
+    <p>Network calls cross namespaces freely through DNS (lesson 2.5). The Gateway API has an explicit mechanism, <b>ReferenceGrant</b>, for the few allowed cross-namespace references (lesson 8.4).</p>
+  </div>
+</section>
+
+<section class="step" id="s9">
+  <h2>9. Who creates namespaces?</h2>
+  <div class="body">
+    <p>Namespaces are cluster-scoped, so creating one needs a cluster-level permission.</p>
+    <p>Contoso's platform team creates them, with labels, quotas, limit ranges, default NetworkPolicies and RBAC bindings, all from one template. App pipelines only deploy <i>into</i> them. They don't create them.</p>
+  </div>
+</section>
+
+<section class="step" id="s10">
+  <h2>10. Deleting a namespace</h2>
+  <div class="body">
+    <p><code>kubectl delete namespace orders</code> deletes everything in it, including PVCs and therefore disks with the <code>Delete</code> reclaim policy (lesson 3.4).</p>
+    <p>A namespace stuck in <code>Terminating</code> usually has an object with a <b>finalizer</b> that can't complete. Investigate with <code>kubectl get all,pvc -n orders</code> and the namespace's status conditions.</p>
+  </div>
+</section>
+
+<section class="step summary" id="s11">
+  <h2>Namespaces, sorted</h2>
+  <ul>
+    <li>Isolate names, access, quotas and policies, and allow bulk cleanup.</li>
+    <li>Don't isolate nodes, network (without policies), cluster-scoped objects or the control plane.</li>
+    <li>Contoso: per-app namespaces; separate clusters for dev and prod.</li>
+    <li>The platform team creates namespaces from a template; pipelines deploy into them.</li>
+  </ul>
+</section>
+</article>
+</body>
+</html>

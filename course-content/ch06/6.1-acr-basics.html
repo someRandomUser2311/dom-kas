@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>6.1 · ACR basics</title>
+<link rel="stylesheet" href="../content.css">
+</head>
+<body>
+<article class="lesson" data-id="6.1" data-chapter="6">
+<nav class="crumbs"><a href="../index.html">Course</a> / <a href="index.html">Chapter 6</a> / 6.1</nav>
+<header>
+  <p class="kicker">Chapter 6 · Lesson 6.1 · ~11 steps · ~14 min</p>
+  <h1>ACR basics</h1>
+  <p class="meta">You'll be able to create an Azure Container Registry, push and build images in it, and set it up without shared passwords.</p>
+</header>
+
+<section class="step" id="s1">
+  <h2>1. Why a private registry?</h2>
+  <div class="body">
+    <p>Docker Hub is public by default, rate-limited, and outside your control. Contoso's images belong in a <b>private registry</b>:</p>
+    <ul>
+      <li>in the same Azure region as the cluster, for fast pulls;</li>
+      <li>protected by Entra ID;</li>
+      <li>reachable privately from the VNet.</li>
+    </ul>
+    <p>That's <b>Azure Container Registry (ACR)</b>. It stores OCI images, Helm charts and other OCI artifacts.</p>
+  </div>
+  <aside class="coming" data-set="A">
+    <dl>
+      <dt>Windows/IIS admin</dt><dd>Think of ACR as an internal file share for build outputs (the MSI or Web Deploy packages), versioned and access-controlled.</dd>
+      <dt>Linux admin</dt><dd>Like a private apt repository or an internal Harbor instance, managed by Azure.</dd>
+      <dt>Developer (Compose)</dt><dd>Instead of <code>docker push yourname/app</code> to Docker Hub, you push to <code>contosoacr.azurecr.io/app</code>.</dd>
+      <dt>Other clouds</dt><dd>ACR ≈ Amazon ECR ≈ Google Artifact Registry.</dd>
+    </dl>
+  </aside>
+</section>
+
+<section class="step" id="s2">
+  <h2>2. Names: login server, repository, tag</h2>
+  <div class="body">
+    <p>A registry called <code>contosoacr</code> has the <b>login server</b> <code>contosoacr.azurecr.io</code>. Registry names are globally unique, lowercase and alphanumeric only.</p>
+    <p>Inside, images are grouped into <b>repositories</b>. A repository name can include slashes, like <code>orders/orders-api</code>. Each image version is a <b>tag</b> and a <b>digest</b> (lesson 1.1).</p>
+  </div>
+  <div class="check" data-type="fill">
+    <p class="q">Complete the image reference for tag <code>1.4.2</code> of <code>orders-api</code> in the registry <code>contosoacr</code>.</p>
+    <pre class="code" data-file="deployment.yaml">image: <span class="blank">?</span>/orders-api:1.4.2</pre>
+    <ul class="chips">
+      <li class="correct"><code>contosoacr.azurecr.io</code></li>
+      <li><code>contosoacr</code> <span class="why">Without a domain, Docker assumes Docker Hub's <code>docker.io/contosoacr</code>.</span></li>
+      <li><code>contosoacr.azure.com</code> <span class="why">ACR login servers end in <code>.azurecr.io</code>.</span></li>
+      <li><code>acr.contoso.com</code> <span class="why">Only if you've configured a custom domain; the default is <code>.azurecr.io</code>.</span></li>
+    </ul>
+    <div class="explain">Always use the full login server in image references.</div>
+  </div>
+</section>
+
+<section class="step" id="s3">
+  <h2>3. SKUs</h2>
+  <table>
+    <tr><th>SKU</th><th>Highlights</th></tr>
+    <tr><td><b>Basic</b></td><td>Lowest cost and storage; fine for learning</td></tr>
+    <tr><td><b>Standard</b></td><td>More storage and throughput; most production needs</td></tr>
+    <tr><td><b>Premium</b></td><td>Adds <b>private endpoints</b>, <b>geo-replication</b>, more throughput, and more governance features</td></tr>
+  </table>
+  <div class="body"><p>You can move up a SKU at any time. Contoso uses Premium in production, because it needs private endpoints (lesson 6.3).</p></div>
+</section>
+
+<section class="step" id="s4">
+  <h2>4. Create a registry</h2>
+  <pre class="code" data-file="acr.sh">az acr create \
+  --resource-group rg-orders-shared \
+  --name contosoacr \
+  --sku Premium \
+  --admin-enabled false</pre>
+  <div class="body"><p>One registry is usually shared by dev and prod clusters, in a shared resource group. The <i>same</i> image is then promoted from dev to prod, never rebuilt.</p></div>
+</section>
+
+<section class="step" id="s5">
+  <h2>5. The admin user: keep it off</h2>
+  <div class="body">
+    <p>ACR has an optional <b>admin user</b>: one username and two passwords with full push and pull rights. It's off by default.</p>
+    <p>Turning it on is tempting for quick tests. Don't. Use Entra ID identities instead:</p>
+    <ul>
+      <li><code>az acr login</code> for people;</li>
+      <li>AcrPush for pipelines;</li>
+      <li>AcrPull for the AKS kubelet.</li>
+    </ul>
+  </div>
+  <div class="check" data-type="mcq">
+    <p class="q">Why keep the ACR admin user disabled?</p>
+    <ol class="options">
+      <li>It's slower <span class="why">Performance is the same.</span></li>
+      <li class="correct">It's a single shared credential with full rights, so you can't tell who pushed what or limit it, and it has to be rotated by hand</li>
+      <li>It only works with Docker Hub <span class="why">It's an ACR feature.</span></li>
+      <li>It costs extra <span class="why">It's free, which is part of why it's tempting.</span></li>
+    </ol>
+    <div class="explain">Individual identities give an audit trail and least privilege. An Azure Policy can deny registries with the admin user enabled.</div>
+  </div>
+</section>
+
+<section class="step" id="s6">
+  <h2>6. Logging in and pushing</h2>
+  <div class="body">
+    <p><code>az acr login</code> uses your <code>az login</code> session to get a short-lived registry token, then configures Docker with it. You need the <b>AcrPush</b> role (or Container Registry Repository Writer, where repository permissions are enabled).</p>
+  </div>
+  <pre class="code" data-file="terminal">az acr login --name contosoacr
+docker build -t contosoacr.azurecr.io/orders-api:1.4.2 .
+docker push contosoacr.azurecr.io/orders-api:1.4.2</pre>
+  <div class="check" data-type="command">
+    <p class="q">You've built and tagged the image. Push <code>orders-api</code> version <code>1.4.2</code> to Contoso's registry.</p>
+    <p class="answer"><code>docker push contosoacr.azurecr.io/orders-api:1.4.2</code></p>
+    <p class="accept">Also accepted: <code>podman push</code> with the same reference.</p>
+    <div class="explain">The reference's registry part tells Docker where to push.</div>
+  </div>
+</section>
+
+<section class="step" id="s7">
+  <h2>7. Build in Azure: <code>az acr build</code></h2>
+  <div class="body">
+    <p><b>ACR Tasks</b> can build the image <i>inside</i> Azure. <code>az acr build</code> uploads your source folder, builds it from the Dockerfile, and pushes the result. No local Docker is needed.</p>
+    <p>It's handy for laptops without Docker and for pipelines. It can also run on a schedule, or when a base image updates.</p>
+  </div>
+  <pre class="output">$ az acr build --registry contosoacr --image orders-api:1.4.2 .
+Packing source code into tar to upload...
+Queued a build with ID: ca1
+Step 1/12 : FROM golang:1.23 AS build
+...
+Successfully pushed image: contosoacr.azurecr.io/orders-api:1.4.2
+Run ID: ca1 was successful after 1m12s</pre>
+</section>
+
+<section class="step" id="s8">
+  <h2>8. Browsing the registry</h2>
+  <pre class="code" data-file="terminal">az acr repository list -n contosoacr -o table
+az acr repository show-tags -n contosoacr --repository orders-api --orderby time_desc -o table
+az acr manifest list-metadata -r contosoacr -n orders-api -o table   # digests, sizes, dates</pre>
+</section>
+
+<section class="step" id="s9">
+  <h2>9. Tags Contoso uses</h2>
+  <div class="body">
+    <ul>
+      <li><b>An immutable version per build</b>: the semantic version, or the build ID plus the commit SHA (<code>1.4.2</code>, <code>20261103.4-3f5a9c0</code>). Never overwrite it.</li>
+      <li>No <code>latest</code> in manifests.</li>
+      <li>Deploy by tag <b>and</b> record the digest, or deploy by digest (Chapter 16).</li>
+    </ul>
+    <p>Lock a tag against changes with <code>az acr repository update --write-enabled false</code>.</p>
+  </div>
+</section>
+
+<section class="step" id="s10">
+  <h2>10. Helm charts live here too</h2>
+  <div class="body">
+    <p>ACR stores Helm charts as OCI artifacts: <code>helm push orders-api-0.3.0.tgz oci://contosoacr.azurecr.io/helm</code>. One registry then holds both images and charts (Chapter 10).</p>
+  </div>
+</section>
+
+<section class="step summary" id="s11">
+  <h2>ACR, sorted</h2>
+  <ul>
+    <li>Login server <code>&lt;name&gt;.azurecr.io</code>; repositories, tags, digests.</li>
+    <li>Basic / Standard / Premium; Premium for private endpoints and geo-replication.</li>
+    <li>Admin user off; Entra ID identities with AcrPush and AcrPull.</li>
+    <li><code>az acr login</code> + <code>docker push</code>, or <code>az acr build</code> in Azure.</li>
+    <li>Immutable version tags; no <code>latest</code>.</li>
+  </ul>
+</section>
+</article>
+</body>
+</html>

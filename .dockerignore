@@ -1,0 +1,7 @@
+**/node_modules
+**/target
+**/dist
+backend/data
+app-preview
+course-plan
+.git

@@ -1,0 +1,215 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pipeline YAML reference · Lesson 2</title>
+<link rel="stylesheet" href="assets/styles.css">
+</head>
+<body data-page="l2">
+<header id="topbar"></header>
+<div class="lesson-shell">
+<aside class="curriculum" id="curriculum"></aside>
+<main class="reader"><div class="reader-inner" style="max-width:1040px">
+
+  <div class="breadcrumb"><a href="index.html">Home</a><span class="sep">/</span><a href="chapter.html">Ch 7 · Azure Pipelines</a><span class="sep">/</span><span>Lesson 2</span></div>
+  <div class="lesson-head">
+    <span class="badge badge-accent">Lesson 2 · Reference view</span> <a class="badge badge-violet" href="lesson.html?l=ch07/l2">▶ Take the guided version</a>
+    <h1 style="margin-top:10px">Anatomy of <code style="font-size:.85em">azure-pipelines.yml</code></h1>
+    <div class="meta"><span>⏱ 18 min</span><span>·</span><span>Annotated YAML explorer</span><span>·</span><span>"Find it" challenge</span></div>
+  </div>
+
+  <p>Every YAML pipeline is a tree: <strong>pipeline → stages → jobs → steps</strong>. A <em>stage</em> is a logical phase (Build, Deploy). A <em>job</em> is a unit of work that runs on <strong>one agent</strong>. A <em>step</em> is one task or script inside that job. Hold that hierarchy in your head and any pipeline becomes readable.</p>
+
+  <div class="callout tip"><span class="c-ico">👆</span><div><strong>Click any line</strong> in the file, or any node in the tree, to see what it does and why it's there.</div></div>
+
+  <div class="explorer">
+    <div id="yaml"></div>
+    <div class="explain-panel">
+      <div class="card" id="explain">
+        <div class="kicker" id="ep-level">Select a line</div>
+        <div class="ep-key" id="ep-key" style="margin:6px 0 8px">—</div>
+        <div id="ep-body" class="muted" style="font-size:14px">Pick any line on the left. Start with <code>trigger:</code>.</div>
+      </div>
+      <div class="card" style="margin-top:14px">
+        <div class="card-title">🌳 Hierarchy</div>
+        <ul class="tree" id="tree"></ul>
+      </div>
+    </div>
+  </div>
+
+  <h2>Things that trip everyone up</h2>
+  <div class="grid grid-2">
+    <div class="callout warn" style="margin:0"><span class="c-ico">⚠️</span><div><strong>Implicit structure.</strong> If you only write <code>steps:</code>, Azure Pipelines wraps them in one implicit job inside one implicit stage. Fine for CI; you'll want explicit stages once you deploy.</div></div>
+    <div class="callout warn" style="margin:0"><span class="c-ico">⚠️</span><div><strong>Deployment jobs don't check out code.</strong> A <code>deployment:</code> job skips <code>checkout</code> by default. Need your <code>k8s/*.yaml</code>? Add <code>- checkout: self</code>, or publish them as a pipeline artifact.</div></div>
+    <div class="callout warn" style="margin:0"><span class="c-ico">⚠️</span><div><strong>Stages run in order by default.</strong> Without <code>dependsOn</code>, each stage depends on the one above it. <code>dependsOn: []</code> makes a stage start in parallel.</div></div>
+    <div class="callout warn" style="margin:0"><span class="c-ico">⚠️</span><div><strong>Jobs don't share a disk.</strong> Each job may run on a different agent. Pass files between jobs with pipeline artifacts, and values with output variables.</div></div>
+  </div>
+
+  <h2>Find it: a quick challenge</h2>
+  <div class="card" id="challenge">
+    <div class="kicker" style="color:var(--violet)">Challenge <span id="ch-n">1</span> / 3</div>
+    <p style="font-weight:650;font-size:16px;margin:6px 0 10px" id="ch-q"></p>
+    <p class="subtle" style="margin:0" id="ch-res">Click the matching line in the YAML above.</p>
+  </div>
+
+  <div id="lesson-nav"></div>
+</div></main>
+</div>
+
+<script src="assets/app.js"></script>
+<script src="assets/yaml.js"></script>
+<script>
+const YAML = `# azure-pipelines.yml
+trigger:
+  branches:
+    include:
+      - main
+  paths:
+    exclude:
+      - docs/*
+
+pr:
+  - main
+
+pool:
+  vmImage: ubuntu-latest
+
+variables:
+  imageName: orders-api
+  tag: $(Build.BuildId)
+
+stages:
+  - stage: Build
+    displayName: Build & test
+    jobs:
+      - job: BuildJob
+        steps:
+          - checkout: self
+          - script: |
+              npm ci
+              npm test
+            displayName: Install & unit test
+          - task: Docker@2
+            displayName: Build & push image
+            inputs:
+              command: buildAndPush
+              containerRegistry: acr-connection
+              repository: $(imageName)
+              tags: $(tag)
+
+  - stage: Deploy
+    dependsOn: Build
+    jobs:
+      - deployment: DeployToAKS
+        environment: dev
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: self
+                - task: KubernetesManifest@1
+                  inputs:
+                    action: deploy
+                    connectionType: kubernetesServiceConnection
+                    kubernetesServiceConnection: aks-dev
+                    namespace: orders
+                    manifests: k8s/*.yaml
+                    containers: kqacr.azurecr.io/$(imageName):$(tag)`;
+
+const A = [
+  { id: "trigger", m: "trigger:", lvl: "Pipeline · trigger", t: "CI trigger", b: "Decides which <b>pushes</b> start a run. Here: pushes to <code>main</code>, unless the only changed files are under <code>docs/</code>. Use <code>trigger: none</code> to disable CI (e.g. for a deploy-only pipeline). Without a <code>trigger</code> block, <em>every branch</em> triggers." },
+  { id: "pr", m: "pr:", lvl: "Pipeline · trigger", t: "Pull request trigger", b: "Runs the pipeline to <b>validate pull requests</b> targeting <code>main</code>. ⚠️ For <b>Azure Repos</b> this YAML key is ignored; there you configure PR validation with a <em>branch policy</em>. It works for GitHub and Bitbucket repos." },
+  { id: "pool", m: "pool:", lvl: "Pipeline · where to run", t: "Agent pool", b: "<b>Which machine runs your jobs.</b> <code>vmImage: ubuntu-latest</code> asks for a fresh Microsoft-hosted Ubuntu VM, thrown away after the job. Set at pipeline level it applies to every job; jobs can override it. Use <code>pool: name: MyPool</code> for self-hosted agents (lesson 3)." },
+  { id: "variables", m: "variables:", lvl: "Pipeline · variables", t: "Variables", b: "Name/value pairs you reference with <code>$(name)</code>. <code>$(Build.BuildId)</code> is a <b>predefined variable</b>, a unique number per run, which makes a perfect immutable image tag. Never put secrets here in plain text (lesson 6)." },
+  { id: "stages", m: "stages:", lvl: "Pipeline · stages", t: "Stages list", b: "The top-level phases of the pipeline. Each stage shows as a column in the run view and can have its own conditions, approvals and dependencies." },
+  { id: "build", m: "- stage: Build", lvl: "Stage", t: "Stage: Build", b: "A logical phase. <code>stage:</code> is the <b>ID</b> (no spaces; used in <code>dependsOn</code>). <code>displayName</code> is what humans see. This stage contains the CI part: test, build and push the image." },
+  { id: "job", m: "- job: BuildJob", lvl: "Job", t: "Job", b: "A job runs <b>on one agent</b> from start to finish, and its steps share that agent's file system. Multiple jobs in a stage run <b>in parallel</b> by default (if you have parallel capacity)." },
+  { id: "steps", m: "steps:", lvl: "Job · steps", t: "Steps", b: "The ordered list of things the job does. Each step is a <code>task</code>, <code>script</code>/<code>bash</code>/<code>pwsh</code>, <code>checkout</code>, <code>download</code>, or a <code>template</code>." },
+  { id: "checkout", m: "- checkout: self", lvl: "Step", t: "checkout: self", b: "Clones the repo that contains this pipeline into the agent's working directory. In a normal job this happens automatically; writing it explicitly lets you set options like <code>fetchDepth</code> or <code>clean</code>." },
+  { id: "script", m: "- script: |", lvl: "Step · script", t: "script", b: "Runs a shell script (bash on Linux, cmd on Windows). The <code>|</code> starts a multi-line block. If any command exits non-zero, <b>the step fails and the job stops</b>. That's how failing tests block a release." },
+  { id: "docker", m: "- task: Docker@2", lvl: "Step · task", t: "task: Docker@2", b: "A <b>task</b> is a packaged, versioned step (the <code>@2</code> is the major version). <code>buildAndPush</code> builds the Dockerfile and pushes to the registry behind the <code>acr-connection</code> <b>service connection</b>, so no passwords live in the YAML." },
+  { id: "deploy", m: "- stage: Deploy", lvl: "Stage", t: "Stage: Deploy", b: "The CD part. <code>dependsOn: Build</code> makes it wait for Build to <b>succeed</b> (the default condition is <code>succeeded()</code>)." },
+  { id: "dependsOn", m: "dependsOn: Build", lvl: "Stage · ordering", t: "dependsOn", b: "Explicit ordering. Can be a list (<code>[Build, Scan]</code>) for fan-in. <code>dependsOn: []</code> means \"no dependencies, start immediately\"." },
+  { id: "deployment", m: "- deployment: DeployToAKS", lvl: "Job · deployment", t: "Deployment job", b: "A special job type for releases. It records <b>deployment history</b> against an <b>environment</b>, supports <b>approvals & checks</b>, and supports strategies (<code>runOnce</code>, <code>rolling</code>, <code>canary</code>). Use it instead of a plain job whenever you deploy." },
+  { id: "env", m: "environment: dev", lvl: "Job · environment", t: "environment", b: "Targets the <b>dev</b> environment in Azure DevOps. Approvals and checks are configured <em>on the environment</em> (not in YAML), so a <code>prod</code> environment can require sign-off without anyone editing the pipeline." },
+  { id: "strategy", m: "strategy:", lvl: "Job · strategy", t: "Deployment strategy", b: "<code>runOnce</code> runs the deploy hook once. Other strategies add lifecycle hooks: <code>preDeploy</code>, <code>deploy</code>, <code>routeTraffic</code>, <code>postRouteTraffic</code>, <code>on: failure/success</code>. Lesson 5 compares them." },
+  { id: "checkout2", m: "- checkout: self", occ: 2, lvl: "Step", t: "checkout in a deployment job", b: "<b>Required here!</b> Deployment jobs do <em>not</em> check out the repo automatically. Without this line, <code>k8s/*.yaml</code> wouldn't exist on the agent and the next task would fail with \"no manifest files found\"." },
+  { id: "k8s", m: "- task: KubernetesManifest@1", lvl: "Step · task", t: "task: KubernetesManifest@1", b: "Applies manifests to the cluster through the <code>aks-dev</code> Kubernetes service connection, into namespace <code>orders</code>. <code>containers:</code> <b>rewrites the image reference</b> in the manifests to the exact tag just built, so the cluster runs what CI tested." },
+];
+
+// find line ranges
+const lines = YAML.split("\n");
+A.forEach(a => {
+  let seen = 0;
+  const idx = lines.findIndex(l => l.trim().startsWith(a.m) && ++seen === (a.occ || 1));
+  a.start = idx + 1;
+  const ind = lines[idx].match(/^\s*/)[0].length;
+  let end = idx;
+  for (let k = idx + 1; k < lines.length; k++) {
+    if (lines[k].trim() === "") continue;
+    const ki = lines[k].match(/^\s*/)[0].length;
+    const isSeqItem = lines[idx].trim().startsWith("- ");
+    if (ki > ind || (isSeqItem && ki > ind)) end = k; else break;
+  }
+  a.end = end + 1;
+});
+const byId = Object.fromEntries(A.map(a => [a.id, a]));
+
+const host = document.getElementById("yaml");
+KQY.block(host, YAML, { title: "azure-pipelines.yml", clickable: true, right: "click a line" });
+
+function select(a) {
+  host.querySelectorAll(".ln").forEach(l => { const n = +l.dataset.line; l.classList.toggle("hl", n >= a.start && n <= a.end); });
+  document.getElementById("ep-level").textContent = a.lvl;
+  document.getElementById("ep-key").textContent = a.t;
+  document.getElementById("ep-body").innerHTML = a.b;
+  document.querySelectorAll("#tree .node").forEach(n => n.classList.toggle("on", n.dataset.id === a.id));
+}
+function annotationFor(line) {
+  return A.filter(a => line >= a.start && line <= a.end).sort((x, y) => (x.end - x.start) - (y.end - y.start))[0];
+}
+host.addEventListener("click", e => {
+  const ln = e.target.closest(".ln"); if (!ln) return;
+  const a = annotationFor(+ln.dataset.line);
+  if (a) select(a);
+  challengeClick(+ln.dataset.line);
+});
+
+// tree
+const T = [["trigger"], ["pr"], ["pool"], ["variables"], ["stages", [
+  ["build", [["job", [["steps", [["checkout"], ["script"], ["docker"]]]]]]],
+  ["deploy", [["dependsOn"], ["deployment", [["env"], ["strategy", [["checkout2"], ["k8s"]]]]]]],
+]]];
+const label = { trigger: "trigger", pr: "pr", pool: "pool", variables: "variables", stages: "stages", build: "stage: Build", job: "job: BuildJob", steps: "steps", checkout: "checkout", script: "script", docker: "Docker@2", deploy: "stage: Deploy", dependsOn: "dependsOn", deployment: "deployment: DeployToAKS", env: "environment: dev", strategy: "strategy: runOnce", checkout2: "checkout", k8s: "KubernetesManifest@1" };
+function treeHtml(nodes) { return nodes.map(([id, kids]) => `<li><span class="node" data-id="${id}">${label[id]}</span>${kids ? `<ul>${treeHtml(kids)}</ul>` : ""}</li>`).join(""); }
+const tree = document.getElementById("tree");
+tree.innerHTML = `<li><span class="node" style="cursor:default">📄 pipeline</span><ul>${treeHtml(T)}</ul></li>`;
+tree.addEventListener("click", e => { const n = e.target.closest(".node[data-id]"); if (n) { select(byId[n.dataset.id]); host.querySelector(`.ln[data-line="${byId[n.dataset.id].start}"]`).scrollIntoView({ block: "nearest", behavior: "smooth" }); } });
+select(byId.trigger);
+
+// challenge
+const CH = [
+  { q: "Which line decides what kind of machine runs the jobs?", ok: ["pool"] },
+  { q: "Which line makes Deploy wait for Build to finish successfully?", ok: ["dependsOn"] },
+  { q: "Which line guarantees AKS runs the exact image this run just built?", ok: ["k8s"], exact: l => lines[l - 1].trim().startsWith("containers:") },
+];
+let ci = 0;
+function showCh() {
+  if (ci >= CH.length) { document.getElementById("ch-q").textContent = "🎉 All three found. You can read a pipeline now."; document.getElementById("ch-res").textContent = ""; return; }
+  document.getElementById("ch-n").textContent = ci + 1;
+  document.getElementById("ch-q").textContent = CH[ci].q;
+}
+function challengeClick(line) {
+  if (ci >= CH.length) return;
+  const c = CH[ci];
+  const a = annotationFor(line);
+  const ok = c.exact ? c.exact(line) : (a && c.ok.includes(a.id) && line === a.start || (a && c.ok.includes(a.id) && line <= a.start + 1));
+  const res = document.getElementById("ch-res");
+  if (ok) { res.innerHTML = `<span style="color:var(--success-strong);font-weight:700">✓ Line ${line}. Correct!</span>`; KQ.addXP(5); ci++; setTimeout(showCh, 900); }
+  else res.innerHTML = `<span style="color:var(--danger);font-weight:700">✕ Line ${line} isn't it.</span> <span class="subtle">Read the explanation panel for a hint.</span>`;
+}
+showCh();
+</script>
+</body>
+</html>

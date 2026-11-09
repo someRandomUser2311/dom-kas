@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Variables, secrets &amp; templates · Lesson 6</title>
+<link rel="stylesheet" href="assets/styles.css">
+</head>
+<body data-page="l6">
+<header id="topbar"></header>
+<div class="lesson-shell">
+<aside class="curriculum" id="curriculum"></aside>
+<main class="reader"><div class="reader-inner">
+
+  <div class="breadcrumb"><a href="index.html">Home</a><span class="sep">/</span><a href="chapter.html">Ch 7 · Azure Pipelines</a><span class="sep">/</span><span>Lesson 6</span></div>
+  <div class="lesson-head">
+    <span class="badge badge-accent">Lesson 6 · Reference view</span> <a class="badge badge-violet" href="lesson.html?l=ch07/l6">▶ Take the guided version</a>
+    <h1 style="margin-top:10px">Variables, secrets &amp; templates</h1>
+    <div class="meta"><span>⏱ 18 min</span><span>·</span><span>Expression timeline</span><span>·</span><span>Template expander</span></div>
+  </div>
+
+  <p>Azure Pipelines has <strong>three</strong> ways to read a variable, and they are evaluated at <strong>different moments</strong>. Mixing them up is the #1 source of "but the variable <em>is</em> set!" bugs.</p>
+
+  <h2>When is each syntax evaluated?</h2>
+  <div class="card">
+    <div id="y-expr"></div>
+    <div class="tabs" id="syn" style="margin-bottom:14px">
+      <button class="tab active" data-s="compile"><code>${{ variables.env }}</code></button>
+      <button class="tab" data-s="runtime"><code>$[ variables.env ]</code></button>
+      <button class="tab" data-s="macro"><code>$(env)</code></button>
+    </div>
+    <div class="flow" id="timeline" style="justify-content:space-between"></div>
+    <div class="seq-msg" id="syn-msg" style="margin-top:12px"></div>
+  </div>
+
+  <div class="table-wrap" style="margin-top:18px">
+    <table class="table">
+      <tr><th>Syntax</th><th>Name</th><th>Evaluated</th><th>Use it for</th></tr>
+      <tr><td><code>${{ }}</code></td><td>Template expression</td><td>Compile time, before the run starts</td><td>Parameters, <code>${{ if }}</code> / <code>${{ each }}</code> to shape the pipeline itself</td></tr>
+      <tr><td><code>$[ ]</code></td><td>Runtime expression</td><td>At runtime, when the job/stage starts</td><td>Variable values and conditions that depend on outputs of earlier jobs</td></tr>
+      <tr><td><code>$( )</code></td><td>Macro</td><td>Just before each task runs</td><td>Task inputs and scripts; the everyday choice</td></tr>
+    </table>
+  </div>
+
+  <h2>Secrets: never in YAML</h2>
+  <div class="grid grid-2">
+    <div class="card card-tight"><strong>🔐 Secret variables</strong><p class="subtle" style="margin:4px 0 0">Defined in the pipeline UI or in a variable group and marked 🔒. Masked as <code>***</code> in logs. <b>Not</b> mapped into scripts as environment variables automatically; you must map them explicitly with <code>env:</code>.</p></div>
+    <div class="card card-tight"><strong>🗝️ Variable group → Key Vault</strong><p class="subtle" style="margin:4px 0 0">A library variable group can be <b>linked to Azure Key Vault</b>. Secrets are fetched at runtime with the service connection's identity, and rotation happens in Key Vault, not in Azure DevOps.</p></div>
+  </div>
+  <div id="y-secret"></div>
+  <div class="callout warn"><span class="c-ico">⚠️</span><div><strong>Masking is not security.</strong> A script can still leak a secret by base64-encoding it or writing it to an artifact. Limit who can edit pipelines, and protect variable groups with approvals and pipeline permissions.</div></div>
+
+  <h2>Templates: write it once, reuse it everywhere</h2>
+  <p>Templates let a platform team publish a hardened "golden path" that every service reuses. Two flavours: <strong>include</strong> (insert steps/jobs/stages from a file) and <strong>extends</strong> (your pipeline must fit inside a template that controls the overall structure, which is great for security).</p>
+
+  <div class="tabs" data-tabs="tpl">
+    <button class="tab active" data-tab="src">Your pipeline + template</button>
+    <button class="tab" data-tab="exp">✨ Expanded result</button>
+  </div>
+  <div data-panel="tpl:src" class="grid grid-2" style="margin-top:4px">
+    <div id="y-main"></div>
+    <div id="y-tpl"></div>
+  </div>
+  <div data-panel="tpl:exp" class="hidden" style="margin-top:4px">
+    <div id="y-expanded"></div>
+    <p class="subtle">This is what Azure Pipelines actually runs after compile-time expansion. In the run UI you can download it via <em>Download full YAML</em>.</p>
+  </div>
+
+  <div class="check-card" data-answer="a">
+    <div class="kicker">Check your knowledge</div>
+    <strong>A script step sets <code>##vso[task.setvariable variable=tag]v2</code>. A later step in the same job has <code>${{ if eq(variables.tag, 'v2') }}:</code> wrapped around it. Does the later step run?</strong>
+    <div class="options">
+      <button class="option" data-v="a"><span class="key">A</span><span>No. <code>${{ }}</code> was evaluated at compile time, before <code>tag</code> was changed.</span></button>
+      <button class="option" data-v="b"><span class="key">B</span><span>Yes. The variable is <code>v2</code> by the time that step is reached.</span></button>
+      <button class="option" data-v="c"><span class="key">C</span><span>Only if the variable is marked as an output variable</span></button>
+    </div>
+    <div class="check-result" data-ok="Template expressions are resolved when the YAML is compiled, long before any script runs. To react to runtime values, use a step <code>condition: eq(variables.tag, 'v2')</code>, which is evaluated at runtime."></div>
+  </div>
+
+  <div id="lesson-nav"></div>
+</div></main>
+</div>
+
+<script src="assets/app.js"></script>
+<script src="assets/yaml.js"></script>
+<script>
+KQY.block(document.getElementById("y-expr"), `variables:
+  env: dev                       # value when the run is queued
+
+steps:
+  - script: echo "##vso[task.setvariable variable=env]prod"   # changes env at runtime
+  - script: echo "I see: <<EXPR>>"`, { title: "the experiment" });
+
+const PH = [
+  { k: "compile", ico: "🧩", t: "Compile", s: "YAML + templates expanded" },
+  { k: "queue", ico: "📥", t: "Queue", s: "variables resolved" },
+  { k: "runtime", ico: "▶️", t: "Job starts", s: "$[ ] evaluated" },
+  { k: "step1", ico: "🔧", t: "Step 1", s: "sets env=prod" },
+  { k: "macro", ico: "🔧", t: "Step 2", s: "$( ) expanded" },
+];
+const SYN = {
+  compile: { expr: "${{ variables.env }}", at: "compile", out: "dev", d: "Replaced <b>at compile time</b> with the value known then: <code>dev</code>. The script literally contains the text <code>echo \"I see: dev\"</code>. Changes made later can't affect it. That's also why <code>${{ if }}</code> can add or remove steps: it runs before anything exists." },
+  runtime: { expr: "$[ variables.env ]", at: "runtime", out: "dev*", d: "Runtime expressions only work in <b>variable definitions and conditions</b>, not inline in a script. Used like <code>myVar: $[ variables.env ]</code>, it's evaluated <b>when the job starts</b>, so it sees <code>dev</code>. Its power is reading <em>outputs of earlier jobs</em>: <code>$[ dependencies.Build.outputs['setTag.tag'] ]</code>." },
+  macro: { expr: "$(env)", at: "macro", out: "prod", d: "Macros are expanded <b>right before each task runs</b>, so step 2 sees the value step 1 just set: <code>prod</code>. This is why <code>$(var)</code> is the right default inside task inputs and scripts." },
+};
+function showSyn(k) {
+  const s = SYN[k];
+  const at = PH.findIndex(p => p.k === s.at);
+  document.getElementById("timeline").innerHTML = PH.map((p, i) => `${i ? '<span class="flow-arrow">→</span>' : ""}<div class="flow-step ${i === at ? "on" : i < at ? "done" : ""}" style="flex:1"><span class="fs-ico">${p.ico}</span>${p.t}<span class="subtle" style="font-weight:500">${p.s}</span></div>`).join("");
+  document.getElementById("syn-msg").innerHTML = `<div class="sm-arrow">${KQ.escapeHtml(s.expr)} → OUTPUT: "I see: ${s.out.replace("*", "")}"${s.out.endsWith("*") ? " (via a variable)" : ""}</div>${s.d}`;
+  document.querySelectorAll("#y-expr .ln .t").forEach(t => { if (t.dataset.orig == null) t.dataset.orig = t.innerHTML; t.innerHTML = t.dataset.orig.replace("&lt;&lt;EXPR&gt;&gt;", `<span class="tk-expr">${KQ.escapeHtml(s.expr)}</span>`); });
+}
+document.querySelectorAll("#syn .tab").forEach(t => t.onclick = () => { document.querySelectorAll("#syn .tab").forEach(x => x.classList.toggle("active", x === t)); showSyn(t.dataset.s); });
+showSyn("compile");
+
+KQY.block(document.getElementById("y-secret"), `variables:
+  - group: orders-prod-secrets     # linked to Key Vault kv-orders-prod
+
+steps:
+  - script: ./migrate.sh
+    env:
+      DB_PASSWORD: $(db-password)  # secrets must be mapped explicitly`, { title: "using a Key Vault-backed variable group" });
+
+KQY.block(document.getElementById("y-main"), `# azure-pipelines.yml
+trigger: [main]
+
+stages:
+  - template: templates/build.yml
+    parameters:
+      imageName: orders-api
+      runTests: true`, { title: "azure-pipelines.yml" });
+KQY.block(document.getElementById("y-tpl"), `# templates/build.yml
+parameters:
+  - name: imageName
+    type: string
+  - name: runTests
+    type: boolean
+    default: true
+
+stages:
+  - stage: Build
+    jobs:
+      - job: build
+        pool: { vmImage: ubuntu-latest }
+        steps:
+          - \${{ if eq(parameters.runTests, true) }}:
+            - script: npm test
+          - task: Docker@2
+            inputs:
+              command: buildAndPush
+              containerRegistry: acr-connection
+              repository: \${{ parameters.imageName }}`, { title: "templates/build.yml" });
+KQY.block(document.getElementById("y-expanded"), `trigger: [main]
+
+stages:
+  - stage: Build
+    jobs:
+      - job: build
+        pool: { vmImage: ubuntu-latest }
+        steps:
+          - script: npm test             # inserted because runTests = true
+          - task: Docker@2
+            inputs:
+              command: buildAndPush
+              containerRegistry: acr-connection
+              repository: orders-api     # parameter substituted at compile time`, { title: "expanded pipeline" });
+</script>
+</body>
+</html>

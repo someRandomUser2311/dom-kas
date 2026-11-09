@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>1.5 · kubectl essentials</title>
+<link rel="stylesheet" href="../content.css">
+</head>
+<body>
+<article class="lesson" data-id="1.5" data-chapter="1">
+<nav class="crumbs"><a href="../index.html">Course</a> / <a href="index.html">Chapter 1</a> / 1.5</nav>
+<header>
+  <p class="kicker">Chapter 1 · Lesson 1.5 · ~12 steps · ~15 min</p>
+  <h1>kubectl essentials</h1>
+  <p class="meta">You'll be able to use the dozen <code>kubectl</code> commands that cover most day-to-day work: reading, applying, inspecting, logs and exec.</p>
+</header>
+
+<section class="step" id="s1">
+  <h2>1. The shape of every command</h2>
+  <div class="body">
+    <p>Nearly every <code>kubectl</code> command has the same shape:</p>
+    <pre>kubectl &lt;verb&gt; &lt;resource&gt; [name] [flags]</pre>
+    <p>The verb is what to do: <code>get</code>, <code>describe</code>, <code>apply</code>, <code>delete</code>, <code>logs</code>, <code>exec</code>.</p>
+    <p>The resource is the kind of object: <code>pods</code>, <code>deployments</code>, <code>services</code>. Short names work too: <code>po</code>, <code>deploy</code>, <code>svc</code>, <code>no</code> (nodes), <code>ns</code> (namespaces).</p>
+  </div>
+  <div class="widget" data-widget="terminal">A scripted terminal against a sample cluster with the <code>orders</code> namespace running <code>orders-api</code> (3 pods) and <code>web</code> (2 pods). Steps 2–10 each pre-fill a command; the learner presses Enter and sees realistic output. Free typing of any command used in this lesson also works.</div>
+  <aside class="coming" data-set="A">
+    <dl>
+      <dt>Windows/IIS admin</dt><dd>The verb-resource order is the reverse of PowerShell's <code>Get-Process</code>. Think <code>kubectl get pods</code> ≈ <code>Get-Pod</code>.</dd>
+      <dt>Linux admin</dt><dd>Same pattern as <code>systemctl status nginx</code>: a verb, then a target.</dd>
+      <dt>Developer (Compose)</dt><dd><code>kubectl get pods</code> ≈ <code>docker compose ps</code>, <code>kubectl logs</code> ≈ <code>docker compose logs</code>, <code>kubectl exec</code> ≈ <code>docker compose exec</code>.</dd>
+      <dt>Other clouds</dt><dd>Identical on EKS and GKE. Only getting credentials differs: on AKS it's <code>az aks get-credentials</code>.</dd>
+    </dl>
+  </aside>
+</section>
+
+<section class="step" id="s2">
+  <h2>2. <code>get</code>: list things</h2>
+  <div class="body">
+    <p><code>get</code> lists objects in a table.</p>
+    <ul>
+      <li><code>-n orders</code> picks the namespace.</li>
+      <li><code>-A</code> (<code>--all-namespaces</code>) shows every namespace.</li>
+      <li><code>-o wide</code> adds columns such as the pod's IP and node.</li>
+      <li><code>-l app=orders-api</code> filters by label.</li>
+      <li><code>-w</code> keeps watching for changes.</li>
+    </ul>
+  </div>
+  <pre class="output">$ kubectl get pods -n orders -o wide
+NAME                          READY   STATUS    RESTARTS   AGE   IP            NODE
+orders-api-7d9c5f6b8-2xk9p    1/1     Running   0          3h    10.244.1.12   aks-user-1234-vmss000000
+orders-api-7d9c5f6b8-q8w4m    1/1     Running   0          3h    10.244.2.7    aks-user-1234-vmss000001
+orders-api-7d9c5f6b8-z5t2n    1/1     Running   2          3h    10.244.3.9    aks-user-1234-vmss000002
+web-6c8f9d7b5-h4j2k           1/1     Running   0          3h    10.244.1.13   aks-user-1234-vmss000000</pre>
+  <div class="check" data-type="command">
+    <p class="q">List the pods in the <code>orders</code> namespace, including the node each one runs on.</p>
+    <p class="answer"><code>kubectl get pods -n orders -o wide</code></p>
+    <p class="accept">Also accepted: <code>po</code>/<code>pod</code> for <code>pods</code>, <code>--namespace orders</code>, <code>--output wide</code>, flags in any order.</p>
+    <div class="explain"><code>-o wide</code> adds the IP and NODE columns.</div>
+  </div>
+</section>
+
+<section class="step" id="s3">
+  <h2>3. <code>-o yaml</code>: see the whole object</h2>
+  <div class="body">
+    <p><code>-o yaml</code> (or <code>-o json</code>) prints the complete object as the API server stores it, <code>spec</code> and <code>status</code> included. It's the most honest answer to "what does the cluster actually have?"</p>
+    <p><code>-o jsonpath='{…}'</code> picks one field, which is handy in scripts.</p>
+  </div>
+  <pre class="code" data-file="terminal">kubectl get deployment orders-api -n orders -o yaml
+kubectl get pod orders-api-7d9c5f6b8-2xk9p -n orders -o jsonpath='{.status.podIP}'</pre>
+</section>
+
+<section class="step" id="s4">
+  <h2>4. <code>describe</code>: the human-readable story</h2>
+  <div class="body">
+    <p><code>describe</code> shows an object's key fields <b>plus its recent events</b>: scheduled, pulled the image, started, probe failed. When something is wrong, check here first.</p>
+  </div>
+  <pre class="output">$ kubectl describe pod orders-api-7d9c5f6b8-z5t2n -n orders
+Name:         orders-api-7d9c5f6b8-z5t2n
+Namespace:    orders
+Node:         aks-user-1234-vmss000002/10.20.0.6
+Status:       Running
+Containers:
+  api:
+    Image:          contosoacr.azurecr.io/orders-api:1.4.2
+    State:          Running
+    Last State:     Terminated
+      Reason:       OOMKilled
+      Exit Code:    137
+    Restart Count:  2
+Events:
+  Type     Reason   Age   From     Message
+  ----     ------   ----  ----     -------
+  Normal   Pulled   12m   kubelet  Container image "…orders-api:1.4.2" already present on machine
+  Warning  BackOff  11m   kubelet  Back-off restarting failed container api</pre>
+  <aside class="more"><p><code>OOMKilled</code> with exit code 137 means the container used more memory than its limit and was killed. Chapter 3 covers memory limits.</p></aside>
+</section>
+
+<section class="step" id="s5">
+  <h2>5. <code>apply -f</code>: create or update from a file</h2>
+  <div class="body">
+    <p><code>kubectl apply -f file.yaml</code> sends the file's objects to the API server. They're created if they don't exist, and updated to match the file if they do. Run it again unchanged and nothing happens.</p>
+    <p><code>-f</code> also accepts a folder (<code>-f k8s/</code>) or a URL. This is the declarative way you'll use everywhere.</p>
+  </div>
+  <pre class="output">$ kubectl apply -f k8s/ -n orders
+deployment.apps/orders-api configured
+service/orders-api unchanged
+configmap/orders-api-config created</pre>
+  <aside class="more"><p><code>kubectl create</code> and <code>kubectl run</code> are imperative alternatives. They're fine for experiments, but avoid them for anything that should live in Git.</p></aside>
+</section>
+
+<section class="step" id="s6">
+  <h2>6. <code>delete</code></h2>
+  <div class="body">
+    <p><code>kubectl delete</code> removes objects by name (<code>kubectl delete deployment orders-api</code>), by file (<code>-f</code>), or by label (<code>-l</code>).</p>
+    <p>Remember lesson 1.4: deleting a <b>pod</b> owned by a Deployment just causes a replacement. Delete the <b>Deployment</b> to stop the app.</p>
+    <p>Always double-check the namespace and context before deleting. There's no undo.</p>
+  </div>
+</section>
+
+<section class="step" id="s7">
+  <h2>7. <code>logs</code>: what the app printed</h2>
+  <div class="body">
+    <p>Containers should write logs to standard output; Kubernetes captures it.</p>
+    <ul>
+      <li><code>--tail=50</code>: the last 50 lines.</li>
+      <li><code>-f</code>: follow live.</li>
+      <li><code>-c</code>: pick a container in a multi-container pod.</li>
+      <li><code>--previous</code>: the logs of the container <i>before</i> it last restarted. That's essential for crash loops.</li>
+      <li><code>deploy/orders-api</code>: read logs from one pod of a Deployment without looking up a pod name.</li>
+    </ul>
+  </div>
+  <div class="check" data-type="command">
+    <p class="q">Show the last 50 log lines of pod <code>orders-api-7d9c5f6b8-z5t2n</code> in namespace <code>orders</code>.</p>
+    <p class="answer"><code>kubectl logs orders-api-7d9c5f6b8-z5t2n -n orders --tail=50</code></p>
+    <p class="accept">Also accepted: <code>--tail 50</code>, <code>--namespace orders</code>, flags in any order.</p>
+    <div class="explain">Add <code>--previous</code> to see why the last container instance died.</div>
+  </div>
+</section>
+
+<section class="step" id="s8">
+  <h2>8. <code>exec</code>: run a command inside a container</h2>
+  <div class="body">
+    <p><code>kubectl exec -it pod -- command</code> runs a command inside a running container. Everything after <code>--</code> is the command. <code>-it</code> makes it interactive, for a shell.</p>
+    <p>Our <code>orders-api</code> image is distroless, so it <b>has no shell</b>. Use <code>kubectl debug</code> to attach a temporary debugging container instead (Chapter 14). Minimal images make this a deliberate trade-off.</p>
+  </div>
+  <pre class="code" data-file="terminal">kubectl exec -it web-6c8f9d7b5-h4j2k -n orders -- sh
+kubectl exec web-6c8f9d7b5-h4j2k -n orders -- cat /etc/nginx/conf.d/default.conf</pre>
+</section>
+
+<section class="step" id="s9">
+  <h2>9. <code>explain</code>: built-in documentation</h2>
+  <div class="body">
+    <p>Forgot a field name? <code>kubectl explain</code> describes any field of any resource, straight from the cluster's own API schema. It always matches your cluster's version.</p>
+  </div>
+  <pre class="output">$ kubectl explain deployment.spec.strategy
+GROUP:      apps
+KIND:       Deployment
+FIELD: strategy &lt;DeploymentStrategy&gt;
+DESCRIPTION:
+    The deployment strategy to use to replace existing pods with new ones.
+FIELDS:
+  rollingUpdate	&lt;RollingUpdateDeployment&gt;
+  type	&lt;string&gt;</pre>
+</section>
+
+<section class="step" id="s10">
+  <h2>10. Pick the right command</h2>
+  <div class="check" data-type="match">
+    <p class="q">Match each task to the command you'd use.</p>
+    <table class="pairs">
+      <tr><td>Why is this pod stuck in Pending?</td><td><code>kubectl describe pod</code></td></tr>
+      <tr><td>Why did the container crash before it restarted?</td><td><code>kubectl logs --previous</code></td></tr>
+      <tr><td>Roll out the updated manifests in <code>k8s/</code></td><td><code>kubectl apply -f k8s/</code></td></tr>
+      <tr><td>What fields does <code>spec.template.spec</code> accept?</td><td><code>kubectl explain</code></td></tr>
+      <tr><td>Which node is each pod on?</td><td><code>kubectl get pods -o wide</code></td></tr>
+    </table>
+    <div class="explain">Use <code>describe</code> for events, <code>logs</code> for app output, <code>get -o wide</code> for placement, and <code>explain</code> for the schema.</div>
+  </div>
+</section>
+
+<section class="step" id="s11">
+  <h2>11. Saving keystrokes safely</h2>
+  <div class="body">
+    <ul>
+      <li>Shell completion: <code>source &lt;(kubectl completion bash)</code> (or <code>zsh</code>). Tab-complete resource names.</li>
+      <li>Default namespace for the current context: <code>kubectl config set-context --current --namespace=orders</code>. Then you can drop <code>-n</code>, but always know which namespace you're in (next lesson).</li>
+      <li><code>--dry-run=client -o yaml</code> prints what a command <i>would</i> create, without creating it. It's useful for generating starter YAML.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="step summary" id="s12">
+  <h2>kubectl, sorted</h2>
+  <ul>
+    <li><code>kubectl &lt;verb&gt; &lt;resource&gt; [name] [flags]</code>.</li>
+    <li><code>get</code> (<code>-o wide</code>, <code>-o yaml</code>, <code>-n</code>, <code>-A</code>, <code>-l</code>, <code>-w</code>), <code>describe</code> for events.</li>
+    <li><code>apply -f</code> to create or update declaratively; <code>delete</code> carefully.</li>
+    <li><code>logs</code> (<code>--tail</code>, <code>-f</code>, <code>--previous</code>), <code>exec -it … -- cmd</code>.</li>
+    <li><code>explain</code> documents any field.</li>
+  </ul>
+</section>
+</article>
+</body>
+</html>

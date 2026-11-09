@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>7.3 · Agents and agent pools</title>
+<link rel="stylesheet" href="../content.css">
+</head>
+<body>
+<article class="lesson" data-id="7.3" data-chapter="7">
+<nav class="crumbs"><a href="../index.html">Course</a> / <a href="index.html">Chapter 7</a> / 7.3</nav>
+<header>
+  <p class="kicker">Chapter 7 · Lesson 7.3 · ~10 steps · built in app-preview (content/ch07/l3.js)</p>
+  <h1>Agents and agent pools</h1>
+  <p class="meta">Converted from the built preview lesson. Interactive panels are kept as their rendered HTML inside <code>.widget</code> blocks.</p>
+</header>
+
+<section class="step" id="s1">
+  <h2>1. Who actually runs your YAML?</h2>
+  <div class="body"><p>Your YAML is only instructions. An <b>agent</b> executes them: a small program on a VM or container that <b>polls</b> Azure DevOps for work, runs the job's steps, and streams logs back.</p><p>Because the agent polls <em>outwards</em>, it doesn't need any inbound ports. That's important for agents inside private networks.</p></div>
+  <div class="widget" data-widget="l3-step1"><div class="card"><div class="flow" style="justify-content:center">
+        <div class="flow-step on"><span class="fs-ico">🔷</span>Azure DevOps<span class="subtle" style="font-weight:500">job queue</span></div>
+        <span class="flow-arrow">⇄</span>
+        <div class="flow-step on"><span class="fs-ico">🖥️</span>Agent<span class="subtle" style="font-weight:500">polls over HTTPS 443</span></div>
+        <span class="flow-arrow">→</span>
+        <div class="flow-step done"><span class="fs-ico">🛠️</span>Your steps<span class="subtle" style="font-weight:500">git, go, docker…</span></div></div>
+        <p class="subtle" style="margin:12px 0 0;text-align:center">One agent runs <b>one job at a time</b>.</p></div></div>
+  <aside class="coming" data-set="B">
+    <dl>
+      <dt>GitHub Actions</dt><dd>An agent is a <b>runner</b>; same polling model.</dd>
+      <dt>GitLab CI</dt><dd>An agent is a <b>GitLab Runner</b>.</dd>
+      <dt>Jenkins</dt><dd>Like a Jenkins <b>agent/node</b>, but it connects out to Azure DevOps instead of the controller connecting in.</dd>
+      <dt>Classic pipelines</dt><dd>Same agents as before; YAML just selects them with <code>pool</code>.</dd>
+    </dl>
+  </aside>
+</section>
+
+<section class="step" id="s2">
+  <h2>2. Agent pools</h2>
+  <div class="body"><p>Agents are grouped into <b>pools</b>. A job asks for a pool, and Azure DevOps hands it to any <b>free agent</b> in that pool.</p><p>The built-in <b>Azure Pipelines</b> pool is Microsoft-hosted; you select an image with <code>vmImage</code>.</p></div>
+  <pre class="code" data-file="azure-pipelines.yml">pool:
+  vmImage: ubuntu-latest   # Microsoft-hosted, fresh VM per job</pre>
+  <aside class="coming" data-set="B">
+    <dl>
+      <dt>GitHub Actions</dt><dd><code>runs-on: ubuntu-latest</code> ↔ <code>pool: vmImage: ubuntu-latest</code>.</dd>
+      <dt>GitLab CI</dt><dd>Like shared SaaS runners selected by tag.</dd>
+      <dt>Jenkins</dt><dd><code>agent { label 'ubuntu' }</code>, but the cloud agents are ephemeral and maintained for you.</dd>
+      <dt>Classic pipelines</dt><dd><i>Agent pool: Azure Pipelines</i> + <i>Agent specification</i>.</dd>
+    </dl>
+  </aside>
+</section>
+
+<section class="step" id="s3">
+  <h2>3. Microsoft-hosted: the easy default</h2>
+  <div class="body"><p>Zero maintenance: a fresh, patched VM for every job with Docker, kubectl, Azure CLI, Helm and Node preinstalled. Nothing leaks between runs.</p><p>The catch: it runs on the <b>public internet</b>.</p></div>
+  <div class="widget" data-widget="l3-step3"><div class="compare">
+        <div class="card"><b style="color:var(--success-strong)">✓ Pros</b><ul class="muted" style="font-size:14px;padding-left:18px;margin:8px 0 0"><li>No servers to patch</li><li>Clean every run</li><li>Many tools preinstalled</li></ul></div>
+        <div class="card"><b style="color:var(--danger)">✕ Cons</b><ul class="muted" style="font-size:14px;padding-left:18px;margin:8px 0 0"><li>Can't reach a <b>private</b> AKS API or private ACR</li><li>No warm caches</li><li>Time limits, limited free parallelism</li></ul></div></div></div>
+</section>
+
+<section class="step" id="s4">
+  <h2>4. Self-hosted: your machine, your network</h2>
+  <div class="body"><p>Install the agent on your own VM (or container) and register it into a pool. It can sit <b>inside your VNet</b>, next to a private AKS cluster.</p><p>You select it by pool <code>name</code> and can add <b>demands</b>, requirements the agent must meet.</p></div>
+  <pre class="code" data-file="azure-pipelines.yml">pool:
+  name: linux-builders     # your self-hosted pool
+  demands:
+    - docker
+    - Agent.OS -equals Linux</pre>
+  <aside class="coming" data-set="B">
+    <dl>
+      <dt>GitHub Actions</dt><dd>Self-hosted runners with <code>runs-on: [self-hosted, linux]</code>. Labels ≈ demands.</dd>
+      <dt>GitLab CI</dt><dd>Your own GitLab Runner registered with tags.</dd>
+      <dt>Jenkins</dt><dd>Your own Jenkins nodes; labels ≈ demands.</dd>
+      <dt>Classic pipelines</dt><dd>Pick your private pool in the Agent job settings.</dd>
+    </dl>
+  </aside>
+  <aside class="more"><p>Self-hosted means <b>you</b> patch the OS, update the agent and clean workspaces. A compromised agent sits inside your network, so treat build agents as sensitive hosts and never share one pool between untrusted projects.</p></aside>
+</section>
+
+<section class="step" id="s5">
+  <h2>5. Quick check: private cluster</h2>
+  <div class="body"><p>Your AKS cluster is <b>private</b>: its API server has no public IP. The deploy job uses <code>vmImage: ubuntu-latest</code> and times out calling the API server.</p></div>
+  <pre class="code" data-file="azure-pipelines.yml">pool:
+  name: linux-builders     # your self-hosted pool
+  demands:
+    - docker
+    - Agent.OS -equals Linux</pre>
+  <div class="check" data-type="mcq">
+    <p class="q">What's the best fix?</p>
+    <ol class="options">
+      <li>Raise the job's <code>timeoutInMinutes</code> <span class="why">It's not slow; it's unreachable. Waiting longer won't help.</span></li>
+      <li class="correct">Run the job on a self-hosted agent / Managed DevOps Pool inside a VNet that can reach the cluster</li>
+      <li>Use <code>vmImage: windows-latest</code> <span class="why">Every Microsoft-hosted image is on the public internet.</span></li>
+      <li>Add the hosted agent's IP to authorized IP ranges <span class="why">Authorized IP ranges apply to <em>public</em> API servers. A private cluster has no public endpoint at all.</span></li>
+    </ol>
+    <div class="explain">A private API server is only reachable from inside the network. Run the deploy job on an agent in a VNet that can reach it.</div>
+  </div>
+</section>
+
+<section class="step" id="s6">
+  <h2>6. The middle ground: Managed DevOps Pools</h2>
+  <div class="body"><p>Want private-network access <em>and</em> a fresh machine per job, without patching servers? Azure can run the pool for you.</p></div>
+  <div class="widget" data-widget="l3-step6"><div class="card"><div class="card-title">🧩 Managed DevOps Pools <span class="badge badge-success">recommended</span></div><p class="muted" style="font-size:14px;margin:0">Azure creates and recycles agent VMs in <b>your</b> subscription and VNet. You choose image, size and scaling.</p></div>
+        <div class="card"><div class="card-title">🧱 VM Scale Set agents</div><p class="muted" style="font-size:14px;margin:0">The older approach: you own a scale set and Azure DevOps scales it.</p></div></div>
+</section>
+
+<section class="step" id="s7">
+  <h2>7. How a job finds an agent</h2>
+  <div class="body"><p>Each agent advertises <b>capabilities</b> (OS, tools, custom tags like <code>vnet</code>). A job lists <b>demands</b>. Only agents that meet <em>every</em> demand are eligible.</p><p>Play with the demands and dispatch the job a few times.</p></div>
+  <div class="widget" data-widget="l3-step7"><p><i>Interactive in the preview (onShow handler).</i></p><div class="card">
+    <div class="kicker" style="margin-bottom:8px">Pool: linux-builders · job demands</div>
+    <div style="display:flex;flex-wrap:wrap;gap:12px;margin-bottom:14px"><label class="toggle"><input type="checkbox" data-d="Agent.OS -equals Linux" checked><span class="track"></span><code>Agent.OS -equals Linux</code></label><label class="toggle"><input type="checkbox" data-d="docker" checked><span class="track"></span><code>docker</code></label><label class="toggle"><input type="checkbox" data-d="vnet -equals aks-private" ><span class="track"></span><code>vnet -equals aks-private</code></label></div>
+    <div class="agents" id="agents"></div>
+    <div style="display:flex;gap:10px;align-items:center;margin-top:14px;flex-wrap:wrap">
+      <button class="btn btn-primary btn-sm" id="dispatch">▶ Dispatch job</button><span class="subtle" id="dres">Toggle demands, then dispatch.</span></div></div></div>
+</section>
+
+<section class="step" id="s8">
+  <h2>8. Your turn: land on the right network</h2>
+  <div class="body"><p>This job deploys to the <b>private</b> AKS cluster, which is only reachable from the <code>aks-private</code> VNet. Right now it lands on <code>build-02</code>, which sits in <code>corp</code>.</p></div>
+  <div class="widget" data-widget="l3-step8"><p><i>Interactive in the preview (onShow handler).</i></p><div class="card">
+    <div class="kicker" style="margin-bottom:8px">Pool: linux-builders · job demands</div>
+    <div style="display:flex;flex-wrap:wrap;gap:12px;margin-bottom:14px"><label class="toggle"><input type="checkbox" data-d="Agent.OS -equals Linux" checked><span class="track"></span><code>Agent.OS -equals Linux</code></label><label class="toggle"><input type="checkbox" data-d="docker" checked><span class="track"></span><code>docker</code></label><label class="toggle"><input type="checkbox" data-d="vnet -equals aks-private" ><span class="track"></span><code>vnet -equals aks-private</code></label></div>
+    <div class="agents" id="agents"></div>
+    <div style="display:flex;gap:10px;align-items:center;margin-top:14px;flex-wrap:wrap">
+      <button class="btn btn-primary btn-sm" id="dispatch">▶ Dispatch job</button><span class="subtle" id="dres">Toggle demands, then dispatch.</span></div></div></div>
+  <div class="check" data-type="custom">
+    <p class="q">Adjust the demands so the job lands on a Linux agent with Docker inside <code>aks-private</code>, then dispatch.</p>
+    <p class="muted">Completed through the widget above (see the preview's onShow handler for the success condition).</p>
+    <div class="explain">Demands are how you pin jobs to agents with the right network, tools or hardware.</div>
+  </div>
+</section>
+
+<section class="step" id="s9">
+  <h2>9. Parallel jobs</h2>
+  <div class="body"><p><b>Parallel jobs</b> are a licensing limit: how many jobs can run <em>at the same time</em> across your organization, counted separately for Microsoft-hosted and self-hosted.</p></div>
+  <pre class="code" data-file="azure-pipelines.yml">pool:
+  name: linux-builders     # your self-hosted pool
+  demands:
+    - docker
+    - Agent.OS -equals Linux</pre>
+  <div class="check" data-type="mcq">
+    <p class="q">Two people push at once. You have 5 idle self-hosted agents but 1 self-hosted parallel job. What happens?</p>
+    <ol class="options">
+      <li class="correct">One run starts; the other queues until the first job finishes</li>
+      <li>Both run, because there are enough idle agents <span class="why">Agents aren't the limit here; the parallel-job licence is.</span></li>
+      <li>The second run fails immediately <span class="why">Runs queue; they don't fail for lack of capacity.</span></li>
+    </ol>
+    <div class="explain">Parallel jobs cap concurrency regardless of how many agents exist. The second run waits in the queue.</div>
+  </div>
+</section>
+
+<section class="step summary" id="s10">
+  <h2>You know where pipelines run</h2>
+  <div class="body">Agents poll for jobs, pools group them, Microsoft-hosted is the easy default, and self-hosted or Managed DevOps Pools reach private networks. Demands pick the right agent, and parallel jobs cap concurrency.</div>
+  <div class="widget" data-widget="l3-step10"><div class="card"><ul class="list-check" style="font-size:15px"><li><code>vmImage</code> → Microsoft-hosted, fresh VM per job</li><li><code>pool: name</code> → your own agents</li><li>Private AKS → agent inside the VNet</li><li>Demands must <em>all</em> match an agent's capabilities</li><li>Parallel jobs ≠ number of agents</li></ul></div></div>
+</section>
+</article>
+</body>
+</html>

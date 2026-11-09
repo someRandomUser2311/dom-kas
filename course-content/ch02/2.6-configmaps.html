@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>2.6 · ConfigMaps</title>
+<link rel="stylesheet" href="../content.css">
+</head>
+<body>
+<article class="lesson" data-id="2.6" data-chapter="2">
+<nav class="crumbs"><a href="../index.html">Course</a> / <a href="index.html">Chapter 2</a> / 2.6</nav>
+<header>
+  <p class="kicker">Chapter 2 · Lesson 2.6 · ~10 steps · ~12 min</p>
+  <h1>ConfigMaps</h1>
+  <p class="meta">You'll be able to move configuration out of the image into a ConfigMap, inject it as environment variables or files, and predict what happens when it changes.</p>
+</header>
+
+<section class="step" id="s1">
+  <h2>1. One image, many environments</h2>
+  <div class="body">
+    <p>The same <code>orders-api:1.4.2</code> image runs in dev and prod. What differs between them is <b>configuration</b>: log level, feature flags, the payment provider's URL.</p>
+    <p>Baking config into the image would mean one image per environment, which defeats "build once, deploy everywhere".</p>
+    <p>A <b>ConfigMap</b> holds non-secret configuration as key-value pairs. Pods read it at start-up.</p>
+  </div>
+  <pre class="code" data-file="k8s/base/configmap.yaml">apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: orders-api-config
+  namespace: orders
+data:
+  LOG_LEVEL: info
+  PAYMENTS_URL: https://payments.contoso.example/api
+  FEATURE_EXPRESS_SHIPPING: "false"
+  appsettings.json: |
+    {
+      "Orders": { "MaxItems": 50, "Currency": "EUR" }
+    }</pre>
+  <aside class="coming" data-set="A">
+    <dl>
+      <dt>Windows/IIS admin</dt><dd>Like moving <code>appSettings</code> out of <code>web.config</code> into something managed per environment, the way transforms did for each build, except here it's at deploy time.</dd>
+      <dt>Linux admin</dt><dd>Like files in <code>/etc/orders/</code> managed by config management, delivered into the container.</dd>
+      <dt>Developer (Compose)</dt><dd>Like <code>environment:</code> and <code>env_file:</code> in Compose, plus the ability to mount whole config files.</dd>
+      <dt>Other clouds</dt><dd>Similar to SSM Parameter Store or Runtime Config, but stored inside the cluster. For Azure-wide config there's Azure App Configuration.</dd>
+    </dl>
+  </aside>
+</section>
+
+<section class="step" id="s2">
+  <h2>2. One key as an environment variable</h2>
+  <div class="body">
+    <p><code>env[].valueFrom.configMapKeyRef</code> reads one key from a ConfigMap into one environment variable.</p>
+  </div>
+  <div class="check" data-type="fill">
+    <p class="q">Complete the reference so <code>LOG_LEVEL</code> comes from the ConfigMap.</p>
+    <pre class="code" data-file="deployment.yaml (container)">env:
+  - name: LOG_LEVEL
+    valueFrom:
+      <span class="blank">?</span>:
+        name: orders-api-config
+        key: LOG_LEVEL</pre>
+    <ul class="chips">
+      <li class="correct"><code>configMapKeyRef</code></li>
+      <li><code>configMapRef</code> <span class="why"><code>configMapRef</code> is used under <code>envFrom</code> to load the whole map.</span></li>
+      <li><code>secretKeyRef</code> <span class="why">That reads from a Secret.</span></li>
+      <li><code>fieldRef</code> <span class="why"><code>fieldRef</code> reads pod fields such as its name or IP.</span></li>
+    </ul>
+    <div class="explain">Use <code>configMapKeyRef</code> for one key → one variable. Add <code>optional: true</code> if the pod may start without it.</div>
+  </div>
+</section>
+
+<section class="step" id="s3">
+  <h2>3. The whole map with <code>envFrom</code></h2>
+  <div class="body">
+    <p><code>envFrom</code> turns <b>every</b> key into an environment variable with the same name. It's convenient, but you can't see in the Deployment which variables the app gets. Keys that aren't valid variable names, like <code>appsettings.json</code>, are skipped.</p>
+  </div>
+  <pre class="code" data-file="deployment.yaml (container)">envFrom:
+  - configMapRef:
+      name: orders-api-config</pre>
+</section>
+
+<section class="step" id="s4">
+  <h2>4. Keys as files: a volume mount</h2>
+  <div class="body">
+    <p>Mount a ConfigMap as a <b>volume</b>, and each key becomes a <b>file</b> whose content is the value. That's the natural way to deliver a whole config file such as <code>appsettings.json</code>.</p>
+    <p><code>items</code> picks which keys to mount; without it, every key becomes a file.</p>
+  </div>
+  <pre class="code" data-file="deployment.yaml (pod spec)">spec:
+  containers:
+    - name: api
+      image: contosoacr.azurecr.io/orders-api:1.4.2
+      volumeMounts:
+        - name: config
+          mountPath: /etc/orders
+          readOnly: true
+  volumes:
+    - name: config
+      configMap:
+        name: orders-api-config
+        items:
+          - key: appsettings.json
+            path: appsettings.json</pre>
+  <div class="check" data-type="tapline" data-match="          mountPath: /etc/orders">
+    <p class="q">Tap the line that decides where the file appears inside the container.</p>
+    <div class="explain"><code>mountPath: /etc/orders</code>. With <code>path: appsettings.json</code>, the app reads <code>/etc/orders/appsettings.json</code>.</div>
+  </div>
+</section>
+
+<section class="step" id="s5">
+  <h2>5. What happens when the ConfigMap changes?</h2>
+  <div class="body">
+    <p>This difference catches nearly everyone:</p>
+    <ul>
+      <li><b>Mounted files</b> are updated in place by the kubelet, eventually (usually within a minute). The app must re-read the file to notice.</li>
+      <li><b>Environment variables</b> are set once, when the container starts. They <b>never</b> change in a running container.</li>
+    </ul>
+    <p>Files mounted with <code>subPath</code> don't update either.</p>
+  </div>
+  <div class="check" data-type="predict">
+    <p class="q">You change <code>LOG_LEVEL</code> from <code>info</code> to <code>debug</code> in the ConfigMap and apply it. <code>orders-api</code> reads it through <code>configMapKeyRef</code>. What do the running pods see?</p>
+    <ol class="options">
+      <li><code>debug</code> within a minute <span class="why">That's what mounted files do; env vars are fixed at start.</span></li>
+      <li class="correct">Still <code>info</code>, until the pods are restarted</li>
+      <li>The pods restart automatically to pick it up <span class="why">Kubernetes doesn't restart pods when a ConfigMap changes.</span></li>
+      <li>An error, because the ConfigMap is in use <span class="why">ConfigMaps can be changed at any time.</span></li>
+    </ol>
+    <div class="explain">Run <code>kubectl rollout restart deployment/orders-api</code> to pick up new env values. Chapter 10 shows how Helm and Kustomize trigger this automatically with a hash in the name or an annotation.</div>
+  </div>
+</section>
+
+<section class="step" id="s6">
+  <h2>6. Restarting to pick up changes</h2>
+  <pre class="code" data-file="terminal">kubectl apply -f k8s/base/configmap.yaml
+kubectl rollout restart deployment/orders-api -n orders
+kubectl rollout status deployment/orders-api -n orders</pre>
+  <div class="body"><p><code>rollout restart</code> adds a timestamp annotation to the pod template. That counts as a template change, so you get a normal rolling update with no downtime.</p></div>
+</section>
+
+<section class="step" id="s7">
+  <h2>7. Immutable ConfigMaps</h2>
+  <div class="body">
+    <p>Set <code>immutable: true</code> and the ConfigMap's data can never be changed; you create a new one with a new name instead. This prevents accidental edits and reduces load on the API server in big clusters.</p>
+    <p>Kustomize's <code>configMapGenerator</code> uses exactly this pattern: a hash-suffixed name per version (Chapter 10).</p>
+  </div>
+</section>
+
+<section class="step" id="s8">
+  <h2>8. What doesn't belong in a ConfigMap</h2>
+  <div class="body">
+    <ul>
+      <li><b>Secrets.</b> Passwords, connection strings with credentials, API keys. Anyone who can read the ConfigMap sees them, and ConfigMaps are often readable by many. Use Secrets (next lesson), or better, Key Vault (Chapter 15).</li>
+      <li><b>Large data.</b> A ConfigMap is limited to 1 MiB in total.</li>
+      <li><b>Per-pod values.</b> Use the Downward API (<code>fieldRef</code>) for a pod's own name, namespace or IP.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="step" id="s9">
+  <h2>9. Creating ConfigMaps from files</h2>
+  <pre class="code" data-file="terminal">kubectl create configmap orders-api-config -n orders \
+  --from-literal=LOG_LEVEL=info \
+  --from-file=appsettings.json \
+  --dry-run=client -o yaml &gt; k8s/base/configmap.yaml</pre>
+  <div class="body"><p><code>--dry-run=client -o yaml</code> writes the manifest instead of creating it, so it goes into Git rather than straight into the cluster.</p></div>
+</section>
+
+<section class="step summary" id="s10">
+  <h2>ConfigMaps, sorted</h2>
+  <ul>
+    <li>A ConfigMap holds non-secret config, so one image fits every environment.</li>
+    <li><code>configMapKeyRef</code> for one variable; <code>envFrom</code> for all; a volume for files.</li>
+    <li>Mounted files update eventually; env vars only change on restart (<code>rollout restart</code>).</li>
+    <li>No secrets, nothing over 1 MiB; consider <code>immutable: true</code>.</li>
+  </ul>
+</section>
+</article>
+</body>
+</html>

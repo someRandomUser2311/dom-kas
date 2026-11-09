@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>6.6 · Choosing &amp; deploying</title>
+<link rel="stylesheet" href="../content.css">
+</head>
+<body>
+<article class="lesson" data-id="6.6" data-chapter="6">
+<nav class="crumbs"><a href="../index.html">Course</a> / <a href="index.html">Chapter 6</a> / 6.6</nav>
+<header>
+  <p class="kicker">Chapter 6 · Lesson 6.6 · ~10 steps · ~12 min</p>
+  <h1>Choosing &amp; deploying</h1>
+  <p class="meta">You'll be able to pick the right API server exposure for a given organisation, and say exactly what changes in the deploy step for each option.</p>
+</header>
+
+<section class="step" id="s1">
+  <h2>1. Four options</h2>
+  <table>
+    <tr><th>Option</th><th>Who can reach the API server</th><th>Effort</th></tr>
+    <tr><td><b>Public</b></td><td>Anyone can connect; Entra ID + RBAC decide</td><td>Lowest</td></tr>
+    <tr><td><b>Public + authorized IPs</b></td><td>Only listed source IPs can connect</td><td>Low: keep the list current, use fixed-IP agents</td></tr>
+    <tr><td><b>Private cluster</b></td><td>Only clients in (or routed to) the VNet with working DNS</td><td>Higher: DNS, agents in the VNet, jump access</td></tr>
+    <tr><td><b>API Server VNet Integration</b></td><td>Private (or public, switchable) through your VNet</td><td>Similar to private</td></tr>
+  </table>
+  <aside class="coming" data-set="A">
+    <dl>
+      <dt>Windows/IIS admin</dt><dd>The same spectrum as "RDP open with MFA" → "RDP from office IPs only" → "RDP only through a jump host".</dd>
+      <dt>Linux admin</dt><dd>Public SSH with keys → firewall allow-list → bastion-only access.</dd>
+      <dt>Developer (Compose)</dt><dd>The further down the table, the more you'll deploy only through pipelines, not from your laptop.</dd>
+      <dt>Other clouds</dt><dd>EKS: public / public with CIDRs / private. GKE: similar, with authorized networks.</dd>
+    </dl>
+  </aside>
+</section>
+
+<section class="step" id="s2">
+  <h2>2. A decision tree</h2>
+  <ol>
+    <li>Does policy forbid any public management endpoint? → <b>Private</b> (or VNet Integration).</li>
+    <li>Do you already have a hub network, private DNS and agents in Azure? → private is cheap for you; prefer it.</li>
+    <li>Are all clients (people, agents) at known, fixed IPs? → <b>Public + authorized IPs</b>.</li>
+    <li>Small team, no network platform yet? → <b>Public</b>, with Entra ID + RBAC and local accounts disabled, then move up.</li>
+  </ol>
+</section>
+
+<section class="step" id="s3">
+  <h2>3. Scenario: a bank</h2>
+  <div class="check" data-type="mcq">
+    <p class="q">A bank's security standard says "no management interfaces reachable from the internet". It has a hub-and-spoke network with Azure Firewall and on-premises connectivity. Which option?</p>
+    <ol class="options">
+      <li>Public with Entra ID <span class="why">The endpoint is still on the internet.</span></li>
+      <li>Public + authorized IPs <span class="why">Still a public endpoint, just filtered.</span></li>
+      <li class="correct">Private cluster (or API Server VNet Integration in private mode), with agents in Managed DevOps Pools</li>
+      <li>Any; RBAC is enough <span class="why">The standard is about network exposure, not just auth.</span></li>
+    </ol>
+    <div class="explain">The hub network and DNS already exist, so private adds little extra effort.</div>
+  </div>
+</section>
+
+<section class="step" id="s4">
+  <h2>4. Scenario: a startup</h2>
+  <div class="check" data-type="mcq">
+    <p class="q">A five-person startup, fully remote, no VPN, deploys with Azure Pipelines on Microsoft-hosted agents. What's a sensible start?</p>
+    <ol class="options">
+      <li class="correct">Public API server with Entra ID + Azure RBAC, local accounts disabled, and humans with read-only access by default</li>
+      <li>Private cluster <span class="why">They'd need agents in a VNet, DNS and a way in, a lot of platform work for five people.</span></li>
+      <li>Public + authorized IPs <span class="why">With home IPs and hosted agents changing constantly, the list would never be right.</span></li>
+      <li>Public with local accounts <span class="why">Static admin credentials are the bigger risk.</span></li>
+    </ol>
+    <div class="explain">Strong identity first; network restrictions once there are fixed IPs or a private network to rely on.</div>
+  </div>
+</section>
+
+<section class="step" id="s5">
+  <h2>5. Scenario: an internal tool</h2>
+  <div class="check" data-type="mcq">
+    <p class="q">An internal HR tool on AKS. Staff always work from the office or over the corporate VPN, which has two fixed egress IPs. Builds run on a Managed DevOps Pool with a NAT gateway. Cheapest acceptable option?</p>
+    <ol class="options">
+      <li>Public with no restrictions <span class="why">It works, but you can easily do better here.</span></li>
+      <li class="correct">Public + authorized IP ranges (office, VPN, NAT gateway IP)</li>
+      <li>Private cluster <span class="why">Fine, but more effort than needed for this case.</span></li>
+      <li>Disable the API server <span class="why">Not possible.</span></li>
+    </ol>
+    <div class="explain">All clients have fixed IPs, so an allow-list is easy to keep accurate.</div>
+  </div>
+</section>
+
+<section class="step" id="s6">
+  <h2>6. What changes in the deploy step</h2>
+  <table>
+    <tr><th></th><th>Public</th><th>Private</th></tr>
+    <tr><td>Agent</td><td>Any agent (fixed IP if ranges are on)</td><td>An agent in the VNet (Managed DevOps Pool), or <code>az aks command invoke</code></td></tr>
+    <tr><td>Deploy task</td><td><code>KubernetesManifest@1</code> / <code>kubectl apply</code></td><td>Same task, on the in-VNet agent; or an <code>AzureCLI@2</code> step running <code>az aks command invoke --file …</code></td></tr>
+    <tr><td>DNS</td><td>Public DNS</td><td>The private zone must resolve from the agent</td></tr>
+    <tr><td>Identity</td><td>Service connection + AKS RBAC role</td><td>Same</td></tr>
+    <tr><td>Image pull</td><td>Kubelet identity + AcrPull</td><td>Same, plus an ACR private endpoint if public access is off</td></tr>
+  </table>
+</section>
+
+<section class="step" id="s7">
+  <h2>7. Deploying with command invoke</h2>
+  <pre class="code" data-file="deploy-private.sh">#!/usr/bin/env bash
+set -euo pipefail
+RG=rg-orders-prod
+CLUSTER=aks-orders-prod
+
+# runs inside the cluster through the Azure management API, with no network path to the API server needed
+az aks command invoke -g "$RG" -n "$CLUSTER" \
+  --command "kubectl apply -n orders -f k8s/base/" \
+  --file .        # attaches the current folder; paths in --command are relative to it</pre>
+  <div class="body"><p>It's good for small teams or as a fallback. For regular, high-volume releases, an in-VNet agent is faster and gives normal <code>kubectl</code> output and rollout status.</p></div>
+</section>
+
+<section class="step" id="s8">
+  <h2>8. What's required for private deploys</h2>
+  <div class="check" data-type="multi">
+    <p class="q">Contoso's release pipeline must deploy to the private <code>aks-orders-prod</code> using <code>KubernetesManifest@1</code>. Select everything that's required.</p>
+    <ol class="options">
+      <li class="correct">An agent with a network route to the API server's private endpoint (e.g. a Managed DevOps Pool in a peered VNet)</li>
+      <li class="correct">DNS on that agent resolves the <code>privatelink.westeurope.azmk8s.io</code> name</li>
+      <li class="correct">The service connection's identity has an AKS RBAC role on the target namespace</li>
+      <li>Authorized IP ranges containing the agent's IP <span class="why">Authorized ranges don't apply to private clusters.</span></li>
+      <li>The ACR admin user enabled <span class="why">Never needed; the kubelet identity pulls.</span></li>
+      <li>A public IP on the agent VM <span class="why">The agent needs outbound access to Azure DevOps, not a public IP.</span></li>
+    </ol>
+    <div class="explain">Route + DNS + identity: the same three checks as lesson 6.5, step 12.</div>
+  </div>
+</section>
+
+<section class="step" id="s9">
+  <h2>9. Contoso's choice</h2>
+  <div class="body">
+    <ul>
+      <li><b>Dev</b>: public API server, Entra ID + Azure RBAC, local accounts off, authorized IPs for the office and the agent pool's NAT IP.</li>
+      <li><b>Prod</b>: private cluster in a spoke VNet, a central private DNS zone in the hub, and a Managed DevOps Pool in a peered agents VNet. Humans read-only, with PIM for changes.</li>
+    </ul>
+    <p>Chapter 7 builds the pipeline that deploys to both.</p>
+  </div>
+</section>
+
+<section class="step summary" id="s10">
+  <h2>Choosing, sorted</h2>
+  <ul>
+    <li>Public → public + authorized IPs → private / VNet Integration: more protection, more platform work.</li>
+    <li>Let policy, existing network, and client IPs decide.</li>
+    <li>Private deploys need route + DNS + identity; <code>command invoke</code> is the fallback.</li>
+  </ul>
+</section>
+</article>
+</body>
+</html>

@@ -1,0 +1,203 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>7.6 · Variables, secrets &amp; templates</title>
+<link rel="stylesheet" href="../content.css">
+</head>
+<body>
+<article class="lesson" data-id="7.6" data-chapter="7">
+<nav class="crumbs"><a href="../index.html">Course</a> / <a href="index.html">Chapter 7</a> / 7.6</nav>
+<header>
+  <p class="kicker">Chapter 7 · Lesson 7.6 · ~10 steps · built in app-preview (content/ch07/l6.js)</p>
+  <h1>Variables, secrets &amp; templates</h1>
+  <p class="meta">Converted from the built preview lesson. Interactive panels are kept as their rendered HTML inside <code>.widget</code> blocks.</p>
+</header>
+
+<section class="step" id="s1">
+  <h2>1. Variables: name it once</h2>
+  <div class="body"><p>Define values once under <code>variables</code> and use them anywhere with <code>$(name)</code>. Change the image name in one place, not five.</p></div>
+  <pre class="code" data-file="azure-pipelines.yml">variables:
+  imageRepo: orders-api
+  namespace: orders
+
+steps:
+  - script: echo "Deploying $(imageRepo) to $(namespace)"</pre>
+  <aside class="coming" data-set="B">
+    <dl>
+      <dt>GitHub Actions</dt><dd><code>env:</code> at workflow level, read with <code>${{ env.NAME }}</code> or <code>$NAME</code> in shell.</dd>
+      <dt>GitLab CI</dt><dd><code>variables:</code> read as <code>$NAME</code>, almost identical.</dd>
+      <dt>Jenkins</dt><dd><code>environment { NAME = 'x' }</code>.</dd>
+      <dt>Classic pipelines</dt><dd>The Variables tab, now in code.</dd>
+    </dl>
+  </aside>
+</section>
+
+<section class="step" id="s2">
+  <h2>2. Predefined variables</h2>
+  <div class="body"><p>Azure Pipelines gives you dozens of variables for free. Three you'll use constantly:</p><ul><li><code>Build.BuildId</code>: unique per run, the perfect image tag</li><li><code>Build.SourceBranch</code>: e.g. <code>refs/heads/main</code></li><li><code>Build.Reason</code>: <code>IndividualCI</code>, <code>PullRequest</code>, <code>Manual</code>…</li></ul></div>
+  <pre class="code" data-file="azure-pipelines.yml">variables:
+  imageRepo: orders-api
+  namespace: orders
+  tag: $(Build.BuildId)
+
+steps:
+  - script: echo "Deploying $(imageRepo):$(tag) to $(namespace)"
+  - script: echo "Branch $(Build.SourceBranch), reason $(Build.Reason)"</pre>
+  <aside class="coming" data-set="B">
+    <dl>
+      <dt>GitHub Actions</dt><dd><code>github.run_id</code>, <code>github.ref</code>, <code>github.event_name</code>.</dd>
+      <dt>GitLab CI</dt><dd><code>CI_PIPELINE_ID</code>, <code>CI_COMMIT_REF_NAME</code>, <code>CI_PIPELINE_SOURCE</code>.</dd>
+      <dt>Jenkins</dt><dd><code>BUILD_NUMBER</code>, <code>BRANCH_NAME</code>.</dd>
+      <dt>Classic pipelines</dt><dd>Same predefined variables.</dd>
+    </dl>
+  </aside>
+</section>
+
+<section class="step" id="s3">
+  <h2>3. Three syntaxes, three moments</h2>
+  <div class="body"><p>The #1 source of "but the variable <em>is</em> set!" bugs. A step changes <code>env</code> to <code>prod</code> at runtime. What does the next step print?</p><p>Switch between the syntaxes and watch <b>when</b> each is evaluated.</p></div>
+  <div class="widget" data-widget="l6-step3"><p><i>Interactive in the preview (onShow handler).</i></p><div id="xcode"></div>
+        <div class="tabs" id="syn"><button class="tab active" data-s="compile"><code>${{ variables.env }}</code></button><button class="tab " data-s="runtime"><code>$[ variables.env ]</code></button><button class="tab " data-s="macro"><code>$(env)</code></button></div>
+        <div class="card"><div class="flow" id="tl" style="justify-content:space-between"></div><div class="seq-msg" id="tmsg" style="margin-top:10px;min-height:0"></div></div></div>
+</section>
+
+<section class="step" id="s4">
+  <h2>4. Your turn: print the updated value</h2>
+  <div class="body"><p>Step 1 sets <code>env</code> to <code>prod</code> at runtime. Make step 2 print <b>prod</b>.</p></div>
+  <pre class="code" data-file="experiment.yml">variables:
+  env: dev
+
+steps:
+  - script: echo "##vso[task.setvariable variable=env]prod"
+  - script: echo "I see: <span class="blank">?</span>"</pre>
+  <div class="check" data-type="fill">
+    <p class="q">Which syntax completes the line?</p>
+    <ul class="chips">
+      <li><code>${{ variables.env }}</code> <span class="why">Compile-time: it was replaced with <code>dev</code> before the run even started.</span></li>
+      <li class="correct"><code>$(env)</code></li>
+      <li><code>$[ variables.env ]</code> <span class="why">Runtime expressions don't work inline in scripts. They belong in variable definitions and conditions.</span></li>
+    </ul>
+    <div class="explain"><code>$(env)</code> is expanded just before the step runs, after step 1 changed it.</div>
+  </div>
+</section>
+
+<section class="step" id="s5">
+  <h2>5. Quick check: compile time strikes again</h2>
+  <div class="body"><p>A step sets <code>tag</code> to <code>v2</code>. A later step is wrapped in <code>${{ if eq(variables.tag, 'v2') }}:</code>.</p></div>
+  <pre class="code" data-file="experiment.yml">variables:
+  env: dev
+
+steps:
+  - script: echo "##vso[task.setvariable variable=env]prod"
+  - script: echo "I see: $(env)"</pre>
+  <div class="check" data-type="mcq">
+    <p class="q">Does the later step run?</p>
+    <ol class="options">
+      <li class="correct">No. The <code>${{ if }}</code> was evaluated at compile time, before <code>tag</code> changed</li>
+      <li>Yes, because <code>tag</code> is <code>v2</code> by then <span class="why">By then the <code>if</code> has already been evaluated and the step removed.</span></li>
+      <li>Only if <code>tag</code> is an output variable <span class="why">Output variables help across jobs, but compile-time expressions still can't see them.</span></li>
+    </ol>
+    <div class="explain"><code>${{ }}</code> is resolved when the YAML is compiled, long before any script runs. Use a runtime <code>condition: eq(variables.tag, 'v2')</code> instead.</div>
+  </div>
+</section>
+
+<section class="step" id="s6">
+  <h2>6. Secrets never live in YAML</h2>
+  <div class="body"><p>Put secrets in a <b>variable group</b>, ideally <b>linked to Azure Key Vault</b>, so rotation happens in Key Vault and nothing sensitive is in Git.</p><p>Secret variables are masked as <code>***</code> in logs and are <b>not</b> passed to scripts automatically. Map them explicitly with <code>env:</code>.</p></div>
+  <pre class="code" data-file="experiment.yml">variables:
+  - group: orders-prod-secrets   # linked to Key Vault kv-orders-prod
+
+steps:
+  - script: ./migrate.sh
+    env:
+      DB_PASSWORD: $(db-password)  # explicit mapping</pre>
+  <aside class="coming" data-set="B">
+    <dl>
+      <dt>GitHub Actions</dt><dd>Like repo/environment <b>secrets</b> read with <code>${{ secrets.X }}</code>; Key Vault linking ≈ fetching from a vault action.</dd>
+      <dt>GitLab CI</dt><dd>Masked/protected CI variables, or the Vault integration.</dd>
+      <dt>Jenkins</dt><dd>Credentials store + <code>withCredentials</code>.</dd>
+      <dt>Classic pipelines</dt><dd>The same Library variable groups.</dd>
+    </dl>
+  </aside>
+  <aside class="more"><p><b>Masking isn't security.</b> A script can still leak a secret by encoding it. Restrict who can edit pipelines, and protect variable groups with pipeline permissions and approvals.</p></aside>
+</section>
+
+<section class="step" id="s7">
+  <h2>7. Spot the leak</h2>
+  <div class="body"><p>Security review. One line in this file is a real problem.</p></div>
+  <pre class="code" data-file="experiment.yml">variables:
+  - group: orders-prod-secrets
+  - name: imageRepo
+    value: orders-api
+  - name: dbPassword
+    value: 'S3cr3t-Pa55!'
+
+steps:
+  - script: ./migrate.sh
+    env:
+      DB_PASSWORD: $(db-password)</pre>
+  <div class="check" data-type="tapline" data-match="S3cr3t">
+    <p class="q">Tap the line that leaks a secret.</p>
+    <div class="explain">A plaintext value in YAML is in Git history forever, even after you delete it. Move it to the Key Vault-backed group and rotate it.</div>
+  </div>
+</section>
+
+<section class="step" id="s8">
+  <h2>8. Templates: write it once</h2>
+  <div class="body"><p>A <b>template</b> is a YAML file with <code>parameters</code> that other pipelines include. Platform teams use them to publish a hardened golden path.</p></div>
+  <pre class="code" data-file="templates/build.yml"># templates/build.yml
+parameters:
+  - name: imageName
+    type: string
+  - name: runTests
+    type: boolean
+    default: true
+
+stages:
+  - stage: Build
+    jobs:
+      - job: build
+        steps:
+          - ${{ if eq(parameters.runTests, true) }}:
+            - script: go test ./...
+          - task: Docker@2
+            inputs:
+              command: buildAndPush
+              containerRegistry: acr-connection
+              repository: ${{ parameters.imageName }}</pre>
+  <aside class="coming" data-set="B">
+    <dl>
+      <dt>GitHub Actions</dt><dd>Reusable workflows (<code>workflow_call</code>) and composite actions.</dd>
+      <dt>GitLab CI</dt><dd><code>include:</code> + <code>extends:</code> / CI components.</dd>
+      <dt>Jenkins</dt><dd>Shared libraries.</dd>
+      <dt>Classic pipelines</dt><dd>Task groups, now with real parameters.</dd>
+    </dl>
+  </aside>
+</section>
+
+<section class="step" id="s9">
+  <h2>9. Use the template</h2>
+  <div class="body"><p>Now each service's pipeline is tiny: include the template and pass parameters. At compile time, Azure Pipelines <b>expands</b> it into one full pipeline.</p><p>For security, <code>extends</code> goes further: your pipeline must fit <em>inside</em> an approved template, and environments can require it.</p></div>
+  <pre class="code" data-file="azure-pipelines.yml">trigger: [main]
+
+stages:
+  - template: templates/build.yml
+    parameters:
+      imageName: orders-api
+      runTests: true</pre>
+  <div class="check" data-type="tapline" data-match="imageName: orders-api">
+    <p class="q">Tap the line whose value ends up as the Docker task's <code>repository</code>.</p>
+    <div class="explain"><code>imageName</code> is substituted into <code>${{ parameters.imageName }}</code> at compile time, so the expanded task reads <code>repository: orders-api</code>.</div>
+  </div>
+</section>
+
+<section class="step summary" id="s10">
+  <h2>Variables, secrets & templates, sorted</h2>
+  <div class="body">You know when <code>${{ }}</code>, <code>$[ ]</code> and <code>$( )</code> are evaluated, how to keep secrets in Key Vault-backed groups, and how templates turn a golden path into a five-line pipeline.</div>
+  <div class="widget" data-widget="l6-step10"><div class="card"><ul class="list-check" style="font-size:15px"><li><code>$(var)</code>: default, just before each task</li><li><code>$[ ]</code>: runtime, in variables &amp; conditions</li><li><code>${{ }}</code>: compile time, shapes the pipeline</li><li>Secrets: Key Vault-linked group + explicit <code>env:</code></li><li>Templates + <code>extends</code> = reusable, enforceable pipelines</li></ul></div></div>
+</section>
+</article>
+</body>
+</html>

@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Predict the run · Azure Pipelines</title>
+<link rel="stylesheet" href="assets/styles.css">
+<style>
+  .pred-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 18px; align-items: start; }
+  .pred-row { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); margin-bottom: 8px; flex-wrap: wrap; }
+  .pred-row .pr-name { font-weight: 700; font-size: 14px; flex: 1; min-width: 120px; }
+  .pred-row .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 9px; overflow: hidden; }
+  .pred-row .seg button { border: 0; background: var(--surface); padding: 5px 10px; font-size: 12.5px; font-weight: 650; cursor: pointer; color: var(--text-2); border-right: 1px solid var(--border); }
+  .pred-row .seg button:last-child { border-right: 0; }
+  .pred-row .seg button.on { background: var(--accent); color: #fff; }
+  .pred-row.ok { border-color: var(--success); background: var(--success-soft); }
+  .pred-row.bad { border-color: var(--danger); background: var(--danger-soft); }
+  .pred-row .pr-why { flex-basis: 100%; font-size: 13px; color: var(--text-2); }
+  .scen { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
+  @media (max-width: 900px) { .pred-grid { grid-template-columns: minmax(0, 1fr); } }
+</style>
+</head>
+<body data-page="predict">
+<header id="topbar"></header>
+<div class="lesson-shell">
+<aside class="curriculum" id="curriculum"></aside>
+<main class="reader"><div class="reader-inner" style="max-width:1100px">
+
+  <div class="breadcrumb"><a href="index.html">Home</a><span class="sep">/</span><a href="chapter.html">Ch 7 · Azure Pipelines</a><span class="sep">/</span><span>Practice · Read &amp; reason</span></div>
+  <div class="lesson-head">
+    <span class="badge badge-violet">Practice · Read &amp; reason</span>
+    <h1 style="margin-top:10px">Predict the pipeline run</h1>
+    <div class="meta"><span>⏱ 8 min</span><span>·</span><span>3 scenarios</span><span>·</span><span>15% of chapter score</span></div>
+  </div>
+  <p>Senior engineers can look at a pipeline and <em>know</em> what will happen before pressing Run. Read the YAML, read the scenario, then predict the outcome of every stage. When you reveal, the simulator replays the run.</p>
+
+  <div class="scen" id="scen-tabs"></div>
+
+  <div class="pred-grid">
+    <div id="yaml"></div>
+    <div>
+      <div class="callout lab" style="margin-top:16px"><span class="c-ico">🎬</span><div id="scen-text"></div></div>
+      <div id="rows"></div>
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:12px">
+        <button class="btn btn-primary" id="reveal" disabled>Reveal the run ▶</button>
+        <button class="btn hidden" id="next-scen">Next scenario →</button>
+        <span class="subtle" id="score"></span>
+      </div>
+    </div>
+  </div>
+
+  <h2 style="margin-top:28px">Run view</h2>
+  <div class="card"><div id="graph"></div></div>
+
+  <div id="lesson-nav"></div>
+</div></main>
+</div>
+
+<script src="assets/app.js"></script>
+<script src="assets/yaml.js"></script>
+<script src="assets/pipeline-graph.js"></script>
+<script>
+KQY.block(document.getElementById("yaml"), `trigger: [main]
+pr: [main]                         # repo is on GitHub
+
+stages:
+  - stage: Build
+    jobs:
+      - job: test_and_build
+        steps:
+          - script: npm ci && npm test
+          - task: Docker@2
+            condition: and(succeeded(), ne(variables['Build.Reason'], 'PullRequest'))
+            inputs: { command: buildAndPush, containerRegistry: acr-connection, repository: orders-api }
+
+  - stage: Lint
+    dependsOn: []
+    jobs:
+      - job: lint
+        steps:
+          - script: npx eslint . && kube-linter lint k8s/
+
+  - stage: DeployDev
+    dependsOn: [Build, Lint]
+    condition: and(succeeded(), ne(variables['Build.Reason'], 'PullRequest'))
+    jobs:
+      - deployment: dev
+        environment: dev
+        strategy: { runOnce: { deploy: { steps: [ ... ] } } }
+
+  - stage: DeployProd
+    dependsOn: DeployDev
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+    jobs:
+      - deployment: prod
+        environment: prod          # has a required approval check
+        strategy: { runOnce: { deploy: { steps: [ ... ] } } }
+
+  - stage: Report
+    dependsOn: [Build, Lint]
+    condition: succeededOrFailed()
+    jobs:
+      - job: publish
+        steps:
+          - task: PublishTestResults@2`, { title: "azure-pipelines.yml" });
+
+const STAGES = [
+  { name: "Build", dependsOn: [] }, { name: "Lint", dependsOn: [] },
+  { name: "DeployDev", dependsOn: ["Build", "Lint"] }, { name: "DeployProd", dependsOn: ["DeployDev"] },
+  { name: "Report", dependsOn: ["Build", "Lint"] },
+];
+const OUT = ["succeeded", "failed", "skipped", "waiting"];
+const OUT_LABEL = { succeeded: "✓ Succeeded", failed: "✕ Failed", skipped: "– Skipped", waiting: "⏸ Waiting" };
+const SCEN = [
+  { t: "PR · tests fail", d: "A developer opens a <b>pull request</b> from <code>feature/cart</code> into <code>main</code>. One unit test fails. Lint passes.",
+    r: { Build: "failed", Lint: "succeeded", DeployDev: "skipped", DeployProd: "skipped", Report: "succeeded" },
+    w: { Build: "<code>npm test</code> exits non-zero, so the step fails and the job (and stage) fails. The Docker step never runs.",
+         Lint: "<code>dependsOn: []</code>: it ran in parallel and passed on its own.",
+         DeployDev: "Two reasons: a dependency failed (<code>succeeded()</code> is false) <em>and</em> it's a PR run.",
+         DeployProd: "Its dependency DeployDev didn't succeed, so it's skipped. It doesn't even reach the branch check.",
+         Report: "<code>succeededOrFailed()</code> runs after failures too. That's exactly why it's used for publishing test results." } },
+  { t: "main · all green", d: "The PR is fixed and <b>merged into <code>main</code></b>. Everything passes. Nobody has approved the prod deployment yet.",
+    r: { Build: "succeeded", Lint: "succeeded", DeployDev: "succeeded", DeployProd: "waiting", Report: "succeeded" },
+    w: { Build: "Tests pass. Not a PR, so the Docker push runs too.", Lint: "Passes.",
+         DeployDev: "Both dependencies succeeded and <code>Build.Reason</code> is <code>IndividualCI</code>, not <code>PullRequest</code>.",
+         DeployProd: "The condition is true (main + succeeded), but the <code>prod</code> environment's approval check pauses the stage <b>before</b> the job starts.",
+         Report: "Ran after Build and Lint." } },
+  { t: "PR · all green", d: "Another <b>pull request</b> (<code>feature/search</code> → <code>main</code>). Tests and lint pass.",
+    r: { Build: "succeeded", Lint: "succeeded", DeployDev: "skipped", DeployProd: "skipped", Report: "succeeded" },
+    w: { Build: "Succeeds. Note that the Docker step <em>inside</em> it is skipped by its step condition, but a skipped step doesn't fail the stage.",
+         Lint: "Passes.", DeployDev: "Everything succeeded, but <code>Build.Reason</code> is <code>PullRequest</code>, so the condition is false and the stage is skipped. PRs never deploy.",
+         DeployProd: "DeployDev was skipped, and <code>succeeded()</code> is false when a dependency was skipped, so this stage is skipped too.", Report: "Runs: dependencies finished." } },
+];
+let si = 0, pred = {}, revealed = false, totalOk = 0, totalN = 0;
+const doneScen = new Set();
+
+function drawTabs() {
+  document.getElementById("scen-tabs").innerHTML = SCEN.map((s, k) => `<button class="btn btn-sm ${k === si ? "btn-primary" : ""}" data-k="${k}">${doneScen.has(k) ? "✓ " : ""}Scenario ${k + 1}: ${s.t}</button>`).join("");
+  document.querySelectorAll("#scen-tabs .btn").forEach(b => b.onclick = () => { si = +b.dataset.k; load(); });
+}
+function load() {
+  pred = {}; revealed = false;
+  drawTabs();
+  document.getElementById("scen-text").innerHTML = `<strong>Scenario ${si + 1}.</strong> ${SCEN[si].d}`;
+  document.getElementById("rows").innerHTML = STAGES.map(s => `<div class="pred-row" data-s="${s.name}">
+      <span class="pr-name">${s.name}</span>
+      <span class="seg">${OUT.map(o => `<button data-o="${o}">${OUT_LABEL[o]}</button>`).join("")}</span>
+      <span class="pr-why hidden"></span></div>`).join("");
+  document.querySelectorAll(".pred-row").forEach(r => r.querySelectorAll("button").forEach(b => b.onclick = () => {
+    if (revealed) return;
+    pred[r.dataset.s] = b.dataset.o;
+    r.querySelectorAll("button").forEach(x => x.classList.toggle("on", x === b));
+    document.getElementById("reveal").disabled = Object.keys(pred).length < STAGES.length;
+  }));
+  document.getElementById("reveal").disabled = true;
+  document.getElementById("reveal").classList.remove("hidden");
+  document.getElementById("next-scen").classList.add("hidden");
+  document.getElementById("score").textContent = "Predict all 5 stages to reveal.";
+  KQG.render(document.getElementById("graph"), { stages: STAGES.map(s => ({ ...s, state: "queued", note: "Not started" })) });
+}
+
+document.getElementById("reveal").onclick = async () => {
+  revealed = true;
+  document.getElementById("reveal").disabled = true;
+  const R = SCEN[si].r;
+  const st = Object.fromEntries(STAGES.map(s => [s.name, "queued"]));
+  const draw = () => KQG.render(document.getElementById("graph"), { stages: STAGES.map(s => ({ ...s, state: st[s.name], note: st[s.name] === "queued" ? "Not started" : undefined })) });
+  const wait = ms => new Promise(r => setTimeout(r, ms));
+  // replay: wave 1 (Build, Lint) → wave 2 (DeployDev, Report) → wave 3 (DeployProd)
+  for (const wave of [["Build", "Lint"], ["DeployDev", "Report"], ["DeployProd"]]) {
+    wave.forEach(n => { if (R[n] !== "skipped") st[n] = "running"; }); draw(); await wait(700);
+    wave.forEach(n => st[n] = R[n]); draw(); await wait(250);
+  }
+  let ok = 0;
+  document.querySelectorAll(".pred-row").forEach(r => {
+    const n = r.dataset.s, good = pred[n] === R[n];
+    if (good) ok++;
+    r.classList.add(good ? "ok" : "bad");
+    const w = r.querySelector(".pr-why");
+    w.innerHTML = `${good ? "✅" : `❌ Actual: <b>${OUT_LABEL[R[n]]}</b>.`} ${SCEN[si].w[n]}`;
+    w.classList.remove("hidden");
+  });
+  if (!doneScen.has(si)) { doneScen.add(si); totalOk += ok; totalN += STAGES.length; KQ.addXP(ok * 2); }
+  document.getElementById("score").innerHTML = `<b>${ok}/${STAGES.length}</b> correct this scenario · overall ${totalOk}/${totalN}`;
+  drawTabs();
+  const next = SCEN.findIndex((_, k) => !doneScen.has(k));
+  const nb = document.getElementById("next-scen");
+  if (next >= 0) { nb.textContent = "Next scenario →"; nb.onclick = () => { si = next; load(); window.scrollTo({ top: 0, behavior: "smooth" }); }; }
+  else { KQ.markDone("predict"); nb.textContent = "All scenarios done: go to the YAML lab →"; nb.onclick = () => location.href = "lab-yaml.html"; }
+  nb.classList.remove("hidden");
+};
+load();
+</script>
+</body>
+</html>

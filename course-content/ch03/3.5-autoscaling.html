@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>3.5 · Autoscaling &amp; disruption</title>
+<link rel="stylesheet" href="../content.css">
+</head>
+<body>
+<article class="lesson" data-id="3.5" data-chapter="3">
+<nav class="crumbs"><a href="../index.html">Course</a> / <a href="index.html">Chapter 3</a> / 3.5</nav>
+<header>
+  <p class="kicker">Chapter 3 · Lesson 3.5 · ~11 steps · ~14 min</p>
+  <h1>Autoscaling &amp; disruption</h1>
+  <p class="meta">You'll be able to configure a HorizontalPodAutoscaler, calculate what it will do, explain how it works with the cluster autoscaler, and protect availability during maintenance with a PodDisruptionBudget.</p>
+</header>
+
+<section class="step" id="s1">
+  <h2>1. Three kinds of scaling</h2>
+  <div class="body">
+    <ul>
+      <li><b>Horizontal Pod Autoscaler (HPA)</b>: more or fewer <b>pods</b>, from metrics.</li>
+      <li><b>Cluster autoscaler</b>: more or fewer <b>nodes</b>, when pods can't fit or nodes sit empty.</li>
+      <li><b>Vertical Pod Autoscaler (VPA)</b>: bigger or smaller <b>requests</b> per pod (mostly used for recommendations).</li>
+    </ul>
+    <p>HPA and the cluster autoscaler work as a pair. HPA adds pods; if they're Pending for lack of room, the cluster autoscaler adds nodes.</p>
+  </div>
+  <aside class="coming" data-set="A">
+    <dl>
+      <dt>Windows/IIS admin</dt><dd>Like VM Scale Set autoscale rules, but for app instances, and reacting in seconds rather than minutes.</dd>
+      <dt>Linux admin</dt><dd>Think of a control loop that adjusts the replica count from averaged metrics, with hysteresis built in.</dd>
+      <dt>Developer (Compose)</dt><dd>Compose has no autoscaling; you'd run <code>--scale</code> by hand.</dd>
+      <dt>Other clouds</dt><dd>HPA is the same on EKS and GKE. The cluster autoscaler is built into AKS; on EKS you might know Karpenter. AKS has a Karpenter-based option too, called Node Auto Provisioning (Chapter 4).</dd>
+    </dl>
+  </aside>
+</section>
+
+<section class="step" id="s2">
+  <h2>2. An HPA for orders-api</h2>
+  <div class="body">
+    <p>Use <code>autoscaling/v2</code>. This HPA keeps average CPU around 70% <b>of the requested CPU</b>, with between 2 and 10 replicas.</p>
+  </div>
+  <pre class="code" data-file="k8s/base/hpa.yaml">apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: orders-api
+  namespace: orders
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: orders-api
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70</pre>
+  <div class="check" data-type="fill">
+    <p class="q">Which field sets the target percentage?</p>
+    <pre class="code" data-file="hpa.yaml">        target:
+          type: Utilization
+          <span class="blank">?</span>: 70</pre>
+    <ul class="chips">
+      <li class="correct"><code>averageUtilization</code></li>
+      <li><code>targetCPUUtilizationPercentage</code> <span class="why">That's the old <code>autoscaling/v1</code> field.</span></li>
+      <li><code>averageValue</code> <span class="why"><code>averageValue</code> is an absolute amount (e.g. <code>500m</code>), used with <code>type: AverageValue</code>.</span></li>
+      <li><code>threshold</code> <span class="why">Not an HPA field.</span></li>
+    </ul>
+    <div class="explain"><code>averageUtilization</code> is a percentage of each pod's <b>request</b>.</div>
+  </div>
+</section>
+
+<section class="step" id="s3">
+  <h2>3. The formula</h2>
+  <div class="body">
+    <p>Every 15 seconds the HPA computes:</p>
+    <pre>desired = ceil( currentReplicas × currentMetric / target )</pre>
+    <p>Example: 3 replicas averaging 140% CPU against a 70% target gives ceil(3 × 140 / 70) = <b>6</b>.</p>
+    <p>Then it limits the result to min and max. It also ignores changes within 10%, and by default waits 5 minutes before scaling <b>down</b>, so it doesn't flap.</p>
+  </div>
+  <div class="widget" data-widget="hpa-sim">A load slider (requests per second) drives average CPU per pod. The widget shows the formula filled in with live numbers, the desired replicas (clamped to min/max), and pods appearing over time. A toggle removes CPU requests, and the HPA shows <code>&lt;unknown&gt;/70%</code> and does nothing.</div>
+</section>
+
+<section class="step" id="s4">
+  <h2>4. No requests, no scaling</h2>
+  <div class="check" data-type="mcq">
+    <p class="q">The HPA above shows <code>TARGETS: &lt;unknown&gt;/70%</code> and never scales. The Deployment's containers have a memory limit but no CPU request. Why?</p>
+    <ol class="options">
+      <li>metrics-server is too slow <span class="why">Possible in general, but here the cause is in the spec.</span></li>
+      <li class="correct">CPU utilisation is a percentage of the CPU request; with no request, there's nothing to compute a percentage of</li>
+      <li>The HPA needs <code>autoscaling/v1</code> <span class="why">v2 is the current API.</span></li>
+      <li>minReplicas is too high <span class="why">That limits scaling down, not the metric.</span></li>
+    </ol>
+    <div class="explain">Set CPU requests on every container in the pod (sidecars too), and check that metrics-server is running.</div>
+  </div>
+</section>
+
+<section class="step" id="s5">
+  <h2>5. Other metrics</h2>
+  <div class="body">
+    <p>CPU is a poor fit for some apps. HPA <code>v2</code> can also scale on:</p>
+    <ul>
+      <li>memory;</li>
+      <li><b>custom metrics</b> per pod, such as requests per second;</li>
+      <li><b>external metrics</b>, such as queue length.</li>
+    </ul>
+    <p>On AKS, the <b>KEDA</b> add-on is the easy way to scale on Azure Service Bus queue depth and many other sources, and it can even scale to zero.</p>
+  </div>
+</section>
+
+<section class="step" id="s6">
+  <h2>6. The cluster autoscaler</h2>
+  <div class="body">
+    <p>When pods are Pending because no node has room, the <b>cluster autoscaler</b> adds nodes to that node pool, within the pool's min and max. When nodes stay underused and their pods can move elsewhere, it removes them.</p>
+    <p>New nodes take a few minutes to arrive, so HPA scale-ups can briefly show Pending pods. AKS configuration (per-pool min/max, profiles, Node Auto Provisioning) is in Chapter 4.</p>
+  </div>
+</section>
+
+<section class="step" id="s7">
+  <h2>7. Voluntary disruptions</h2>
+  <div class="body">
+    <p>Pods also disappear on purpose:</p>
+    <ul>
+      <li>node upgrades;</li>
+      <li>the cluster autoscaler removing a node;</li>
+      <li><code>kubectl drain</code> for maintenance.</li>
+    </ul>
+    <p>These are <b>voluntary disruptions</b>: they go through the <b>eviction API</b>, which respects a <b>PodDisruptionBudget (PDB)</b>.</p>
+    <p>A PDB says how many pods must stay available (<code>minAvailable</code>) or may be down at once (<code>maxUnavailable</code>). An eviction that would break the budget is refused, and the drain waits.</p>
+  </div>
+  <pre class="code" data-file="k8s/base/pdb.yaml">apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: orders-api
+  namespace: orders
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: orders-api</pre>
+</section>
+
+<section class="step" id="s8">
+  <h2>8. A PDB that blocks everything</h2>
+  <div class="check" data-type="predict">
+    <p class="q">A Deployment has 2 replicas and a PDB with <code>minAvailable: 2</code>. AKS starts a node upgrade and drains the node running one of them. What happens?</p>
+    <ol class="options">
+      <li>The pod is evicted and recreated elsewhere <span class="why">Evicting it would leave 1 available, below the minimum of 2.</span></li>
+      <li class="correct">The eviction is refused; the drain retries and the upgrade stalls on that node</li>
+      <li>The PDB is ignored during upgrades <span class="why">Upgrades use the eviction API and respect PDBs, at least until a timeout.</span></li>
+      <li>The Deployment scales to 3 first <span class="why">PDBs don't create pods.</span></li>
+    </ol>
+    <div class="explain">A budget equal to the replica count allows zero disruptions. Use <code>maxUnavailable: 1</code>, or <code>minAvailable</code> lower than replicas, and run at least 2 replicas. AKS upgrades fail with a PDB-related error if a drain can't finish.</div>
+  </div>
+</section>
+
+<section class="step" id="s9">
+  <h2>9. PDBs don't stop everything</h2>
+  <div class="body">
+    <p><b>Involuntary</b> disruptions ignore PDBs:</p>
+    <ul>
+      <li>a node crashing</li>
+      <li>an out-of-memory eviction</li>
+      <li>a zone outage</li>
+    </ul>
+    <p>That's what replicas, topology spread and zones are for. A PDB only makes <i>planned</i> work careful.</p>
+  </div>
+</section>
+
+<section class="step" id="s10">
+  <h2>10. Watching an HPA</h2>
+  <pre class="output">$ kubectl get hpa -n orders -w
+NAME         REFERENCE               TARGETS        MINPODS   MAXPODS   REPLICAS
+orders-api   Deployment/orders-api   cpu: 38%/70%   2         10        2
+orders-api   Deployment/orders-api   cpu: 142%/70%  2         10        2
+orders-api   Deployment/orders-api   cpu: 142%/70%  2         10        5
+orders-api   Deployment/orders-api   cpu: 66%/70%   2         10        5</pre>
+  <div class="body"><p>When the HPA manages <code>replicas</code>, remove <code>replicas</code> from the Deployment YAML (or ignore it in your tooling). Otherwise every <code>kubectl apply</code> resets the count the HPA chose.</p></div>
+</section>
+
+<section class="step summary" id="s11">
+  <h2>Autoscaling, sorted</h2>
+  <ul>
+    <li>HPA (pods) + cluster autoscaler (nodes); use <code>autoscaling/v2</code>.</li>
+    <li>desired = ceil(current × metric / target), clamped to min/max, with a scale-down delay.</li>
+    <li>CPU utilisation needs CPU requests; KEDA scales on queues and events.</li>
+    <li>PDBs protect against voluntary disruptions (drains, upgrades), never crashes.</li>
+    <li>Never set a PDB that allows zero disruptions.</li>
+  </ul>
+</section>
+</article>
+</body>
+</html>

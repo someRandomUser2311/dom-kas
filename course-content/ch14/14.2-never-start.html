@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>14.2 · Pods that never start</title>
+<link rel="stylesheet" href="../content.css">
+</head>
+<body>
+<article class="lesson" data-id="14.2" data-chapter="14">
+<nav class="crumbs"><a href="../index.html">Course</a> / <a href="index.html">Chapter 14</a> / 14.2</nav>
+<header>
+  <p class="kicker">Chapter 14 · Lesson 14.2 · ~12 steps · ~15 min</p>
+  <h1>Pods that never start</h1>
+  <p class="meta">You'll be able to diagnose Pending, ImagePullBackOff and CreateContainerConfigError from real <code>describe</code> output, and pick the right fix.</p>
+</header>
+
+<section class="step" id="s1">
+  <h2>1. Three ways to never start</h2>
+  <div class="body">
+    <ul>
+      <li><b>Pending</b>: the pod isn't scheduled, or is waiting for a volume. The scheduler's events explain why.</li>
+      <li><b>ImagePullBackOff</b>: scheduled, but the kubelet can't fetch the image.</li>
+      <li><b>CreateContainerConfigError</b>: the image is there, but something the container needs (a ConfigMap or Secret key) is missing.</li>
+    </ul>
+    <p>In every case, the answer is in <code>kubectl describe pod</code>'s Events.</p>
+  </div>
+  <aside class="coming" data-set="A">
+    <dl>
+      <dt>Windows/IIS admin</dt><dd>Like a service that won't start because the server is full, the installer can't be downloaded, or a config file is missing. The event log says which.</dd>
+      <dt>Linux admin</dt><dd>Scheduling failure ≈ no host fits; image pull ≈ the package repository is unreachable; config error ≈ a missing <code>EnvironmentFile</code>.</dd>
+      <dt>Developer (Compose)</dt><dd><code>docker compose up</code> fails on pull or on a missing env file in much the same way.</dd>
+      <dt>Other clouds</dt><dd>The messages match EKS and GKE, apart from registry authentication details.</dd>
+    </dl>
+  </aside>
+</section>
+
+<section class="step" id="s2">
+  <h2>2. Pending: diagnose #1</h2>
+  <div class="check" data-type="diagnose">
+    <p class="q">What's the cause?</p>
+    <pre class="output">Name:       orders-worker-6b9d7c8f4-v2m8k
+Status:     Pending
+Containers:
+  worker:
+    Requests:  cpu: 4, memory: 2Gi
+Events:
+  Type     Reason            From               Message
+  Warning  FailedScheduling  default-scheduler  0/5 nodes are available: 2 node(s) had untolerated taint
+           {CriticalAddonsOnly: true}, 3 Insufficient cpu. preemption: 0/5 nodes are available:
+           2 Preemption is not helpful for scheduling, 3 No preemption victims found for incoming pod.
+  Normal   NotTriggerScaleUp cluster-autoscaler pod didn't trigger scale-up: 1 max node group size reached</pre>
+    <ol class="options">
+      <li>It needs a toleration for CriticalAddonsOnly <span class="why">Those are the system nodes; apps should stay off them.</span></li>
+      <li class="correct">It requests 4 CPUs; the user nodes don't have that free, and the user pool is already at its autoscaler max</li>
+      <li>The image is wrong <span class="why">It isn't scheduled yet, so no pull was attempted.</span></li>
+      <li>The scheduler is down <span class="why">The scheduler is clearly answering.</span></li>
+    </ol>
+    <div class="explain">Fix: lower the request if 4 CPUs isn't really needed (check usage), or raise the pool's max count, or add a bigger pool. The system-node taint is working as intended.</div>
+  </div>
+</section>
+
+<section class="step" id="s3">
+  <h2>3. Pending: diagnose #2 (volumes)</h2>
+  <div class="check" data-type="diagnose">
+    <p class="q">What's the cause?</p>
+    <pre class="output">Events:
+  Warning  FailedScheduling  default-scheduler  0/5 nodes are available: 1 node(s) had volume node affinity conflict,
+           2 node(s) had untolerated taint {CriticalAddonsOnly: true}, 2 Insufficient memory.
+$ kubectl get pv pvc-7f2… -o jsonpath='{.spec.nodeAffinity}'
+{"required":{"nodeSelectorTerms":[{"matchExpressions":[{"key":"topology.kubernetes.io/zone","operator":"In","values":["westeurope-1"]}]}]}}</pre>
+    <ol class="options">
+      <li class="correct">The pod's disk is in zone 1; the only zone-1 user node is full, so the pod can't run anywhere its disk can attach</li>
+      <li>The PVC isn't bound <span class="why">The PV exists and is bound; the issue is its zone.</span></li>
+      <li>The StorageClass is wrong <span class="why">The class worked; LRS disks are simply zonal.</span></li>
+      <li>Memory limits are too low <span class="why">"Insufficient memory" refers to node capacity against requests.</span></li>
+    </ol>
+    <div class="explain">Zonal disks pin pods to a zone (lesson 3.4). Make sure each zone has spare capacity (autoscaler min per zone), or use ZRS disks for workloads that must move between zones.</div>
+  </div>
+</section>
+
+<section class="step" id="s4">
+  <h2>4. ImagePullBackOff: diagnose #3</h2>
+  <div class="check" data-type="diagnose">
+    <p class="q">What's the cause?</p>
+    <pre class="output">Events:
+  Normal   Pulling   kubelet  Pulling image "contosoacr.azurecr.io/orders-api:1.5.0"
+  Warning  Failed    kubelet  Failed to pull image "contosoacr.azurecr.io/orders-api:1.5.0": rpc error: code = NotFound
+           desc = failed to pull and unpack image "contosoacr.azurecr.io/orders-api:1.5.0": failed to resolve reference
+           "contosoacr.azurecr.io/orders-api:1.5.0": contosoacr.azurecr.io/orders-api:1.5.0: not found
+  Warning  Failed    kubelet  Error: ErrImagePull
+  Normal   BackOff   kubelet  Back-off pulling image "contosoacr.azurecr.io/orders-api:1.5.0"</pre>
+    <ol class="options">
+      <li>The kubelet lacks AcrPull <span class="why">That would be 401 Unauthorized, not "not found".</span></li>
+      <li class="correct">The tag <code>1.5.0</code> doesn't exist in the registry: never pushed, or a typo</li>
+      <li>DNS for the registry fails <span class="why">The registry answered.</span></li>
+      <li>The node is out of disk <span class="why">That's a different message.</span></li>
+    </ol>
+    <div class="explain">Check with <code>az acr repository show-tags -n contosoacr --repository orders-api</code>. Usually the build failed or pushed a different tag. The pipeline should deploy the tag it just pushed (lesson 10.6).</div>
+  </div>
+</section>
+
+<section class="step" id="s5">
+  <h2>5. ImagePullBackOff: the other two causes</h2>
+  <table>
+    <tr><th>Message</th><th>Cause</th><th>Fix</th></tr>
+    <tr><td><code>401 Unauthorized</code></td><td>Kubelet identity lacks AcrPull</td><td><code>az aks update --attach-acr</code> / IaC role assignment (lesson 6.2)</td></tr>
+    <tr><td><code>dial tcp: lookup contosoacr.azurecr.io … no such host</code> or <code>i/o timeout</code></td><td>Private endpoint DNS not resolving, or egress blocked</td><td>Link <code>privatelink.azurecr.io</code> to the VNet; allow egress (lessons 5.3, 6.3)</td></tr>
+  </table>
+</section>
+
+<section class="step" id="s6">
+  <h2>6. CreateContainerConfigError: diagnose #4</h2>
+  <div class="check" data-type="diagnose">
+    <p class="q">The pod shows <code>CreateContainerConfigError</code>. What's the cause?</p>
+    <pre class="output">Events:
+  Warning  Failed  kubelet  Error: couldn't find key PAYMENTS_URL in ConfigMap orders/orders-api-config</pre>
+    <ol class="options">
+      <li>The ConfigMap doesn't exist <span class="why">It exists; the message says a <i>key</i> is missing from it.</span></li>
+      <li class="correct">The Deployment references key <code>PAYMENTS_URL</code>, which isn't in <code>orders-api-config</code></li>
+      <li>The image is wrong <span class="why">The image pulled fine; the container couldn't be configured.</span></li>
+      <li>RBAC blocks ConfigMaps <span class="why">The kubelet can read the ConfigMaps its pods use.</span></li>
+    </ol>
+    <div class="explain">Add the key, or mark the reference <code>optional: true</code> if the app can live without it. With Kustomize's <code>configMapGenerator</code>, check that the overlay actually includes the key (<code>kubectl kustomize</code>).</div>
+  </div>
+</section>
+
+<section class="step" id="s7">
+  <h2>7. Pending forever with no events?</h2>
+  <div class="body">
+    <p>If a pod shows nothing from the scheduler, check two things:</p>
+    <ul>
+      <li>Is there a scheduler for it? A custom <code>schedulerName</code> nobody runs leaves pods Pending with no events.</li>
+      <li>Does the pod exist at all? Look at the ReplicaSet's events for quota or admission rejections (lesson 8.2) and policy denials (Chapter 15).</li>
+    </ul>
+  </div>
+</section>
+
+<section class="step" id="s8">
+  <h2>8. Admission rejections look different</h2>
+  <pre class="output">$ kubectl describe rs orders-api-5b6f4c9d7 -n orders | tail -2
+  Warning  FailedCreate  replicaset-controller  Error creating: admission webhook "validation.gatekeeper.sh" denied
+           the request: [azurepolicy-k8sazurev3allowedimages] Container image docker.io/library/nginx:latest for
+           container web has not been allowed.</pre>
+  <div class="body"><p>The pod was never created. A policy (Chapter 16) rejected it. The fix is in the manifest, not the cluster.</p></div>
+</section>
+
+<section class="step" id="s9">
+  <h2>9. Init containers</h2>
+  <div class="body"><p><code>Init:0/1</code> or <code>Init:CrashLoopBackOff</code> means an init container hasn't finished (lesson 2.1). Read its logs: <code>kubectl logs pod -c &lt;init-container-name&gt;</code>. A wait-for-database loop stuck because of a network policy is a classic case.</p></div>
+</section>
+
+<section class="step" id="s10">
+  <h2>10. Fix and verify</h2>
+  <div class="body"><p>After a fix, watch it land: <code>kubectl rollout status</code> for template changes, or <code>kubectl get pods -w</code>. For changes outside the pod (AcrPull, quota, DNS), the kubelet or ReplicaSet controller retries automatically with back-off, so it can take a minute. Deleting the stuck pod forces an immediate retry.</p></div>
+</section>
+
+<section class="step" id="s11">
+  <h2>11. Summary table</h2>
+  <table>
+    <tr><th>Status</th><th>Read</th><th>Usual causes</th></tr>
+    <tr><td>Pending</td><td>FailedScheduling / autoscaler events</td><td>Requests too big, taints, affinity, zonal PV, pool at max</td></tr>
+    <tr><td>ImagePullBackOff</td><td>kubelet Failed events</td><td>Tag not found, 401 (AcrPull), DNS/egress</td></tr>
+    <tr><td>CreateContainerConfigError</td><td>kubelet Failed event</td><td>Missing ConfigMap/Secret or key</td></tr>
+    <tr><td>No pod at all</td><td>ReplicaSet events</td><td>Quota, admission policy</td></tr>
+  </table>
+</section>
+
+<section class="step summary" id="s12">
+  <h2>Never started, sorted</h2>
+  <ul>
+    <li>Pending: read FailedScheduling, which counts the reasons per node.</li>
+    <li>ImagePullBackOff: "not found" = tag, 401 = AcrPull, no such host = DNS.</li>
+    <li>CreateContainerConfigError: a missing ConfigMap/Secret key.</li>
+    <li>No pod: check the ReplicaSet for quota and policy rejections.</li>
+  </ul>
+</section>
+</article>
+</body>
+</html>

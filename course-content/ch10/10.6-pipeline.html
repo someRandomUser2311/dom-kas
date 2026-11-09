@@ -1,0 +1,210 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>10.6 · In the pipeline</title>
+<link rel="stylesheet" href="../content.css">
+</head>
+<body>
+<article class="lesson" data-id="10.6" data-chapter="10">
+<nav class="crumbs"><a href="../index.html">Course</a> / <a href="index.html">Chapter 10</a> / 10.6</nav>
+<header>
+  <p class="kicker">Chapter 10 · Lesson 10.6 · ~12 steps · ~15 min</p>
+  <h1>In the pipeline</h1>
+  <p class="meta">You'll be able to build an image once and promote the same artifact through dev and prod with Kustomize or Helm, using a reusable deploy template.</p>
+</header>
+
+<section class="step" id="s1">
+  <h2>1. The shape</h2>
+  <div class="body">
+    <p>One pipeline, three stages:</p>
+    <ul>
+      <li><b>Build</b>: test, build and push the image <i>once</i>, tagged with <code>$(Build.BuildId)</code>. Record the digest.</li>
+      <li><b>DeployDev</b>: deploy that exact image with the dev overlay or values.</li>
+      <li><b>DeployProd</b>: after approval, deploy the <b>same</b> image with the prod overlay or values.</li>
+    </ul>
+    <p>Nothing is rebuilt along the way.</p>
+  </div>
+  <aside class="coming" data-set="B">
+    <dl>
+      <dt>GitHub Actions</dt><dd>Build job outputs the tag; deploy jobs use <code>environment:</code> with protection rules, the same pattern.</dd>
+      <dt>GitLab CI</dt><dd>A build stage with artifacts, then deploy jobs with <code>environment:</code> and <code>when: manual</code> for prod.</dd>
+      <dt>Jenkins</dt><dd>One pipeline with an <code>input</code> step before prod; pass the image tag between stages.</dd>
+      <dt>Classic pipelines</dt><dd>A build pipeline producing an artifact, and a release pipeline with dev and prod stages, now in one YAML file.</dd>
+    </dl>
+  </aside>
+</section>
+
+<section class="step" id="s2">
+  <h2>2. Kustomize: set the image at deploy time</h2>
+  <div class="body"><p>The overlay in Git holds a placeholder tag. The deploy job sets the real tag with <code>kustomize edit set image</code> (or the bake task), renders, and applies.</p></div>
+  <pre class="code" data-file="templates/deploy-kustomize.yml">parameters:
+  - name: environment
+    type: string
+  - name: overlay
+    type: string
+  - name: serviceConnection
+    type: string
+  - name: resourceGroup
+    type: string
+  - name: cluster
+    type: string
+
+jobs:
+  - deployment: deploy
+    environment: ${{ parameters.environment }}
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+            - checkout: self
+            - task: AzureCLI@2
+              displayName: Deploy ${{ parameters.overlay }}
+              inputs:
+                azureSubscription: ${{ parameters.serviceConnection }}
+                scriptType: bash
+                scriptLocation: inlineScript
+                inlineScript: |
+                  set -euo pipefail
+                  cd k8s/overlays/${{ parameters.overlay }}
+                  kustomize edit set image contosoacr.azurecr.io/orders-api=contosoacr.azurecr.io/orders-api:$(Build.BuildId)
+                  az aks get-credentials -g ${{ parameters.resourceGroup }} -n ${{ parameters.cluster }} --overwrite-existing
+                  kubelogin convert-kubeconfig -l azurecli
+                  kubectl apply -k .
+                  kubectl rollout status deploy/orders-api -n orders --timeout=5m</pre>
+</section>
+
+<section class="step" id="s3">
+  <h2>3. Where the tag is injected</h2>
+  <div class="check" data-type="tapline" data-match="kustomize edit set image">
+    <p class="q">In the template above, tap the line that makes this deployment use the image built by this run.</p>
+    <div class="explain"><code>kustomize edit set image … :$(Build.BuildId)</code> rewrites the overlay's <code>images</code> entry in the agent's working copy, not in Git. Every environment gets the same Build ID.</div>
+  </div>
+</section>
+
+<section class="step" id="s4">
+  <h2>4. Or the KubernetesManifest bake action</h2>
+  <div class="body"><p><code>KubernetesManifest@1</code> can render with <code>action: bake</code> (<code>renderType: kustomize</code> or <code>helm</code>), and then deploy the rendered output with <code>action: deploy</code> and the <code>containers</code> input to substitute the image. It's handy if you prefer tasks to scripts.</p></div>
+  <pre class="code" data-file="(steps excerpt)">- task: KubernetesManifest@1
+  name: bake
+  inputs:
+    action: bake
+    renderType: kustomize
+    kustomizationPath: k8s/overlays/prod
+- task: KubernetesManifest@1
+  inputs:
+    action: deploy
+    connectionType: azureResourceManager
+    azureSubscriptionConnection: sc-orders-prod
+    azureResourceGroup: rg-orders-prod
+    kubernetesCluster: aks-orders-prod
+    namespace: orders
+    manifests: $(bake.manifestsBundle)
+    containers: contosoacr.azurecr.io/orders-api:$(Build.BuildId)</pre>
+</section>
+
+<section class="step" id="s5">
+  <h2>5. Helm in the pipeline</h2>
+  <div class="body"><p>With Helm, the deploy step is the safe upgrade from lesson 10.4, using the environment's values file and the run's tag. Use the <code>HelmDeploy</code> task, or <code>helm</code> inside <code>AzureCLI@2</code> (shown).</p></div>
+  <pre class="code" data-file="templates/deploy-helm.yml (inlineScript)">helm upgrade --install orders-api oci://contosoacr.azurecr.io/helm/orders-api \
+  --version 0.3.0 -n orders \
+  -f deploy/values-${{ parameters.environment }}.yaml \
+  --set image.tag=$(Build.BuildId) \
+  --atomic --wait --timeout 5m</pre>
+</section>
+
+<section class="step" id="s6">
+  <h2>6. The main pipeline</h2>
+  <pre class="code" data-file="azure-pipelines.yml">trigger: [main]
+
+stages:
+  - stage: Build
+    jobs:
+      - job: build
+        steps:
+          - script: go test ./...
+          - task: Docker@2
+            inputs:
+              command: buildAndPush
+              containerRegistry: acr-connection
+              repository: orders-api
+              tags: $(Build.BuildId)
+
+  - stage: DeployDev
+    dependsOn: Build
+    jobs:
+      - template: templates/deploy-kustomize.yml
+        parameters: { environment: dev, overlay: dev, serviceConnection: sc-orders-dev, resourceGroup: rg-orders-dev, cluster: aks-orders-dev }
+
+  - stage: DeployProd
+    dependsOn: DeployDev
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+    jobs:
+      - template: templates/deploy-kustomize.yml
+        parameters: { environment: prod, overlay: prod, serviceConnection: sc-orders-prod, resourceGroup: rg-orders-prod, cluster: aks-orders-prod }</pre>
+  <div class="body"><p>The prod job targets the <code>prod</code> environment, which has the approval check (Chapter 7). <code>aks-orders-prod</code> is private, so the prod stage runs on the Managed DevOps Pool (Chapter 6). Add <code>pool: { name: mdp-orders-prod }</code> to its job.</p></div>
+</section>
+
+<section class="step" id="s7">
+  <h2>7. Put the stages in order</h2>
+  <div class="check" data-type="custom">
+    <p class="q">The stage list is scrambled. Arrange it so one artifact moves through dev to prod, with prod gated.</p>
+    <div class="widget" data-widget="stage-sim">Draggable stage cards:
+      <ul>
+        <li>"Build &amp; push image (once)"</li>
+        <li>"Deploy dev (overlay dev, same tag)"</li>
+        <li>"Smoke test dev"</li>
+        <li>"Approval on prod environment"</li>
+        <li>"Deploy prod (overlay prod, same tag)"</li>
+        <li>A decoy, "Rebuild image for prod"</li>
+      </ul>
+      Success when the order is Build → Deploy dev → Smoke test → Approval → Deploy prod, with the rebuild card discarded. The decoy gives the hint "Prod would run an image that dev never tested."</div>
+    <div class="explain">Promote, don't rebuild. The approval is where a human checks dev before the same bits reach prod.</div>
+  </div>
+</section>
+
+<section class="step" id="s8">
+  <h2>8. Promote by digest for extra safety</h2>
+  <div class="body">
+    <p>A tag could in theory be re-pushed between dev and prod. For certainty, capture the image <b>digest</b> in the Build stage and pass it on as an output variable. Deploy <code>orders-api@sha256:…</code>. Chapter 16 also verifies its signature before prod.</p>
+  </div>
+</section>
+
+<section class="step" id="s9">
+  <h2>9. Validate in PRs</h2>
+  <div class="body">
+    <p>The PR pipeline (Chapter 7) renders every overlay and lints it. Typos fail the PR, not the deploy:</p>
+    <ul>
+      <li><code>kubectl kustomize k8s/overlays/dev</code> and <code>k8s/overlays/prod</code>;</li>
+      <li><code>helm lint</code> and <code>helm template</code>;</li>
+      <li>kube-linter or kubeconform on the output.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="step" id="s10">
+  <h2>10. Don't commit the rendered tag back</h2>
+  <div class="body">
+    <p>Some teams commit the new tag into the overlay so Git always says what's deployed. That's the GitOps approach, with Flux or Argo CD pulling from Git.</p>
+    <p>It's a valid design, but different: the pipeline writes to Git, and a controller in the cluster deploys. This course uses push-based pipelines; the AKS GitOps (Flux) extension is the managed option if you choose pull.</p>
+  </div>
+</section>
+
+<section class="step" id="s11">
+  <h2>11. Same template, many apps</h2>
+  <div class="body"><p><code>templates/deploy-kustomize.yml</code> is reusable for <code>web</code> and <code>payments</code> too. With <code>extends</code> and a required-template check (Chapter 7), the platform team can guarantee every app deploys the same safe way.</p></div>
+</section>
+
+<section class="step summary" id="s12">
+  <h2>In the pipeline, sorted</h2>
+  <ul>
+    <li>Build once; deploy the same tag or digest to every environment.</li>
+    <li>Kustomize: <code>kustomize edit set image</code> + <code>kubectl apply -k</code> (or KubernetesManifest bake).</li>
+    <li>Helm: <code>helm upgrade --install --atomic --wait</code> with per-environment values.</li>
+    <li>A reusable deploy template; prod gated by its environment; PRs render and lint every overlay.</li>
+  </ul>
+</section>
+</article>
+</body>
+</html>

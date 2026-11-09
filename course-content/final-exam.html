@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Final exam · Kubernetes → AKS → DevOps on Azure</title>
+<link rel="stylesheet" href="content.css">
+</head>
+<body>
+<main>
+<nav class="crumbs"><a href="index.html">Course</a> / Final exam</nav>
+<p class="kicker">Course-wide · 60 minutes · ~40 questions</p>
+<h1>Final exam</h1>
+<ul>
+  <li><b>Unlocks:</b> when Chapters 1–16 are all Completed. It can be taken before or after the capstone.</li>
+  <li><b>Pass:</b> 80%.</li>
+  <li><b>Format:</b> timed (60 minutes), with question order and options shuffled.</li>
+  <li><b>Retakes:</b> unlimited, each with a fresh draw.</li>
+</ul>
+
+<h2>Blueprint</h2>
+<p>About 32 questions are drawn from the chapter quiz pools (each chapter's <code>practice.html#quiz</code>). The remaining ~8 come from the integration pool below, which crosses chapters. The draw is weighted toward Chapters 5–16:</p>
+<table>
+  <tr><th>Chapters</th><th>Questions drawn</th></tr>
+  <tr><td>1–3 (Kubernetes foundations)</td><td>6</td></tr>
+  <tr><td>4–6 (AKS)</td><td>7</td></tr>
+  <tr><td>7, 10, 11 (pipelines, packaging, releases)</td><td>7</td></tr>
+  <tr><td>8–9 (traffic and network policy)</td><td>4</td></tr>
+  <tr><td>12–13 (IaC: from the language the learner chose, plus 1 translate)</td><td>4</td></tr>
+  <tr><td>14–16 (operate and secure)</td><td>4</td></tr>
+  <tr><td>Integration pool (below)</td><td>8</td></tr>
+</table>
+
+<h2 id="integration">Integration pool (16; 8 drawn)</h2>
+<div class="check" data-type="mcq"><p class="q">A new cluster deploys orders-api: pods show ImagePullBackOff with 401. The pipeline pushed fine. What's missing, and where should it be fixed?</p><ol class="options"><li>AcrPush for the pipeline, in the YAML</li><li class="correct">AcrPull for the kubelet identity, as a role assignment in the IaC</li><li>An imagePullSecret in the overlay</li><li>The ACR admin user</li></ol><div class="explain">Chapters 5, 6, 12/13.</div></div>
+<div class="check" data-type="mcq"><p class="q">The prod release pipeline times out connecting to the API server ("no such host … privatelink"). The job runs on <code>vmImage: ubuntu-latest</code>. Fix?</p><ol class="options"><li>Add authorized IP ranges</li><li class="correct">Run the job on the Managed DevOps Pool in a VNet that resolves the private DNS zone</li><li>Make the cluster public</li><li>Use a Kubernetes service connection</li></ol><div class="explain">Chapters 6 and 7.</div></div>
+<div class="check" data-type="mcq"><p class="q">After adding default-deny (Ingress + Egress) to <code>orders</code>, orders-api logs "lookup kv-orders-prod.vault.azure.net: i/o timeout", and the Key Vault CSI mount fails. First fix?</p><ol class="options"><li>Grant Key Vault Secrets User</li><li class="correct">Allow DNS egress (UDP/TCP 53 to kube-dns)</li><li>Disable the CSI driver</li><li>Make the vault public</li></ol><div class="explain">Chapters 9 and 15. (Mounts are done by the node's driver, but the app's own lookups fail first.)</div></div>
+<div class="check" data-type="mcq"><p class="q">A canary at 10% shows a higher 5xx rate. Which combination rejects it automatically?</p><ol class="options"><li>An HPA on error rate</li><li class="correct">A postRouteTraffic step querying the Prometheus 5xx ratio (canary vs stable) that fails → <code>on: failure</code> reject</li><li>A PDB</li><li>A readiness probe on /health/db</li></ol><div class="explain">Chapters 11 and 14.</div></div>
+<div class="check" data-type="mcq"><p class="q">Someone renamed the cluster resource in Terraform; the plan shows "1 to destroy, 1 to add" for the cluster. What prevents disaster, and what fixes it?</p><ol class="options"><li>Nothing; apply it</li><li class="correct"><code>prevent_destroy</code> stops the apply; a <code>moved</code> block fixes the plan</li><li>Bicep incremental mode</li><li>An import block</li></ol><div class="explain">Chapter 12.</div></div>
+<div class="check" data-type="mcq"><p class="q">The same change in Bicep (incremental): a node pool is removed from the template. What happens, and how do you get Terraform-like behaviour?</p><ol class="options"><li>Deleted; nothing needed</li><li class="correct">It stays; use a deployment stack with <code>actionOnUnmanage: deleteResources</code></li><li>Error; use complete mode</li><li>Detached; use what-if</li></ol><div class="explain">Chapter 13.</div></div>
+<div class="check" data-type="mcq"><p class="q">A feature-branch run tries to deploy to prod using <code>sc-orders-prod</code> in a normal job. Which controls stop it?</p><ol class="options"><li>The prod environment approval</li><li class="correct">Branch control and required template on the service connection</li><li>The PR branch policy</li><li>NetworkPolicy</li></ol><div class="explain">Chapters 7 and 15.</div></div>
+<div class="check" data-type="mcq"><p class="q">An unsigned image from contosoacr reaches the deploy stage in prod. Which layers catch it?</p><ol class="options"><li>Only the scan</li><li class="correct"><code>notation verify</code> in the pipeline, and signature verification at admission in deny mode</li><li>The HPA</li><li>Pod Security restricted</li></ol><div class="explain">Chapter 16.</div></div>
+<div class="check" data-type="mcq"><p class="q">A node-image upgrade stalls on one node. orders-api has 1 replica and a PDB minAvailable 1. Fix?</p><ol class="options"><li>Delete the PDB permanently</li><li class="correct">Run ≥ 2 replicas (HPA min 2) with a PDB allowing 1 disruption</li><li>Pause upgrades forever</li><li>Use Recreate strategy</li></ol><div class="explain">Chapters 3 and 4.</div></div>
+<div class="check" data-type="mcq"><p class="q">The workload identity token exchange fails with AADSTS700213 after moving the app to namespace <code>orders-prod</code>. Fix in IaC?</p><ol class="options"><li>Change the client ID</li><li class="correct">Add or update the federated credential subject to <code>system:serviceaccount:orders-prod:orders-api</code></li><li>Give the kubelet Key Vault access</li><li>Add a client secret</li></ol><div class="explain">Chapters 5 and 12/13.</div></div>
+<div class="check" data-type="mcq"><p class="q">The gateway returns 503 for <code>/api</code>; the route is Accepted; pods are Running 0/1. Root cause class?</p><ol class="options"><li>The route isn't attached</li><li class="correct">Readiness failing → no endpoints</li><li>A TLS error</li><li>DNS</li></ol><div class="explain">Chapters 3, 8 and 14.</div></div>
+<div class="check" data-type="mcq"><p class="q">Prod must not rebuild images. Which pipeline design satisfies that and still configures prod differently?</p><ol class="options"><li>Build per environment with flags</li><li class="correct">Build once, deploy the same digest with the prod overlay or values</li><li>Copy dev manifests to prod</li><li>Use latest</li></ol><div class="explain">Chapters 10 and 16.</div></div>
+<div class="check" data-type="mcq"><p class="q">Security requires all egress to be inspected. Which cluster setting, and what must you remember?</p><ol class="options"><li>A private cluster; nothing else</li><li class="correct"><code>outboundType: userDefinedRouting</code> via Azure Firewall, allowing AKS's required FQDNs</li><li>A NAT gateway</li><li>Egress NetworkPolicy only</li></ol><div class="explain">Chapter 5.</div></div>
+<div class="check" data-type="mcq"><p class="q">The infra pipeline applied a change nobody approved, because it re-planned at apply time. Fix?</p><ol class="options"><li>Add <code>-auto-approve</code></li><li class="correct">Publish <code>tfplan</code> in the plan stage and apply exactly that file after approval</li><li>Use workspaces</li><li>Delete state</li></ol><div class="explain">Chapter 12.</div></div>
+<div class="check" data-type="mcq"><p class="q">The audit asks "who deleted the orders Deployment at 02:10?". Which data source?</p><ol class="options"><li>ContainerLogV2</li><li class="correct"><code>AKSAuditAdmin</code> (kube-audit-admin diagnostic logs)</li><li>Prometheus</li><li>Pipeline logs</li></ol><div class="explain">Chapter 14.</div></div>
+<div class="check" data-type="mcq"><p class="q">A developer needs to debug a distroless pod in prod, where they have Reader. What's the right path?</p><ol class="options"><li>Make them Cluster Admin permanently</li><li class="correct">Activate a time-limited role via PIM, then use <code>kubectl debug</code> (ephemeral container), audited</li><li>Add a shell to the image</li><li>Use the admin kubeconfig</li></ol><div class="explain">Chapters 5, 14 and 15.</div></div>
+</main>
+</body>
+</html>

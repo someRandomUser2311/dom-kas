@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>5.4 · The identities in a cluster</title>
+<link rel="stylesheet" href="../content.css">
+</head>
+<body>
+<article class="lesson" data-id="5.4" data-chapter="5">
+<nav class="crumbs"><a href="../index.html">Course</a> / <a href="index.html">Chapter 5</a> / 5.4</nav>
+<header>
+  <p class="kicker">Chapter 5 · Lesson 5.4 · ~11 steps · ~14 min</p>
+  <h1>The identities in a cluster</h1>
+  <p class="meta">You'll be able to name every identity an AKS cluster uses, say which one performs each action, and grant each one only what it needs.</p>
+</header>
+
+<section class="step" id="s1">
+  <h2>1. Who is calling Azure?</h2>
+  <div class="body">
+    <p>An AKS cluster calls Azure APIs constantly: creating load balancers, attaching disks, pulling images, reading secrets. Each call is made by an <b>identity</b>, and each identity needs the right role assignment (lesson 0.4).</p>
+    <p>Most "permission denied" problems on AKS come from granting a role to the <b>wrong</b> identity.</p>
+  </div>
+  <div class="widget" data-widget="identity-map">The cluster drawn with three identity badges:
+    <ul>
+      <li>the <b>cluster identity</b>, on the control plane;</li>
+      <li>the <b>kubelet identity</b>, on each node;</li>
+      <li><b>workload identities</b>, on individual pods.</li>
+    </ul>
+    Action buttons ("create a public IP", "attach a disk", "pull an image from ACR", "orders-api reads a Key Vault secret", "a developer runs kubectl") light up the identity that performs the action and the role it needs.</div>
+  <aside class="coming" data-set="A">
+    <dl>
+      <dt>Windows/IIS admin</dt><dd>Like having separate service accounts for the cluster service, the machine accounts and each app pool, instead of one shared domain admin.</dd>
+      <dt>Linux admin</dt><dd>Like separate service users for the orchestrator, the host agent and each app.</dd>
+      <dt>Developer (Compose)</dt><dd>In Compose, everything uses your Docker login and your env vars. Here every layer has its own identity.</dd>
+      <dt>Other clouds</dt><dd>Cluster identity ≈ the EKS cluster IAM role; kubelet identity ≈ the node instance role; workload identity ≈ IRSA / EKS Pod Identity, or GKE Workload Identity.</dd>
+    </dl>
+  </aside>
+</section>
+
+<section class="step" id="s2">
+  <h2>2. The cluster (control-plane) identity</h2>
+  <div class="body">
+    <p>This identity is used by AKS's own components, mainly the <b>cloud-controller-manager</b>, to manage Azure resources for the cluster:</p>
+    <ul>
+      <li>load balancer rules and public IPs;</li>
+      <li>disks for PVCs;</li>
+      <li>routes.</li>
+    </ul>
+    <p>It already has rights on the node resource group. If you use <b>your own VNet</b>, or IPs in other resource groups, grant it <b>Network Contributor</b> there (as in lesson 5.2).</p>
+    <p>Use a <b>user-assigned</b> managed identity, so you can grant those rights before creating the cluster.</p>
+  </div>
+</section>
+
+<section class="step" id="s3">
+  <h2>3. The kubelet identity</h2>
+  <div class="body">
+    <p>Each node's kubelet has its own identity, a user-assigned managed identity that AKS creates in the node resource group. The kubelet uses it to <b>pull images from ACR</b>.</p>
+    <p>So the <b>kubelet identity</b> needs <code>AcrPull</code> on the registry. <code>az aks update --attach-acr</code> grants exactly that (Chapter 6).</p>
+  </div>
+  <pre class="output">$ az aks show -g rg-orders-dev -n aks-orders-dev --query identityProfile.kubeletidentity
+{
+  "clientId": "9b2d…",
+  "objectId": "4e7a…",
+  "resourceId": "/subscriptions/…/resourceGroups/rg-orders-dev-nodes/providers/Microsoft.ManagedIdentity/userAssignedIdentities/aks-orders-dev-agentpool"
+}</pre>
+  <div class="check" data-type="mcq">
+    <p class="q">Pods fail with <code>ImagePullBackOff … 401 Unauthorized</code> pulling from <code>contosoacr.azurecr.io</code>. Who needs <code>AcrPull</code>?</p>
+    <ol class="options">
+      <li>The cluster (control-plane) identity <span class="why">It manages Azure infrastructure; it doesn't pull images.</span></li>
+      <li class="correct">The kubelet identity</li>
+      <li>The pod's workload identity <span class="why">Image pulls happen before the pod's code even runs, and they're done by the kubelet.</span></li>
+      <li>The developer who deployed it <span class="why">Their permissions aren't used at pull time.</span></li>
+    </ol>
+    <div class="explain">The kubelet pulls images. That's also why the kubelet identity is <b>not</b> your app's identity: giving it Key Vault access would let every pod on every node use it.</div>
+  </div>
+</section>
+
+<section class="step" id="s4">
+  <h2>4. Workload identities</h2>
+  <div class="body">
+    <p>Your <b>apps</b> also need to call Azure: <code>orders-api</code> reads a Key Vault secret and writes to Storage. Each app gets its <b>own</b> user-assigned managed identity, linked to its Kubernetes ServiceAccount through <b>workload identity</b> (lesson 5.6).</p>
+    <p>Only pods using that ServiceAccount can get its tokens, so different apps have different permissions.</p>
+  </div>
+</section>
+
+<section class="step" id="s5">
+  <h2>5. Humans and pipelines</h2>
+  <div class="body">
+    <p>Two more callers reach the cluster's <b>API</b> rather than Azure resources:</p>
+    <ul>
+      <li><b>People</b> using kubectl: Entra ID users and groups (next lesson).</li>
+      <li><b>Pipelines</b> deploying manifests: a service principal or managed identity behind an Azure DevOps service connection (Chapter 7).</li>
+    </ul>
+    <p>With Azure RBAC enabled, both get Kubernetes permissions through Azure role assignments.</p>
+  </div>
+</section>
+
+<section class="step" id="s6">
+  <h2>6. Match the action to the identity</h2>
+  <div class="check" data-type="match">
+    <p class="q">Which identity performs each action?</p>
+    <table class="pairs">
+      <tr><td>Create the public IP for a LoadBalancer Service</td><td>Cluster (control-plane) identity</td></tr>
+      <tr><td>Pull <code>orders-api:1.4.2</code> from ACR</td><td>Kubelet identity</td></tr>
+      <tr><td><code>orders-api</code> reads a secret from Key Vault</td><td>The <code>orders-api</code> workload identity</td></tr>
+      <tr><td>A developer runs <code>kubectl get pods</code></td><td>The developer's Entra ID user</td></tr>
+      <tr><td>The release pipeline applies manifests</td><td>The service connection's identity</td></tr>
+    </table>
+    <div class="explain">Five actions, five identities. Granting a role to the wrong one is the most common AKS permission bug.</div>
+  </div>
+</section>
+
+<section class="step" id="s7">
+  <h2>7. Managed identity vs service principal</h2>
+  <div class="body">
+    <p>Older clusters used a <b>service principal</b> with a client secret as the cluster identity. The secret expired, often after a year, and the cluster stopped managing load balancers and disks until someone rotated it.</p>
+    <p><b>Managed identities</b> have no secret to store, leak or rotate. Use them everywhere in AKS; clusters can be migrated from service principals with <code>az aks update --enable-managed-identity</code>.</p>
+  </div>
+</section>
+
+<section class="step" id="s8">
+  <h2>8. Least privilege per identity</h2>
+  <table>
+    <tr><th>Identity</th><th>Typical grants</th><th>Scope</th></tr>
+    <tr><td>Cluster</td><td>Network Contributor</td><td>The node subnet (or VNet), and the resource group of static IPs</td></tr>
+    <tr><td>Kubelet</td><td>AcrPull</td><td>The registry</td></tr>
+    <tr><td><code>id-orders-api</code> (workload)</td><td>Key Vault Secrets User; Storage Blob Data Contributor</td><td>The vault; one storage container</td></tr>
+    <tr><td>Developers group</td><td>Azure Kubernetes Service RBAC Writer</td><td>Namespace <code>orders</code> in dev</td></tr>
+    <tr><td>Pipeline</td><td>AKS RBAC Writer (namespace), AcrPush</td><td>The target namespace; the registry</td></tr>
+  </table>
+</section>
+
+<section class="step" id="s9">
+  <h2>9. Finding the identities</h2>
+  <pre class="code" data-file="terminal"># cluster identity
+az aks show -g rg-orders-dev -n aks-orders-dev --query identity
+# kubelet identity
+az aks show -g rg-orders-dev -n aks-orders-dev --query identityProfile.kubeletidentity.objectId -o tsv
+# what can it do?
+az role assignment list --assignee &lt;objectId&gt; --all -o table</pre>
+</section>
+
+<section class="step" id="s10">
+  <h2>10. A tempting shortcut</h2>
+  <div class="body">
+    <p>"Just give the kubelet identity Key Vault access, then every app can read secrets." It works, and it means <b>every pod on every node</b>, including a compromised one, can read <b>every</b> secret that identity can reach.</p>
+    <p>Workload identity exists to avoid exactly that.</p>
+  </div>
+</section>
+
+<section class="step summary" id="s11">
+  <h2>Identities, sorted</h2>
+  <ul>
+    <li>Cluster identity: Azure infrastructure (LBs, IPs, disks); Network Contributor on your network.</li>
+    <li>Kubelet identity: image pulls; AcrPull.</li>
+    <li>Workload identity: one per app, for that app's Azure access.</li>
+    <li>Humans and pipelines: Entra ID + Azure RBAC on the cluster.</li>
+    <li>Managed identities everywhere; never use the kubelet identity as an app identity.</li>
+  </ul>
+</section>
+</article>
+</body>
+</html>

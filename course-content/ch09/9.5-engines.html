@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>9.5 · Engines on AKS &amp; zero-trust practice</title>
+<link rel="stylesheet" href="../content.css">
+</head>
+<body>
+<article class="lesson" data-id="9.5" data-chapter="9">
+<nav class="crumbs"><a href="../index.html">Course</a> / <a href="index.html">Chapter 9</a> / 9.5</nav>
+<header>
+  <p class="kicker">Chapter 9 · Lesson 9.5 · ~9 steps · ~11 min</p>
+  <h1>Engines on AKS &amp; zero-trust practice</h1>
+  <p class="meta">You'll be able to choose a network policy engine on AKS, know what each can enforce, and organise policies so they stay correct as the app changes.</p>
+</header>
+
+<section class="step" id="s1">
+  <h2>1. No engine, no enforcement</h2>
+  <div class="body">
+    <p>The API server stores NetworkPolicies, but it doesn't enforce them. A <b>policy engine</b> in the dataplane does.</p>
+    <p>On a cluster without one, every policy is accepted and has <b>no effect</b>. There's no error and no warning.</p>
+  </div>
+  <div class="check" data-type="mcq">
+    <p class="q">Contoso applies default-deny and the matrix in testing still shows every flow open. The YAML is correct and <code>kubectl get netpol</code> lists it. Why?</p>
+    <ol class="options">
+      <li>Policies take an hour to apply <span class="why">Enforcement is near-instant when an engine is present.</span></li>
+      <li class="correct">The cluster was created without a network policy engine, so nothing enforces policies</li>
+      <li>Default-deny only works in kube-system <span class="why">The opposite: don't use it there.</span></li>
+      <li>NetworkPolicies need Istio <span class="why">They're a core Kubernetes API, enforced by the CNI dataplane.</span></li>
+    </ol>
+    <div class="explain">Check with <code>az aks show --query networkProfile.networkPolicy</code>. Always test policies with real traffic, not just <code>kubectl get</code>.</div>
+  </div>
+  <aside class="coming" data-set="A">
+    <dl>
+      <dt>Windows/IIS admin</dt><dd>Like writing firewall rules in a GPO that's never linked to anything.</dd>
+      <dt>Linux admin</dt><dd>Like iptables rules in a file that's never loaded.</dd>
+      <dt>Developer (Compose)</dt><dd>YAML that applies cleanly can still do nothing. Test the behaviour.</dd>
+      <dt>Other clouds</dt><dd>EKS needs the VPC CNI's network-policy agent or Calico enabled; GKE needs Dataplane V2 or network policy enabled. Same idea.</dd>
+    </dl>
+  </aside>
+</section>
+
+<section class="step" id="s2">
+  <h2>2. Engines on AKS</h2>
+  <table>
+    <tr><th>Engine</th><th>How you get it</th><th>Notes</th></tr>
+    <tr><td><b>Cilium</b> (recommended)</td><td><code>--network-dataplane cilium</code> (Azure CNI powered by Cilium)</td><td>eBPF; scales well; L7 and FQDN policies with Advanced Container Networking Services</td></tr>
+    <tr><td><b>Calico</b></td><td><code>--network-policy calico</code></td><td>Mature; its own extended policy CRDs</td></tr>
+    <tr><td><b>Azure Network Policy Manager</b></td><td><code>--network-policy azure</code></td><td>Being retired. Don't choose it for new clusters; plan migration for existing ones</td></tr>
+  </table>
+  <div class="body"><p>The engine is chosen when the cluster is created. Changing it later is limited and disruptive, so decide up front, in IaC (Chapters 12–13).</p></div>
+</section>
+
+<section class="step" id="s3">
+  <h2>3. Beyond L3/L4</h2>
+  <div class="body">
+    <p>Standard NetworkPolicy works on IPs and ports (layers 3 and 4). With Cilium and Advanced Container Networking Services you can also write:</p>
+    <ul>
+      <li><b>FQDN</b> egress rules (lesson 9.4);</li>
+      <li><b>L7 HTTP</b> rules, for example "web may only <code>GET /api/orders/*</code>";</li>
+      <li><b>flow logs</b> and network observability, to see which flows exist before you lock them down.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="step" id="s4">
+  <h2>4. Requirement → capability</h2>
+  <div class="check" data-type="match">
+    <p class="q">Match each requirement to what provides it.</p>
+    <table class="pairs">
+      <tr><td>Deny all traffic between namespaces except listed flows</td><td>Standard NetworkPolicy (any engine)</td></tr>
+      <tr><td>Allow egress only to <code>api.payments-provider.example</code></td><td>Cilium FQDN policy (ACNS) or Azure Firewall</td></tr>
+      <tr><td>Only allow <code>GET</code> requests on <code>/api/orders</code></td><td>Cilium L7 policy (or a service mesh)</td></tr>
+      <tr><td>See which pods talk to which before writing policies</td><td>Flow logs / network observability</td></tr>
+      <tr><td>Encrypt and authenticate pod-to-pod traffic</td><td>A service mesh with mTLS (or Cilium transparent encryption)</td></tr>
+    </table>
+    <div class="explain">Standard NetworkPolicy covers most needs. Add the advanced features where a requirement demands them.</div>
+  </div>
+</section>
+
+<section class="step" id="s5">
+  <h2>5. Where policies live in the repo</h2>
+  <div class="body">
+    <p>Contoso's layout:</p>
+    <ul>
+      <li><code>k8s/namespaces/</code>: the platform template: Namespace, quota, LimitRange, <b>default-deny</b>, <b>allow-dns</b>.</li>
+      <li><code>k8s/policies/</code>: the app's own allow policies (its ingress from callers, its egress to dependencies), deployed with the app.</li>
+    </ul>
+    <p>In Chapter 10, default-deny goes into the Kustomize <b>base</b>, so every overlay (dev, prod) gets it automatically.</p>
+  </div>
+</section>
+
+<section class="step" id="s6">
+  <h2>6. Policy changes are code changes</h2>
+  <div class="body">
+    <ul>
+      <li>Review policies in PRs, like any other code.</li>
+      <li>Test them in CI: the course's <b>netpol-eval</b> grader is the same idea as tools that compute a connectivity matrix from YAML.</li>
+      <li>Test them in a real cluster after deploy, with a smoke test that checks one allowed and one denied flow.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="step" id="s7">
+  <h2>7. Rolling out to an existing app</h2>
+  <ol>
+    <li>Turn on flow logs and watch real traffic for a few days.</li>
+    <li>Write allow policies for the observed flows.</li>
+    <li>Apply <b>ingress</b> default-deny first; watch for drops.</li>
+    <li>Then <b>egress</b> default-deny, with DNS allowed from the start.</li>
+  </ol>
+</section>
+
+<section class="step" id="s8">
+  <h2>8. Cluster-wide policies</h2>
+  <div class="body">
+    <p>NetworkPolicies are namespaced, and namespace owners can add allows. For guardrails that namespace owners can't override, such as "nothing may reach the metadata endpoint", there are cluster-scoped options:</p>
+    <ul>
+      <li>engine-specific policies (CiliumClusterwideNetworkPolicy, Calico GlobalNetworkPolicy);</li>
+      <li>the upstream <b>AdminNetworkPolicy</b> API, as engines adopt it.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="step summary" id="s9">
+  <h2>Engines &amp; practice, sorted</h2>
+  <ul>
+    <li>No engine = no enforcement; always test with real traffic.</li>
+    <li>On AKS choose Cilium (recommended) or Calico at creation; Azure NPM is retiring.</li>
+    <li>FQDN and L7 policies, plus flow logs, come with Cilium + ACNS.</li>
+    <li>Default-deny and DNS in the namespace template; app allow-lists ship with the app.</li>
+  </ul>
+</section>
+</article>
+</body>
+</html>

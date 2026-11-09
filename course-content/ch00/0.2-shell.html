@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>0.2 · Shell &amp; scripting basics</title>
+<link rel="stylesheet" href="../content.css">
+</head>
+<body>
+<article class="lesson" data-id="0.2" data-chapter="0">
+<nav class="crumbs"><a href="../index.html">Course</a> / <a href="index.html">Chapter 0</a> / 0.2</nav>
+<header>
+  <p class="kicker">Chapter 0 · Lesson 0.2 · ~8 steps · ~10 min</p>
+  <h1>Shell &amp; scripting basics</h1>
+  <p class="meta">You'll be able to read and write the short Bash scripts that pipelines run, and make them fail loudly instead of silently.</p>
+</header>
+
+<section class="step" id="s1">
+  <h2>1. Pipelines run shell scripts</h2>
+  <div class="body">
+    <p>Every <code>script:</code> step in Azure Pipelines and every <code>AzureCLI@2</code> task runs a shell script on an agent. On Linux agents, that's <b>Bash</b>.</p>
+    <p>You don't need to be a Bash expert. You do need six things, and this lesson covers each:</p>
+    <ul>
+      <li>variables</li>
+      <li>quoting</li>
+      <li>capturing output</li>
+      <li>exit codes</li>
+      <li>simple <code>if</code>/<code>for</code></li>
+      <li>reading JSON</li>
+    </ul>
+  </div>
+  <pre class="code" data-file="deploy.sh">#!/usr/bin/env bash
+set -euo pipefail
+
+RG="rg-orders-dev"
+CLUSTER="aks-orders-dev"
+
+az aks get-credentials --resource-group "$RG" --name "$CLUSTER"
+kubectl apply -f k8s/</pre>
+  <aside class="coming" data-set="A">
+    <dl>
+      <dt>Windows/IIS admin</dt><dd>Bash plays the role of PowerShell here. The big difference is that Bash passes <b>text</b> between commands, not objects. That's why we'll use <code>--query</code> and <code>jq</code> to pick values out of JSON.</dd>
+      <dt>Linux admin</dt><dd>Nothing new here. Skim this lesson and take the check at the end.</dd>
+      <dt>Developer (Compose)</dt><dd>It's the same shell you use for <code>docker compose up</code>. The new part is making scripts safe for unattended runs.</dd>
+      <dt>Other clouds</dt><dd>Same Bash you'd use with the <code>aws</code> or <code>gcloud</code> CLI. <code>az</code> just replaces them.</dd>
+    </dl>
+  </aside>
+</section>
+
+<section class="step" id="s2">
+  <h2>2. Variables and quoting</h2>
+  <div class="body">
+    <p>Set a variable with <code>NAME=value</code>, with <b>no spaces around <code>=</code></b>. Read it with <code>$NAME</code> or <code>${NAME}</code>.</p>
+    <p>Always wrap variables in <b>double quotes</b> when you use them: <code>"$RG"</code>. Without quotes, a value containing a space is split into two arguments.</p>
+    <p>Single quotes stop expansion completely: <code>'$RG'</code> is literally the text <code>$RG</code>.</p>
+    <p><code>export NAME=value</code> makes the variable visible to programs the script starts, such as <code>terraform</code> reading <code>ARM_SUBSCRIPTION_ID</code>.</p>
+  </div>
+  <pre class="code" data-file="vars.sh">RG="rg-orders-dev"          # no spaces around =
+echo "Deploying to $RG"       # → Deploying to rg-orders-dev
+echo 'Deploying to $RG'       # → Deploying to $RG
+export ARM_SUBSCRIPTION_ID="00000000-0000-0000-0000-000000000000"</pre>
+  <aside class="more"><p>Azure Pipelines has its own variable syntax, <code>$(name)</code>, which the pipeline replaces <b>before</b> Bash runs. Inside a script, <code>$(name)</code> and Bash's <code>$(command)</code> look alike. Chapter 7 covers how to tell them apart.</p></aside>
+</section>
+
+<section class="step" id="s3">
+  <h2>3. Capture a command's output with <code>$(…)</code></h2>
+  <div class="body">
+    <p><code>$(command)</code> runs the command and substitutes its output. That's how you pass the result of one command to the next.</p>
+    <p>With <code>az</code>, combine it with <code>--query</code> (a JMESPath expression that picks fields from the JSON result) and <code>-o tsv</code> (plain text without quotes). That gives you a clean value to store.</p>
+  </div>
+  <pre class="code" data-file="ids.sh">ACR_ID=$(az acr show --name contosoacr --query id -o tsv)
+echo "$ACR_ID"
+# /subscriptions/…/resourceGroups/rg-orders-dev/providers/Microsoft.ContainerRegistry/registries/contosoacr</pre>
+  <div class="check" data-type="fill">
+    <p class="q">Complete the line so <code>KUBELET_ID</code> holds just the object ID, with no quotes or JSON.</p>
+    <pre class="code" data-file="ids.sh">KUBELET_ID=$(az aks show -g rg-orders-dev -n aks-orders-dev \
+  --query identityProfile.kubeletidentity.objectId <span class="blank">?</span>)</pre>
+    <ul class="chips">
+      <li class="correct"><code>-o tsv</code></li>
+      <li><code>-o json</code> <span class="why">JSON output wraps the value in quotes, so the variable would contain <code>"…"</code>.</span></li>
+      <li><code>-o table</code> <span class="why">Table output adds a header row and a dashed line.</span></li>
+      <li><code>| jq</code> <span class="why">That would pretty-print JSON, still with quotes. You'd need <code>jq -r</code> to get raw text.</span></li>
+    </ul>
+    <div class="explain"><code>-o tsv</code> prints bare values: exactly what you want inside <code>$(…)</code>.</div>
+  </div>
+</section>
+
+<section class="step" id="s4">
+  <h2>4. Exit codes, and why <code>set -euo pipefail</code> matters</h2>
+  <div class="body">
+    <p>Every command returns an <b>exit code</b>: <code>0</code> means success, and anything else means failure. <code>$?</code> holds the last one.</p>
+    <p>By default, Bash <b>keeps going</b> after a failed command. In a pipeline that's dangerous: a failed login can be followed by a "successful" deploy step that deploys nothing, or the wrong thing.</p>
+    <p>Put this line at the top of every script:</p>
+    <ul>
+      <li><code>-e</code>: stop at the first failing command.</li>
+      <li><code>-u</code>: treat an unset variable as an error, so a typo like <code>$RGG</code> can't silently become empty.</li>
+      <li><code>-o pipefail</code>: a pipeline (<code>a | b</code>) fails if <i>any</i> part fails, not just the last.</li>
+    </ul>
+  </div>
+  <pre class="code" data-file="deploy.sh">#!/usr/bin/env bash
+set -euo pipefail</pre>
+  <div class="check" data-type="predict">
+    <p class="q">This script runs <b>without</b> <code>set -e</code>. The cluster name is misspelled, so <code>get-credentials</code> fails. What happens?</p>
+    <pre class="code" data-file="deploy.sh">az aks get-credentials -g rg-orders-dev -n aks-orders-dve
+kubectl apply -f k8s/
+echo "Deployed!"</pre>
+    <ol class="options">
+      <li>The script stops after the first line <span class="why">Only with <code>set -e</code>.</span></li>
+      <li class="correct"><code>kubectl apply</code> still runs, against whatever cluster the kubeconfig already points at, and the script prints "Deployed!"</li>
+      <li>Bash asks whether to continue <span class="why">Scripts never prompt like that.</span></li>
+    </ol>
+    <div class="explain">Without <code>-e</code>, Bash ignores the failure. <code>kubectl</code> uses the current context, which on a reused self-hosted agent could be a <i>different</i> cluster. With <code>set -e</code>, the script stops at line 1 and the pipeline step fails.</div>
+  </div>
+</section>
+
+<section class="step" id="s5">
+  <h2>5. <code>if</code> and <code>for</code></h2>
+  <div class="body">
+    <p><code>if</code> tests a command's exit code. <code>[ … ]</code> (or <code>[[ … ]]</code> in Bash) is itself a command that compares things.</p>
+    <p><code>for</code> loops over a list of words.</p>
+  </div>
+  <pre class="code" data-file="loop.sh">ENVIRONMENT="prod"
+if [[ "$ENVIRONMENT" == "prod" ]]; then
+  echo "Production: two approvals needed"
+fi
+
+for ns in dev staging prod; do
+  kubectl get pods -n "$ns"
+done
+
+if kubectl get namespace orders &gt;/dev/null 2&gt;&amp;1; then
+  echo "namespace exists"
+fi</pre>
+  <aside class="more"><p><code>&gt;/dev/null 2&gt;&amp;1</code> throws away both normal output and errors, so you only use the exit code. You'll see it often in "does this exist?" checks.</p></aside>
+</section>
+
+<section class="step" id="s6">
+  <h2>6. Reading JSON: <code>--query</code> and <code>jq</code></h2>
+  <div class="body">
+    <p>Cloud CLIs return JSON. There are two ways to pick values out of it:</p>
+    <ul>
+      <li><b><code>az … --query</code></b> uses JMESPath and is built into the Azure CLI. <code>[].name</code> lists every item's name, and <code>[?location=='westeurope'].name</code> filters first.</li>
+      <li><b><code>jq</code></b> works on any JSON, including <code>kubectl … -o json</code>. Use <code>jq -r</code> for raw text without quotes.</li>
+    </ul>
+  </div>
+  <pre class="code" data-file="json.sh">az group list --query "[?location=='westeurope'].name" -o tsv
+
+kubectl get pods -n orders -o json \
+  | jq -r '.items[] | select(.status.phase != "Running") | .metadata.name'</pre>
+</section>
+
+<section class="step" id="s7">
+  <h2>7. Long commands: line continuation</h2>
+  <div class="body">
+    <p>A backslash <code>\</code> at the very end of a line continues the command on the next line. It must be the <b>last character</b>: a trailing space after it breaks the command.</p>
+    <p>You'll see this in every <code>az aks create</code> example.</p>
+  </div>
+  <pre class="code" data-file="create.sh">az aks create \
+  --resource-group rg-orders-dev \
+  --name aks-orders-dev \
+  --node-count 3 \
+  --enable-oidc-issuer \
+  --enable-workload-identity</pre>
+  <aside class="coming" data-set="A">
+    <dl>
+      <dt>Windows/IIS admin</dt><dd>PowerShell uses a backtick <code>`</code> for the same thing. In PowerShell, <code>$x = az … --query id -o tsv</code> captures output, and <code>$LASTEXITCODE</code> holds a native command's exit code. <b>Careful:</b> <code>$ErrorActionPreference = 'Stop'</code> does <i>not</i> stop on failed native commands like <code>az</code> in older PowerShell versions. Check <code>$LASTEXITCODE</code>, or set <code>$PSNativeCommandUseErrorActionPreference = $true</code> on PowerShell 7.4+.</dd>
+      <dt>Linux admin</dt><dd>Same as always.</dd>
+      <dt>Developer (Compose)</dt><dd>Same as multi-line <code>docker run</code> commands.</dd>
+      <dt>Other clouds</dt><dd>Same as the AWS and GCP CLI docs.</dd>
+    </dl>
+  </aside>
+  <div class="check" data-type="command">
+    <p class="q">Print only the <b>ID</b> of the resource group <code>rg-orders-dev</code>, as plain text.</p>
+    <p class="answer"><code>az group show --name rg-orders-dev --query id -o tsv</code></p>
+    <p class="accept">Also accepted: <code>-n</code> for <code>--name</code>, <code>--output tsv</code> for <code>-o tsv</code>, flags in any order.</p>
+    <div class="explain"><code>az group show</code> returns the group as JSON. <code>--query id</code> picks one field, and <code>-o tsv</code> prints it bare.</div>
+  </div>
+</section>
+
+<section class="step summary" id="s8">
+  <h2>Shell, sorted</h2>
+  <ul>
+    <li><code>NAME=value</code> with no spaces; use it as <code>"$NAME"</code>, always quoted.</li>
+    <li><code>$(command)</code> captures output; with <code>az</code>, add <code>--query … -o tsv</code>.</li>
+    <li>Start every pipeline script with <code>set -euo pipefail</code>.</li>
+    <li><code>if</code> tests exit codes; <code>for</code> loops over words.</li>
+    <li>Use <code>--query</code> for <code>az</code> output and <code>jq -r</code> for any JSON.</li>
+    <li><code>\</code> at the very end of a line continues the command.</li>
+  </ul>
+</section>
+</article>
+</body>
+</html>

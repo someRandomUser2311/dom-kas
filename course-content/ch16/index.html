@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chapter 16 · Supply chain</title>
+<link rel="stylesheet" href="../content.css">
+</head>
+<body>
+<main>
+<nav class="crumbs"><a href="../index.html">Course</a> / Chapter 16</nav>
+<p class="kicker">Operate &amp; secure · ~1.5 h</p>
+<h1>Chapter 16 · Supply chain: scanning, signing &amp; policy-as-code</h1>
+<p>Everything so far assumes the image you deploy is the image you meant to build. This chapter makes sure of it: trustworthy base images, scans and SBOMs in the pipeline, signatures checked at admission, and policies that reject anything else.</p>
+
+<h2>By the end, you can</h2>
+<ul>
+  <li>Explain the supply-chain attack surface: base images, dependencies, the build system and the registry.</li>
+  <li>Pin images by digest, choose minimal base images, and keep them patched.</li>
+  <li>Add image vulnerability scanning and SBOM generation to the pipeline, with a sensible fail policy.</li>
+  <li>Sign images (Notation with Key Vault keys, or cosign), and verify signatures at admission.</li>
+  <li>Enforce rules with policy-as-code: Azure Policy for AKS (Gatekeeper), or Kyverno.</li>
+</ul>
+
+<h2>Lessons</h2>
+<ol class="lessons">
+  <li><a href="16.1-attack-surface.html">16.1 · The attack surface</a></li>
+  <li><a href="16.2-trusted-images.html">16.2 · Images you can trust</a></li>
+  <li><a href="16.3-scanning-sbom.html">16.3 · Scanning &amp; SBOM in the pipeline</a></li>
+  <li><a href="16.4-signing.html">16.4 · Signing &amp; verification</a></li>
+  <li><a href="16.5-policy-as-code.html">16.5 · Policy-as-code</a></li>
+</ol>
+
+<h2>Practice</h2>
+<ul>
+  <li><a href="practice.html#quiz">Checkpoint quiz</a> (8 questions from a pool of 16)</li>
+  <li><a href="practice.html#predict">Predict the outcome</a> (3 scenarios)</li>
+  <li><a href="practice.html#lab">Write lab: the supply-chain stage</a></li>
+  <li><a href="practice.html#walkthrough">Walkthrough: scan fails → fix → sign → admission verifies</a></li>
+  <li><a href="practice.html#try">Try it locally</a> (4 boxes)</li>
+</ul>
+<p class="muted">Persona tabs: set A in 16.1, 16.2, 16.5; set B in 16.3, 16.4. High-churn area: re-verify image-integrity and Ratify status before release.</p>
+</main>
+</body>
+</html>

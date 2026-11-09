@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chapter 11 · Practice</title>
+<link rel="stylesheet" href="../content.css">
+</head>
+<body>
+<main>
+<nav class="crumbs"><a href="../index.html">Course</a> / <a href="index.html">Chapter 11</a> / Practice</nav>
+<p class="kicker">Chapter 11 · Practice</p>
+<h1>Practice: quiz, predict, lab, try it locally</h1>
+
+<h2 id="quiz">Checkpoint quiz (8 drawn from 16)</h2>
+<div class="check" data-type="mcq"><p class="q">10 replicas, maxSurge 25%, maxUnavailable 25%. Max pods and min available?</p><ol class="options"><li>13 and 7</li><li class="correct">13 and 8</li><li>12 and 8</li><li>12 and 7</li></ol><div class="explain">Surge rounds up (2.5 → 3); unavailable rounds down (2.5 → 2).</div></div>
+<div class="check" data-type="mcq"><p class="q">Without a readiness probe, a rolling update…</p><ol class="options"><li>Never starts</li><li class="correct">Treats new pods as ready as soon as they start, so it may remove old pods before new ones can serve</li><li>Waits forever</li><li>Rolls back automatically</li></ol><div class="explain">Readiness defines "available".</div></div>
+<div class="check" data-type="mcq"><p class="q">What does <code>minReadySeconds: 30</code> do?</p><ol class="options"><li>Delays probes</li><li class="correct">A pod counts as available only after being ready for 30 s</li><li>Sets the rollout timeout</li><li>Slows scaling</li></ol><div class="explain">It catches versions that crash shortly after start.</div></div>
+<div class="check" data-type="mcq"><p class="q">A rollout exceeds <code>progressDeadlineSeconds</code>. Kubernetes…</p><ol class="options"><li>Rolls back automatically</li><li class="correct">Marks the Deployment ProgressDeadlineExceeded and leaves it; your tooling rolls back</li><li>Deletes the new pods</li><li>Restarts the old pods</li></ol><div class="explain">Use <code>rollout status</code> + <code>rollout undo</code>, or Helm <code>--atomic</code>.</div></div>
+<div class="check" data-type="mcq"><p class="q">In blue/green, what usually performs the switch?</p><ol class="options"><li>Scaling blue to 0</li><li class="correct">Changing the live Service selector (or route backend) from blue to green</li><li>A DNS change</li><li>A node drain</li></ol><div class="explain">One small, reversible change.</div></div>
+<div class="check" data-type="mcq"><p class="q">Blue/green's main cost is…</p><ol class="options"><li>Slow rollback</li><li class="correct">Double capacity during the release</li><li>Mixed versions</li><li>No testing before switch</li></ol><div class="explain">Rollback is the fastest of all.</div></div>
+<div class="check" data-type="mcq"><p class="q">Why use expand/contract migrations?</p><ol class="options"><li>They're faster</li><li class="correct">So old and new versions both work against the database during release and rollback</li><li>Kubernetes requires them</li><li>To save storage</li></ol><div class="explain">That applies to every strategy.</div></div>
+<div class="check" data-type="mcq"><p class="q">With 2 replicas, what's the smallest replica-ratio canary?</p><ol class="options"><li>10%</li><li class="correct">About 33% (1 canary + 2 stable) or 50%</li><li>1%</li><li>0%</li></ol><div class="explain">Use weights for precise percentages.</div></div>
+<div class="check" data-type="mcq"><p class="q">Which gives an exact 10% split regardless of pod counts?</p><ol class="options"><li class="correct">Weighted HTTPRoute backendRefs (90/10)</li><li>1 canary pod in 10</li><li><code>kubectl rollout pause</code></li><li>maxSurge 10%</li></ol><div class="explain">The gateway or mesh splits the traffic.</div></div>
+<div class="check" data-type="mcq"><p class="q">Which <code>KubernetesManifest@1</code> input sets the canary share?</p><ol class="options"><li>weight</li><li class="correct">percentage</li><li>increments</li><li>split</li></ol><div class="explain">Inside a canary job: <code>$(strategy.increment)</code>.</div></div>
+<div class="check" data-type="mcq"><p class="q">Which hook should reject the canary on failure?</p><ol class="options"><li>preDeploy</li><li>routeTraffic</li><li class="correct"><code>on: failure</code></li><li>postRouteTraffic</li></ol><div class="explain">postRouteTraffic runs the checks; on: failure acts.</div></div>
+<div class="check" data-type="mcq"><p class="q">Where should the canary health check run?</p><ol class="options"><li>preDeploy</li><li class="correct">postRouteTraffic</li><li>on: success</li><li>Before the pipeline starts</li></ol><div class="explain">After traffic is routed to the canary.</div></div>
+<div class="check" data-type="mcq"><p class="q">A health step that only sleeps for 5 minutes…</p><ol class="options"><li>Is enough</li><li class="correct">Proves nothing: it can never fail</li><li>Rejects the canary</li><li>Promotes faster</li></ol><div class="explain">Query canary vs stable metrics and exit non-zero on a breach.</div></div>
+<div class="check" data-type="mcq"><p class="q">Which environment check blocks a deploy while an alert is firing?</p><ol class="options"><li>Approvals</li><li class="correct">Query Azure Monitor alerts</li><li>Branch control</li><li>Business hours</li></ol><div class="explain">Don't release into an incident.</div></div>
+<div class="check" data-type="mcq"><p class="q">A new checkout design should be tried by 5% of customers. Best tool?</p><ol class="options"><li>Canary</li><li>Blue/green</li><li class="correct">A feature flag</li><li>Rolling update</li></ol><div class="explain">Business risk, without a redeploy.</div></div>
+<div class="check" data-type="mcq"><p class="q">"Rolling updates are always zero-downtime." True?</p><ol class="options"><li>Yes</li><li class="correct">Only with real readiness probes, enough capacity (maxUnavailable 0 or spare), and graceful shutdown</li><li>Only on AKS</li><li>Never</li></ol><div class="explain">The defaults alone don't guarantee it.</div></div>
+
+<h2 id="predict">Predict the outcome (3)</h2>
+<div class="check" data-type="predict"><p class="q">1 · 4 replicas, surge 1, unavailable 0. The new version's readiness probe always fails.</p><ol class="options"><li>All 4 replaced; outage</li><li class="correct">1 new pod stuck not-ready; 4 old pods keep serving; ProgressDeadlineExceeded later</li><li>Automatic rollback</li><li>2 old pods removed</li></ol><div class="explain">Nothing old is removed until something new is available.</div></div>
+<div class="check" data-type="predict"><p class="q">2 · Blue/green switch sets the Service selector to <code>version: Green</code>; the pods are labelled <code>green</code>.</p><ol class="options"><li>Traffic goes to green</li><li class="correct">No endpoints: every request fails until the selector is fixed or reverted</li><li>Traffic stays on blue</li><li>Kubernetes corrects the case</li></ol><div class="explain">Labels are case-sensitive. Verify endpoints right after switching.</div></div>
+<div class="check" data-type="predict"><p class="q">3 · <code>KubernetesManifest@1</code> canary, <code>percentage: 10</code>, pod-based split, stable at 2 replicas.</p><ol class="options"><li>Exactly 10% of traffic to the canary</li><li class="correct">1 canary pod next to 2 stable, so roughly a third of connections hit the canary</li><li>No canary pods</li><li>The task fails</li></ol><div class="explain">Pod-based canaries are coarse at low replica counts.</div></div>
+
+<h2 id="lab">Write lab: a canary deployment job</h2>
+<div class="lab">
+  <p><b>Brief:</b> Write the DeployProd stage of <code>azure-pipelines.yml</code> as a canary release of <code>orders-api</code>. Graded by <b>pipeline-rules</b> and <b>stage-sim</b>.</p>
+  <ul class="rules">
+    <li>A deployment job with <code>strategy: canary</code>.</li>
+    <li><code>increments</code> with at least two steps below 100 (e.g. <code>[10, 50]</code>).</li>
+    <li>The deploy hook uses <code>KubernetesManifest@1</code> with <code>strategy: canary</code> and <code>percentage: $(strategy.increment)</code>.</li>
+    <li>A <code>postRouteTraffic</code> (or <code>routeTraffic</code>) step runs a health check that can fail (not just a delay).</li>
+    <li class="critical"><code>on: failure</code> runs <code>action: reject</code>.</li>
+    <li><code>on: success</code> runs <code>action: promote</code>.</li>
+    <li class="critical">The job targets the <code>prod</code> environment (with approval), and the stage runs only on <code>main</code> after the earlier stages succeed.</li>
+    <li>The image tag comes from <code>$(Build.BuildId)</code>.</li>
+  </ul>
+  <details class="solution"><summary>Reference solution</summary><p>The template in lesson <a href="11.4-pipeline-rollout.html#s3">11.4, step 3</a>, used from a <code>DeployProd</code> stage with <code>dependsOn: DeployDev</code> and the condition <code>and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))</code>.</p></details>
+</div>
+
+<h2 id="walkthrough">Walkthrough: canary 10% → metrics → promote</h2>
+<ol>
+  <li>The approval is granted; preDeploy bakes the manifests.</li>
+  <li>The 10% increment: <code>orders-api-canary</code> appears; the check compares 5xx ratios for 10 minutes.</li>
+  <li>The 50% increment, the same check.</li>
+  <li><code>on: success</code> promotes: stable now runs the new image; the canary and baseline are removed.</li>
+  <li>Replay with an injected error at 50%: the check fails, <code>on: failure</code> rejects, and stable is untouched.</li>
+</ol>
+
+<h2 id="try">Try it locally</h2>
+<div class="try" data-lesson="11.1"><p><b>11.1 Watch a rollout.</b></p>
+<pre>kubectl apply -f lab/examples/ch11/rolling.yaml          # 4 replicas, surge 1, unavailable 0
+kubectl get pods -l app=roll -w &amp;
+kubectl set image deploy/roll app=localhost:5001/orders-api:1.0.1
+kubectl set image deploy/roll app=localhost:5001/orders-api:broken-readiness</pre>
+<p>Expected: pods replaced one at a time; then the broken version stalls with 1 pod <code>0/1 Running</code> and 4 old pods untouched.</p>
+<p><b>Cleanup:</b> <code>kill %1; kubectl delete -f lab/examples/ch11/rolling.yaml</code></p></div>
+<div class="try" data-lesson="11.2"><p><b>11.2 Blue/green switch.</b></p>
+<pre>kubectl apply -f lab/examples/ch11/bluegreen.yaml        # deploy-blue, deploy-green, svc (selector blue)
+kubectl run c --rm -it --image=busybox:1.36 --restart=Never -- sh -c 'for i in 1 2 3; do wget -qO- bg/version; done'
+kubectl patch svc bg -p '{"spec":{"selector":{"app":"bg","version":"green"}}}'
+kubectl run c --rm -it --image=busybox:1.36 --restart=Never -- sh -c 'for i in 1 2 3; do wget -qO- bg/version; done'</pre>
+<p>Expected: <code>blue</code> ×3, then <code>green</code> ×3.</p><p><b>Cleanup:</b> <code>kubectl delete -f lab/examples/ch11/bluegreen.yaml</code></p></div>
+<div class="try" data-lesson="11.3"><p><b>11.3 Weighted canary</b> (needs <code>./lab/addons/gateway.sh</code> from Chapter 8).</p>
+<pre>kubectl apply -f lab/examples/ch11/canary-route.yaml     # stable + canary Deployments/Services + HTTPRoute 90/10
+./lab/addons/gateway-port-forward.sh 8080 &amp;
+for i in $(seq 200); do curl -s -H "Host: shop.local" localhost:8080/version; echo; done | sort | uniq -c</pre>
+<p>Expected: roughly 180 <code>stable</code> and 20 <code>canary</code>. Edit the weights to 50/50 and run again.</p>
+<p><b>Cleanup:</b> <code>kill %1; kubectl delete -f lab/examples/ch11/canary-route.yaml</code></p></div>
+</main>
+</body>
+</html>

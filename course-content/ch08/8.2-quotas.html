@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>8.2 · Quotas &amp; limit ranges</title>
+<link rel="stylesheet" href="../content.css">
+</head>
+<body>
+<article class="lesson" data-id="8.2" data-chapter="8">
+<nav class="crumbs"><a href="../index.html">Course</a> / <a href="index.html">Chapter 8</a> / 8.2</nav>
+<header>
+  <p class="kicker">Chapter 8 · Lesson 8.2 · ~9 steps · ~11 min</p>
+  <h1>Quotas &amp; limit ranges</h1>
+  <p class="meta">You'll be able to cap a namespace's total resource use, give containers sensible defaults, and fix the two errors these produce.</p>
+</header>
+
+<section class="step" id="s1">
+  <h2>1. Fair sharing</h2>
+  <div class="body">
+    <p>Namespaces share nodes. Without limits, one team's runaway deployment, or a bad HPA, can claim the whole cluster.</p>
+    <p>Two objects fix this:</p>
+    <ul>
+      <li><b>ResourceQuota</b>: a <b>budget for the whole namespace</b>.</li>
+      <li><b>LimitRange</b>: <b>per-container defaults and bounds</b>.</li>
+    </ul>
+  </div>
+  <aside class="coming" data-set="A">
+    <dl>
+      <dt>Windows/IIS admin</dt><dd>Like disk quotas on a shared file server, plus default sizes for new folders.</dd>
+      <dt>Linux admin</dt><dd>Like cgroup slices per team, plus defaults applied to every new process.</dd>
+      <dt>Developer (Compose)</dt><dd>Your manifests now need <code>resources</code> set, or the defaults decide for you.</dd>
+      <dt>Other clouds</dt><dd>The same objects on EKS and GKE; GKE Autopilot fills in defaults much like a LimitRange.</dd>
+    </dl>
+  </aside>
+</section>
+
+<section class="step" id="s2">
+  <h2>2. A ResourceQuota</h2>
+  <div class="body">
+    <p>A quota caps the <b>sum</b> of requests and limits, plus object counts, across all pods and objects in the namespace. A new object that would push the total over the cap is <b>rejected</b> when it's created.</p>
+  </div>
+  <pre class="code" data-file="k8s/namespaces/orders-quota.yaml">apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: orders-budget
+  namespace: orders
+spec:
+  hard:
+    requests.cpu: "8"
+    requests.memory: 16Gi
+    limits.memory: 32Gi
+    pods: "40"
+    services.loadbalancers: "0"
+    persistentvolumeclaims: "5"</pre>
+  <aside class="more"><p><code>services.loadbalancers: "0"</code> stops this team from creating public LoadBalancer Services. Traffic must come through the shared gateway (lesson 8.4).</p></aside>
+</section>
+
+<section class="step" id="s3">
+  <h2>3. The catch: requests become mandatory</h2>
+  <div class="body">
+    <p>Once a quota limits <code>requests.cpu</code> or <code>requests.memory</code>, every new pod <b>must</b> declare that request. Otherwise Kubernetes can't count it against the budget, and rejects it.</p>
+    <p>That's the most common surprise after a platform team adds quotas.</p>
+  </div>
+</section>
+
+<section class="step" id="s4">
+  <h2>4. A LimitRange fills in defaults</h2>
+  <div class="body">
+    <p>A <b>LimitRange</b> adds a default request and limit to containers that don't set one, and can enforce a minimum and maximum. With both in place, a pod without <code>resources</code> gets defaults and is admitted.</p>
+  </div>
+  <div class="check" data-type="fill">
+    <p class="q">Which field gives containers a default <b>request</b>?</p>
+    <pre class="code" data-file="k8s/namespaces/orders-limits.yaml">apiVersion: v1
+kind: LimitRange
+metadata:
+  name: orders-defaults
+  namespace: orders
+spec:
+  limits:
+    - type: Container
+      <span class="blank">?</span>:
+        cpu: 100m
+        memory: 128Mi
+      default:
+        memory: 256Mi
+      max:
+        memory: 2Gi</pre>
+    <ul class="chips">
+      <li class="correct"><code>defaultRequest</code></li>
+      <li><code>default</code> <span class="why"><code>default</code> sets the default <i>limit</i>; it's already used below.</span></li>
+      <li><code>requests</code> <span class="why">Not a LimitRange field.</span></li>
+      <li><code>min</code> <span class="why"><code>min</code> rejects smaller values; it doesn't fill anything in.</span></li>
+    </ul>
+    <div class="explain"><code>defaultRequest</code> → default requests; <code>default</code> → default limits; <code>min</code>/<code>max</code> → bounds.</div>
+  </div>
+</section>
+
+<section class="step" id="s5">
+  <h2>5. Diagnose two rejections</h2>
+  <div class="check" data-type="diagnose">
+    <p class="q">After the platform team added a quota, two Deployments stopped creating pods. Match the error to the fix: what's wrong in the <b>first</b> one?</p>
+    <pre class="output">$ kubectl describe rs orders-worker-5d9c8 -n orders | tail -2
+  Warning  FailedCreate  replicaset-controller  Error creating: pods "orders-worker-5d9c8-7qk2n" is forbidden:
+           failed quota: orders-budget: must specify requests.cpu for: worker; requests.memory for: worker
+
+$ kubectl describe rs orders-api-6b7f9 -n orders | tail -2
+  Warning  FailedCreate  replicaset-controller  Error creating: pods "orders-api-6b7f9-x8m2c" is forbidden:
+           exceeded quota: orders-budget, requested: requests.cpu=500m, used: requests.cpu=7800m, limited: requests.cpu=8</pre>
+    <ol class="options">
+      <li class="correct">orders-worker has no CPU or memory requests: add them, or add a LimitRange with defaults</li>
+      <li>orders-worker exceeded the CPU budget <span class="why">That's the second message.</span></li>
+      <li>The quota is invalid <span class="why">The quota works; it's doing exactly its job.</span></li>
+      <li>The nodes are full <span class="why">Node capacity gives a scheduling error (Pending), not a quota rejection at creation.</span></li>
+    </ol>
+    <div class="explain">"must specify" = missing requests; "exceeded quota" = the namespace's budget is used up (lower the requests, scale something down, or ask for a bigger quota). Both show on the <b>ReplicaSet</b>, not the Deployment or a pod, because no pod was created. A common first-debug trap.</div>
+  </div>
+</section>
+
+<section class="step" id="s6">
+  <h2>6. Seeing usage</h2>
+  <pre class="output">$ kubectl describe resourcequota orders-budget -n orders
+Name:                   orders-budget
+Resource                Used    Hard
+--------                ----    ----
+limits.memory           14Gi    32Gi
+persistentvolumeclaims  1       5
+pods                    17      40
+requests.cpu            7800m   8
+requests.memory         9Gi     16Gi
+services.loadbalancers  0       0</pre>
+</section>
+
+<section class="step" id="s7">
+  <h2>7. Quotas and autoscaling</h2>
+  <div class="body">
+    <p>An HPA can't scale past the quota. New pods are rejected, and the HPA shows replicas it can't reach.</p>
+    <p>Size quotas for <b>max</b> replicas plus a rollout's <code>maxSurge</code>, not for normal load. Otherwise a rollout at peak time can stall.</p>
+  </div>
+</section>
+
+<section class="step" id="s8">
+  <h2>8. The namespace template</h2>
+  <div class="body"><p>Contoso's platform team stamps out every namespace with the same set:</p>
+  <ul>
+    <li>Namespace with labels and a Pod Security level</li>
+    <li>ResourceQuota and LimitRange</li>
+    <li>Default-deny NetworkPolicy (Chapter 9)</li>
+    <li>Azure RBAC role assignments for the team's group (lesson 5.5)</li>
+  </ul>
+  <p>In Chapter 10, this becomes a small Helm chart or Kustomize base.</p></div>
+</section>
+
+<section class="step summary" id="s9">
+  <h2>Quotas, sorted</h2>
+  <ul>
+    <li>ResourceQuota caps a namespace's total requests, limits and object counts.</li>
+    <li>With compute quotas, pods must set requests; a LimitRange supplies defaults.</li>
+    <li>"must specify" = add requests; "exceeded quota" = over budget. Look at ReplicaSet events.</li>
+    <li>Size quotas for max replicas plus surge.</li>
+  </ul>
+</section>
+</article>
+</body>
+</html>

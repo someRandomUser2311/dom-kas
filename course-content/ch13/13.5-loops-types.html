@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>13.5 · Loops, conditions &amp; types</title>
+<link rel="stylesheet" href="../content.css">
+</head>
+<body>
+<article class="lesson" data-id="13.5" data-chapter="13">
+<nav class="crumbs"><a href="../index.html">Course</a> / <a href="index.html">Chapter 13</a> / 13.5</nav>
+<header>
+  <p class="kicker">Chapter 13 · Lesson 13.5 · ~11 steps · ~14 min</p>
+  <h1>Loops, conditions &amp; types</h1>
+  <p class="meta">You'll be able to create resources in loops, deploy them conditionally, validate structured parameters with user-defined types, and write <code>.bicepparam</code> files per environment.</p>
+</header>
+
+<section class="step" id="s1">
+  <h2>1. Loops</h2>
+  <div class="body"><p>A <code>for</code> expression creates one resource (or property item) per element of an array: <code>[for pool in nodePools: { … }]</code>. Add an index with <code>[for (pool, i) in nodePools: …]</code>.</p></div>
+  <pre class="code" data-file="aks.bicep">param nodePools nodePool[]
+
+resource pools 'Microsoft.ContainerService/managedClusters/agentPools@2024-09-01' = [for pool in nodePools: {
+  parent: aks
+  name: pool.name
+  properties: {
+    mode: 'User'
+    vmSize: pool.vmSize
+    availabilityZones: [ '1', '2', '3' ]
+    enableAutoScaling: true
+    minCount: pool.minCount
+    maxCount: pool.maxCount
+    scaleSetPriority: (pool.?spot ?? false) ? 'Spot' : 'Regular'
+  }
+}]</pre>
+  <aside class="coming" data-set="TF">
+    <dl>
+      <dt>Terraform</dt><dd><code>for_each</code> ↔ <code>for … in</code>. Each Bicep item is identified by its <b>name</b> property in Azure, not by array position. Removing the middle item doesn't shift the others the way Terraform's <code>count</code> does. But in incremental mode the removed pool isn't deleted either (lesson 13.7).</dd>
+    </dl>
+  </aside>
+</section>
+
+<section class="step" id="s2">
+  <h2>2. Fill the loop</h2>
+  <div class="check" data-type="fill">
+    <p class="q">Create one federated credential per namespace in the list.</p>
+    <pre class="code" data-file="identity.bicep">param namespaces array = [ 'orders', 'orders-canary' ]
+
+@batchSize(1)
+resource feds 'Microsoft.ManagedIdentity/userAssignedIdentities/federatedIdentityCredentials@2023-01-31' = [<span class="blank">?</span>: {
+  parent: ordersApiId
+  name: 'fc-${ns}'
+  properties: {
+    issuer: aks.properties.oidcIssuerProfile.issuerURL
+    subject: 'system:serviceaccount:${ns}:orders-api'
+    audiences: [ 'api://AzureADTokenExchange' ]
+  }
+}]</pre>
+    <ul class="chips">
+      <li class="correct"><code>for ns in namespaces</code></li>
+      <li><code>foreach ns in namespaces</code> <span class="why">Bicep's keyword is <code>for</code>.</span></li>
+      <li><code>for_each = namespaces</code> <span class="why">That's Terraform.</span></li>
+      <li><code>copy: namespaces</code> <span class="why">That's the raw ARM JSON form.</span></li>
+    </ul>
+    <div class="explain"><code>@batchSize(1)</code> deploys them one after another, which is required for federated credentials on the same identity (lesson 13.4).</div>
+  </div>
+</section>
+
+<section class="step" id="s3">
+  <h2>3. Conditions</h2>
+  <div class="body"><p><code>if (condition)</code> before the body deploys a resource only when the condition is true.</p></div>
+  <pre class="code" data-file="aks.bicep">resource gpuPool 'Microsoft.ContainerService/managedClusters/agentPools@2024-09-01' = if (isProd) {
+  parent: aks
+  name: 'gpu'
+  properties: {
+    mode: 'User'
+    vmSize: 'Standard_NC4as_T4_v3'
+    enableAutoScaling: true
+    minCount: 0
+    maxCount: 2
+    nodeTaints: [ 'gpu=true:NoSchedule' ]
+  }
+}</pre>
+  <aside class="coming" data-set="TF">
+    <dl>
+      <dt>Terraform</dt><dd><code>count = local.is_prod ? 1 : 0</code> ↔ <code>if (isProd)</code>. No <code>[0]</code> indexing afterwards. Use the safe-access operator (<code>gpuPool.?properties</code>) when reading properties of a conditional resource.</dd>
+    </dl>
+  </aside>
+</section>
+
+<section class="step" id="s4">
+  <h2>4. Add the GPU pool in prod</h2>
+  <div class="check" data-type="custom">
+    <p class="q">Add a GPU node pool that's deployed only when <code>environment</code> is <code>prod</code>, tainted so ordinary pods stay off it.</p>
+    <div class="widget" data-widget="iac-editor">Bicep editor. Graded by iac-rules (Bicep): with environment=prod the compiled template contains an agentPool with a GPU VM size and the <code>gpu=true:NoSchedule</code> taint; with dev it doesn't. Accepts <code>if (isProd)</code> or <code>if (environment == 'prod')</code>.</div>
+    <div class="explain">A conditional resource plus a taint. Pods that need the GPU add a toleration and node affinity (lesson 3.2).</div>
+  </div>
+</section>
+
+<section class="step" id="s5">
+  <h2>5. Ternaries</h2>
+  <pre class="code" data-file="(expressions)">tier: isProd ? 'Standard' : 'Free'
+minCount: isProd ? 3 : 1
+apiServerAccessProfile: isProd ? { enablePrivateCluster: true } : { authorizedIPRanges: authorizedIpRanges }</pre>
+</section>
+
+<section class="step" id="s6">
+  <h2>6. User-defined types</h2>
+  <div class="body"><p>Instead of <code>param nodePools array</code>, which accepts anything, define a <b>type</b>. Wrong shapes and typos then fail at build time, and editors autocomplete the fields.</p></div>
+  <pre class="code" data-file="types.bicep">@export()
+type nodePool = {
+  @minLength(1)
+  @maxLength(12)
+  name: string
+  vmSize: string
+  @minValue(0)
+  minCount: int
+  @maxValue(50)
+  maxCount: int
+  spot: bool?
+}</pre>
+  <pre class="code" data-file="aks.bicep">import { nodePool } from 'types.bicep'
+param nodePools nodePool[]</pre>
+  <aside class="coming" data-set="TF">
+    <dl>
+      <dt>Terraform</dt><dd>Like <code>type = list(object({ … optional(bool) }))</code>. The <code>?</code> marks an optional property.</dd>
+    </dl>
+  </aside>
+</section>
+
+<section class="step" id="s7">
+  <h2>7. <code>.bicepparam</code> files</h2>
+  <div class="body"><p>A parameters file in Bicep syntax, tied to one template with <code>using</code>. It's type-checked against the template.</p></div>
+  <pre class="code" data-file="main.prod.bicepparam">using './main.bicep'
+
+param environment = 'prod'
+param userPoolMaxCount = 10
+param nodePools = [
+  { name: 'general', vmSize: 'Standard_D4ds_v5', minCount: 3, maxCount: 10 }
+  { name: 'memory', vmSize: 'Standard_E8ds_v5', minCount: 0, maxCount: 4 }
+]
+param aksAdminGroupId = '00000000-0000-0000-0000-000000000000'</pre>
+</section>
+
+<section class="step" id="s8">
+  <h2>8. Secrets in parameter files: don't</h2>
+  <div class="body">
+    <p>If a template truly needs a secret parameter (<code>@secure()</code>), pull it from Key Vault at deploy time instead of writing it in the file:</p>
+    <ul>
+      <li><code>getSecret()</code> in the <code>.bicepparam</code> file;</li>
+      <li>or <code>readEnvironmentVariable()</code>, fed by the pipeline from a secret variable.</li>
+    </ul>
+  </div>
+  <pre class="code" data-file="(bicepparam excerpt)">param sqlAdminPassword = getSecret('&lt;subId&gt;', 'rg-orders-shared', 'kv-contoso-shared', 'sql-admin-password')</pre>
+</section>
+
+<section class="step" id="s9">
+  <h2>9. Predict the resources</h2>
+  <div class="check" data-type="predict">
+    <p class="q">With <code>main.dev.bicepparam</code> (environment dev, nodePools = one <code>general</code> pool) and the template from steps 1–3, which agent pools exist after the first deployment?</p>
+    <ol class="options">
+      <li>system, general, gpu <span class="why">The GPU pool is <code>if (isProd)</code>.</span></li>
+      <li class="correct">system (inside the cluster resource) and general</li>
+      <li>general only <span class="why">The system pool is part of the cluster's <code>agentPoolProfiles</code>.</span></li>
+      <li>system, general, memory <span class="why">memory is only in the prod parameters.</span></li>
+    </ol>
+    <div class="explain">Conditions and loops are evaluated per deployment from the parameters. Use <code>what-if</code> to confirm.</div>
+  </div>
+</section>
+
+<section class="step" id="s10">
+  <h2>10. Build the parameters</h2>
+  <pre class="code" data-file="terminal">az bicep build-params --file main.prod.bicepparam      # → main.prod.parameters.json, type-checked
+az deployment group what-if -g rg-orders-prod -f main.bicep -p main.prod.bicepparam</pre>
+</section>
+
+<section class="step summary" id="s11">
+  <h2>Loops &amp; types, sorted</h2>
+  <ul>
+    <li><code>[for x in list: {…}]</code> for resources and properties; <code>@batchSize</code> to serialise.</li>
+    <li><code>= if (cond) {…}</code> for optional resources; ternaries for values.</li>
+    <li>User-defined types (<code>type</code>, <code>@export</code>/<code>import</code>) validate structured parameters.</li>
+    <li><code>.bicepparam</code> with <code>using</code>; secrets via <code>getSecret()</code>, never literals.</li>
+  </ul>
+</section>
+</article>
+</body>
+</html>

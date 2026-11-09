@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>5.6 · Workload identity</title>
+<link rel="stylesheet" href="../content.css">
+</head>
+<body>
+<article class="lesson" data-id="5.6" data-chapter="5">
+<nav class="crumbs"><a href="../index.html">Course</a> / <a href="index.html">Chapter 5</a> / 5.6</nav>
+<header>
+  <p class="kicker">Chapter 5 · Lesson 5.6 · ~13 steps · ~18 min</p>
+  <h1>Workload identity</h1>
+  <p class="meta">You'll be able to give a pod its own Azure identity with no secrets anywhere, wire up all six links in the chain, and find the broken link when it fails.</p>
+</header>
+
+<section class="step" id="s1">
+  <h2>1. The goal: no secrets in pods</h2>
+  <div class="body">
+    <p><code>orders-api</code> needs to read a secret from Azure Key Vault. The old way was to store a service principal's client secret in a Kubernetes Secret. That secret can leak, expires, and must be rotated.</p>
+    <p><b>Workload identity</b> lets the pod prove who it is using a token <b>Kubernetes already gives it</b>, and swap that for an Entra ID token. No secret is stored anywhere.</p>
+  </div>
+  <aside class="coming" data-set="A">
+    <dl>
+      <dt>Windows/IIS admin</dt><dd>Like a gMSA or app-pool identity that can reach SQL Server without a password in <code>web.config</code>, but for pods calling Azure.</dd>
+      <dt>Linux admin</dt><dd>It's OIDC federation: Entra ID trusts tokens signed by the cluster's issuer, for one specific service account.</dd>
+      <dt>Developer (Compose)</dt><dd>Instead of <code>AZURE_CLIENT_SECRET</code> in your <code>.env</code>, the Azure SDK finds credentials automatically.</dd>
+      <dt>Other clouds</dt><dd>This is AKS's version of IRSA / EKS Pod Identity on AWS, and Workload Identity Federation on GKE.</dd>
+    </dl>
+  </aside>
+</section>
+
+<section class="step" id="s2">
+  <h2>2. The chain, end to end</h2>
+  <div class="body">
+    <ol>
+      <li>The cluster has an <b>OIDC issuer</b>: a public URL with the keys that sign its ServiceAccount tokens.</li>
+      <li>A <b>user-assigned managed identity</b> (<code>id-orders-api</code>) holds the Azure permissions.</li>
+      <li>A <b>federated credential</b> on that identity says: "trust tokens from <i>this issuer</i> for <i>this subject</i>", where the subject is <code>system:serviceaccount:orders:orders-api</code>.</li>
+      <li>The Kubernetes <b>ServiceAccount</b> <code>orders-api</code> is annotated with the identity's client ID.</li>
+      <li>The <b>pod</b> uses that ServiceAccount and carries the label <code>azure.workload.identity/use: "true"</code>. A webhook then injects a token file and environment variables.</li>
+      <li>The app's Azure SDK (<code>DefaultAzureCredential</code> / <code>WorkloadIdentityCredential</code>) exchanges the Kubernetes token for an Entra ID token.</li>
+    </ol>
+  </div>
+  <div class="widget" data-widget="token-flow">The same token-flow widget as the Chapter 7 service-connection lesson, with the same mental model. Pod → (projected SA token, signed by the cluster) → Entra ID checks the issuer and subject against the federated credential → Entra ID token for <code>id-orders-api</code> → Key Vault. Each hop can be clicked; a "break a link" menu shows the error each broken link produces.</div>
+</section>
+
+<section class="step" id="s3">
+  <h2>3. Steps 1–2: issuer and identity</h2>
+  <pre class="code" data-file="setup.sh">RG=rg-orders-dev; CLUSTER=aks-orders-dev
+ISSUER=$(az aks show -g $RG -n $CLUSTER --query oidcIssuerProfile.issuerUrl -o tsv)
+# https://westeurope.oic.prod-aks.azure.com/&lt;tenant&gt;/&lt;guid&gt;/
+
+az identity create -g $RG -n id-orders-api
+CLIENT_ID=$(az identity show -g $RG -n id-orders-api --query clientId -o tsv)
+PRINCIPAL_ID=$(az identity show -g $RG -n id-orders-api --query principalId -o tsv)
+
+# give the identity what the app needs, and nothing more
+az role assignment create --assignee-object-id $PRINCIPAL_ID --assignee-principal-type ServicePrincipal \
+  --role "Key Vault Secrets User" --scope $(az keyvault show -n kv-orders-dev --query id -o tsv)</pre>
+</section>
+
+<section class="step" id="s4">
+  <h2>4. Step 3: the federated credential</h2>
+  <div class="body">
+    <p>This is where the trust is defined. The <b>subject</b> must match exactly: <code>system:serviceaccount:&lt;namespace&gt;:&lt;serviceaccount&gt;</code>.</p>
+    <p>The audience is always <code>api://AzureADTokenExchange</code>.</p>
+  </div>
+  <pre class="code" data-file="setup.sh">az identity federated-credential create \
+  --name fc-aks-orders-dev-orders-api \
+  --identity-name id-orders-api -g $RG \
+  --issuer "$ISSUER" \
+  --subject system:serviceaccount:orders:orders-api \
+  --audience api://AzureADTokenExchange</pre>
+</section>
+
+<section class="step" id="s5">
+  <h2>5. Step 4: the ServiceAccount</h2>
+  <div class="check" data-type="fill">
+    <p class="q">Annotate the ServiceAccount with the managed identity's client ID.</p>
+    <pre class="code" data-file="k8s/base/serviceaccount.yaml">apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: orders-api
+  namespace: orders
+  annotations:
+    <span class="blank">?</span>: "6c1f2a9e-0000-4b1d-9c55-1a2b3c4d5e6f"</pre>
+    <ul class="chips">
+      <li class="correct"><code>azure.workload.identity/client-id</code></li>
+      <li><code>azure.workload.identity/use</code> <span class="why">That's the pod <i>label</i>, not the ServiceAccount annotation.</span></li>
+      <li><code>aadpodidentity/client-id</code> <span class="why">That's from the old, deprecated AAD Pod Identity.</span></li>
+      <li><code>azure.workload.identity/tenant-id</code> <span class="why">Optional; the client ID is the one that's required.</span></li>
+    </ul>
+    <div class="explain">The client ID (not the object or principal ID) tells the SDK which managed identity to request a token for. It isn't a secret.</div>
+  </div>
+</section>
+
+<section class="step" id="s6">
+  <h2>6. Step 5: the pod</h2>
+  <div class="body"><p>The Deployment must use the ServiceAccount <b>and</b> label its pods. The label is what tells the mutating webhook to inject the token volume and the <code>AZURE_*</code> environment variables.</p></div>
+  <div class="check" data-type="tapline" data-match="serviceAccountName: orders-api">
+    <p class="q">Which line decides the <i>subject</i> of the pod's token, and so whether it matches the federated credential? Tap it.</p>
+    <pre class="code" data-file="k8s/base/deployment.yaml (template)">template:
+  metadata:
+    labels:
+      app: orders-api
+      azure.workload.identity/use: "true"
+  spec:
+    serviceAccountName: orders-api
+    containers:
+      - name: api
+        image: contosoacr.azurecr.io/orders-api:1.4.2</pre>
+    <div class="explain"><code>serviceAccountName: orders-api</code> is how the pod gets <i>that</i> ServiceAccount's token, whose subject matches the federated credential. Without it the pod uses <code>default</code>, and Entra ID rejects the subject.</div>
+  </div>
+</section>
+
+<section class="step" id="s7">
+  <h2>7. What the webhook injects</h2>
+  <pre class="output">$ kubectl exec -n orders deploy/orders-api -- env | grep AZURE_
+AZURE_CLIENT_ID=6c1f2a9e-0000-4b1d-9c55-1a2b3c4d5e6f
+AZURE_TENANT_ID=72f988bf-0000-41af-91ab-2d7cd011db47
+AZURE_FEDERATED_TOKEN_FILE=/var/run/secrets/azure/tokens/azure-identity-token
+AZURE_AUTHORITY_HOST=https://login.microsoftonline.com/</pre>
+  <div class="body"><p>The token file is a short-lived, automatically rotated ServiceAccount token with audience <code>api://AzureADTokenExchange</code>. The Azure SDK reads these variables. There's still no secret anywhere.</p></div>
+</section>
+
+<section class="step" id="s8">
+  <h2>8. Step 6: the app code</h2>
+  <pre class="code" data-file="main.go (excerpt)">cred, err := azidentity.NewDefaultAzureCredential(nil)   // picks up the AZURE_* variables
+client, err := azsecrets.NewClient("https://kv-orders-dev.vault.azure.net/", cred, nil)
+resp, err := client.GetSecret(ctx, "payments-api-key", "", nil)</pre>
+  <div class="body"><p>The same code works on a developer's laptop, using their <code>az login</code>, because <code>DefaultAzureCredential</code> tries several credential types in turn.</p></div>
+</section>
+
+<section class="step" id="s9">
+  <h2>9. Fix the broken chain</h2>
+  <div class="check" data-type="custom">
+    <p class="q">The app logs an error. Find and fix the broken link in the token-flow widget.</p>
+    <pre class="output">AADSTS700213: No matching federated identity record found for presented assertion subject
+'system:serviceaccount:orders-dev:orders-api'. Check your federated identity credential Subject,
+Audience and Issuer against the presented assertion.</pre>
+    <div class="widget" data-widget="token-flow">The configuration panel shows: federated credential subject <code>system:serviceaccount:orders:orders-api</code>; the pod runs in namespace <code>orders-dev</code> with ServiceAccount <code>orders-api</code>. Success when the learner edits the federated credential subject to <code>system:serviceaccount:orders-dev:orders-api</code>, or adds a second federated credential for it. Changing the ServiceAccount annotation gets the hint "The client ID is fine. Read the subject in the error."</div>
+    <div class="explain">The subject includes the <b>namespace</b>. Moving an app to another namespace, or another cluster with a different issuer, needs a matching federated credential. One identity can hold several (up to 20).</div>
+  </div>
+</section>
+
+<section class="step" id="s10">
+  <h2>10. Errors and what they mean</h2>
+  <table>
+    <tr><th>Symptom</th><th>Broken link</th></tr>
+    <tr><td>No <code>AZURE_*</code> env vars in the pod</td><td>Missing pod label, or workload identity not enabled on the cluster</td></tr>
+    <tr><td><code>AADSTS700213</code> No matching federated identity record</td><td>Subject (namespace/SA) or issuer mismatch</td></tr>
+    <tr><td><code>AADSTS700016</code> / application not found</td><td>Wrong client ID in the SA annotation</td></tr>
+    <tr><td>Token obtained, but <code>403 Forbidden</code> from Key Vault</td><td>The identity lacks the role on that resource (or the vault uses access policies, not RBAC)</td></tr>
+  </table>
+</section>
+
+<section class="step" id="s11">
+  <h2>11. One identity per app</h2>
+  <div class="body">
+    <p>Give each app its own managed identity and ServiceAccount: <code>orders-api</code>, <code>web</code>, <code>orders-worker</code>. Each identity gets roles on exactly the resources that app uses.</p>
+    <p>A compromised <code>web</code> pod can then only do what <code>web</code> could do.</p>
+  </div>
+</section>
+
+<section class="step" id="s12">
+  <h2>12. Beyond Key Vault</h2>
+  <div class="body">
+    <p>The same identity works for any Entra ID-protected service:</p>
+    <ul>
+      <li>Storage (Blob Data roles)</li>
+      <li>Service Bus</li>
+      <li>Cosmos DB</li>
+      <li>Azure SQL and PostgreSQL with Entra ID authentication</li>
+    </ul>
+    <p>Many apps can drop database passwords entirely. Chapter 15 uses it with the Key Vault Secrets Store CSI driver.</p>
+  </div>
+</section>
+
+<section class="step summary" id="s13">
+  <h2>Workload identity, sorted</h2>
+  <ul>
+    <li>OIDC issuer → user-assigned identity → federated credential (issuer + <code>system:serviceaccount:ns:sa</code>).</li>
+    <li>ServiceAccount annotation <code>azure.workload.identity/client-id</code>.</li>
+    <li>Pod: <code>serviceAccountName</code> + label <code>azure.workload.identity/use: "true"</code>.</li>
+    <li>SDK: <code>DefaultAzureCredential</code> reads the injected <code>AZURE_*</code> variables.</li>
+    <li>No secrets; one identity per app; a subject mismatch is the #1 error.</li>
+  </ul>
+</section>
+</article>
+</body>
+</html>

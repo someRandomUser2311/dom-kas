@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>17.4 · How you'll be graded</title>
+<link rel="stylesheet" href="../content.css">
+</head>
+<body>
+<article class="lesson" data-id="17.4" data-chapter="17">
+<nav class="crumbs"><a href="../index.html">Course</a> / <a href="index.html">Chapter 17</a> / 17.4</nav>
+<header>
+  <p class="kicker">Chapter 17 · Lesson 17.4 · ~6 steps · ~8 min</p>
+  <h1>How you'll be graded</h1>
+  <p class="meta">You'll know exactly which graders run on which files, how partial credit works, and what counts as a critical failure.</p>
+</header>
+
+<section class="step" id="s1">
+  <h2>1. Check all</h2>
+  <div class="body"><p>The project editor has a tab for every file. <b>Check all</b> runs every grader and produces a <b>readiness report</b>: a score per file, every failed rule with file, line and a link to the lesson, and ⛔ marks on critical failures. Run it as often as you like.</p></div>
+</section>
+
+<section class="step" id="s2">
+  <h2>2. Graders per file</h2>
+  <table>
+    <tr><th>File</th><th>Graders</th><th>Weight</th></tr>
+    <tr><td><code>Dockerfile</code></td><td>yaml-rules (text mode)</td><td>5%</td></tr>
+    <tr><td><code>k8s/base/*</code></td><td>manifest-lint, cross-ref, policy-rules</td><td>20%</td></tr>
+    <tr><td><code>k8s/overlays/{dev,prod}</code></td><td>kustomize-lite</td><td>10%</td></tr>
+    <tr><td><code>k8s/policies/*</code></td><td>netpol-eval (+ policy-rules for cluster policies)</td><td>10%</td></tr>
+    <tr><td><code>k8s/gateway/*</code></td><td>cross-ref</td><td>5%</td></tr>
+    <tr><td><code>k8s/secrets/secretproviderclass.yaml</code></td><td>cross-ref</td><td>5%</td></tr>
+    <tr><td><code>infra/terraform/*</code> or <code>infra/bicep/*</code></td><td>iac-rules</td><td>20%</td></tr>
+    <tr><td><code>infra-pipeline.yml</code></td><td>pipeline-rules</td><td>10%</td></tr>
+    <tr><td><code>templates/*</code> + <code>azure-pipelines.yml</code></td><td>pipeline-rules, stage-sim</td><td>15%</td></tr>
+  </table>
+</section>
+
+<section class="step" id="s3">
+  <h2>3. Partial credit</h2>
+  <div class="body"><p>Each file's score is the share of its rules that pass. The project score is the weighted sum. You pass at <b>80%</b> with <b>no critical rule failing</b>. A 95% submission with a secret in Git still fails.</p></div>
+</section>
+
+<section class="step" id="s4">
+  <h2>4. Critical rules (⛔)</h2>
+  <div class="body"><p>These are the critical rules from every chapter's labs:</p>
+  <ul>
+    <li>No secrets anywhere in the repo (Dockerfile ENV/ARG, ConfigMaps, values, tfvars/bicepparam, pipelines).</li>
+    <li>Containers run as non-root; no privileged containers.</li>
+    <li>Service selectors match pod labels.</li>
+    <li>Liveness doesn't depend on the database; memory limits are set.</li>
+    <li>Default-deny in every app namespace; nothing outside orders-api and orders-worker reaches the database.</li>
+    <li>The cluster: local accounts disabled, Entra ID + Azure RBAC, private.</li>
+    <li>Prod deploys only through a deployment job with an approved environment; the canary failure hook rejects.</li>
+    <li>The scan runs before deploy and fails on fixable HIGH/CRITICAL; no signing keys in the repo.</li>
+    <li>Terraform applies the saved plan (or Bicep deploys only after an approved what-if).</li>
+    <li>No wildcard RBAC and no ClusterRoleBinding for the deploy identity.</li>
+  </ul></div>
+</section>
+
+<section class="step" id="s5">
+  <h2>5. Solutions and integrity</h2>
+  <div class="body"><p>Viewing the reference solution caps the project at <b>60%</b>, as with any lab, so it can't pass. Your results are stored in your browser, and the course-complete page says so plainly: it's a <b>completion record</b>, not a verified certificate.</p></div>
+</section>
+
+<section class="step summary" id="s6">
+  <h2>Grading, sorted</h2>
+  <ul>
+    <li>Check all → readiness report per file and rule.</li>
+    <li>Weighted partial credit; pass = 80% and no ⛔ failures.</li>
+    <li>The solution caps at 60%; results are self-reported.</li>
+  </ul>
+  <p><a href="project.html">Start the project →</a></p>
+</section>
+</article>
+</body>
+</html>

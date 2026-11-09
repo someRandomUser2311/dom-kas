@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>5.1 · How pods get IPs: CNI options</title>
+<link rel="stylesheet" href="../content.css">
+</head>
+<body>
+<article class="lesson" data-id="5.1" data-chapter="5">
+<nav class="crumbs"><a href="../index.html">Course</a> / <a href="index.html">Chapter 5</a> / 5.1</nav>
+<header>
+  <p class="kicker">Chapter 5 · Lesson 5.1 · ~12 steps · ~16 min</p>
+  <h1>How pods get IPs: CNI options</h1>
+  <p class="meta">You'll be able to pick an AKS network model, size the subnets and ranges it needs, and avoid running out of IP addresses.</p>
+</header>
+
+<section class="step" id="s1">
+  <h2>1. Every pod needs an IP</h2>
+  <div class="body">
+    <p>Kubernetes requires every pod to have its own IP, reachable from every other pod without NAT. A <b>CNI plugin</b> (Container Network Interface) makes that happen. It hands out IPs and wires up routes whenever a pod starts.</p>
+    <p>On AKS the plugin choice decides <b>where pod IPs come from</b>, and that drives your whole IP plan.</p>
+  </div>
+  <aside class="coming" data-set="A">
+    <dl>
+      <dt>Windows/IIS admin</dt><dd>Think of DHCP scopes: the question is whether pods get addresses from the same scope as servers (VNet) or from a private scope behind each server (overlay).</dd>
+      <dt>Linux admin</dt><dd>Overlay means pod traffic is routed or encapsulated between nodes; VNet-routed means pods are first-class IPs in the subnet, like secondary IPs on a NIC.</dd>
+      <dt>Developer (Compose)</dt><dd>Compose's bridge network is an overlay on one host. Overlay on AKS is the same idea across many hosts.</dd>
+      <dt>Other clouds</dt><dd>VNet-routed pod IPs ≈ the default Amazon VPC CNI on EKS. Overlay ≈ EKS custom networking, or GKE's VPC-native setup with secondary ranges.</dd>
+    </dl>
+  </aside>
+</section>
+
+<section class="step" id="s2">
+  <h2>2. Azure CNI Overlay (recommended default)</h2>
+  <div class="body">
+    <ul>
+      <li><b>Nodes</b> get IPs from your VNet subnet.</li>
+      <li><b>Pods</b> get IPs from a separate private <b>pod CIDR</b> (e.g. <code>192.168.0.0/16</code>) that isn't part of the VNet.</li>
+    </ul>
+    <p>Each node gets a block of that range. Traffic leaving the cluster is SNATed to the node's IP, so VNet resources and the internet see the node.</p>
+    <p>Why it's the default choice:</p>
+    <ul>
+      <li>the subnet only needs room for <b>nodes</b>;</li>
+      <li>up to 250 pods per node;</li>
+      <li>the same pod CIDR can be reused in every cluster.</li>
+    </ul>
+  </div>
+  <pre class="code" data-file="flags">--network-plugin azure --network-plugin-mode overlay --pod-cidr 192.168.0.0/16</pre>
+</section>
+
+<section class="step" id="s3">
+  <h2>3. Azure CNI with VNet-routed pod IPs</h2>
+  <div class="body">
+    <p>Here, pods get real IPs <b>from the VNet</b>. Anything in the VNet, or connected networks, can reach a pod directly by its IP without NAT. Some network appliances and on-premises integrations need that.</p>
+    <p>The price is IP addresses: the subnet must hold every node <i>and every pod</i>. There are two flavours:</p>
+    <ul>
+      <li><b>Classic:</b> pod IPs pre-allocated per node from the node subnet.</li>
+      <li><b>Dynamic IP allocation:</b> a separate pod subnet (<code>--pod-subnet-id</code>), allocated as needed.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="step" id="s4">
+  <h2>4. Do the IP maths</h2>
+  <div class="widget" data-widget="cidr-calc">IP-planning mode, built on the lesson 0.3 calculator. Inputs:
+    <ul>
+      <li>plugin (Overlay or VNet-routed)</li>
+      <li>node count and max surge</li>
+      <li>max pods per node</li>
+      <li>node subnet size</li>
+    </ul>
+    Output: addresses needed versus available (after Azure's 5 reserved), with a red "exhausted" state and the error you'd see. Overlay counts nodes only; VNet-routed counts nodes × (1 + max pods).</div>
+  <div class="check" data-type="mcq">
+    <p class="q">Using classic VNet-routed pod IPs, a cluster has 50 nodes with 30 max pods each, in a <code>/24</code> subnet. What happens?</p>
+    <ol class="options">
+      <li>It fits comfortably <span class="why">50 × (30 + 1) = 1,550 addresses are needed; a /24 has 251.</span></li>
+      <li class="correct">It runs out of IPs long before 50 nodes: node and pod IPs both come from the 251 usable addresses</li>
+      <li>Pods share node IPs, so only 50 are needed <span class="why">That's how overlay looks from outside; VNet-routed pods each take a VNet IP.</span></li>
+      <li>Azure automatically expands the subnet <span class="why">Subnets never grow on their own.</span></li>
+    </ol>
+    <div class="explain">With overlay, the same cluster needs only ~50 subnet IPs, plus surge nodes during upgrades. IP exhaustion shows up as nodes failing to scale or pods stuck in ContainerCreating with IP allocation errors.</div>
+  </div>
+</section>
+
+<section class="step" id="s5">
+  <h2>5. Don't forget surge and growth</h2>
+  <div class="body">
+    <p>Size the node subnet for the <b>maximum</b> node count across all pools (autoscaler max), plus <b>surge</b> nodes during upgrades (lesson 4.4), plus room for growth.</p>
+    <p>For overlay, a <code>/22</code> (1,019 usable) node subnet supports a large cluster with plenty of headroom. That's the size Contoso planned in lesson 0.3.</p>
+  </div>
+</section>
+
+<section class="step" id="s6">
+  <h2>6. Three ranges that must never overlap</h2>
+  <div class="body">
+    <ul>
+      <li><b>VNet / node subnet</b>: e.g. <code>10.20.0.0/22</code>.</li>
+      <li><b>Pod CIDR</b> (overlay): e.g. <code>192.168.0.0/16</code>. It must not overlap the VNet or anything the cluster talks to.</li>
+      <li><b>Service CIDR</b>: e.g. <code>172.16.0.0/16</code>, with <code>--dns-service-ip</code> inside it (e.g. <code>172.16.0.10</code>). It's virtual and only exists inside the cluster.</li>
+    </ul>
+    <p>Overlaps with on-premises or peered networks cause confusing routing failures. Plan them all together, once.</p>
+  </div>
+  <pre class="code" data-file="flags">--vnet-subnet-id /subscriptions/&lt;sub&gt;/resourceGroups/rg-orders-net/providers/Microsoft.Network/virtualNetworks/vnet-orders/subnets/snet-aks-nodes \
+--pod-cidr 192.168.0.0/16 \
+--service-cidr 172.16.0.0/16 \
+--dns-service-ip 172.16.0.10</pre>
+</section>
+
+<section class="step" id="s7">
+  <h2>7. The dataplane: Azure CNI powered by Cilium</h2>
+  <div class="body">
+    <p>The <b>dataplane</b> is the part that actually forwards packets and enforces policy. With <code>--network-dataplane cilium</code>, AKS uses <b>Cilium</b>, which is built on eBPF in the Linux kernel. Cilium:</p>
+    <ul>
+      <li>replaces kube-proxy for Service routing;</li>
+      <li>enforces <b>NetworkPolicy</b> (Chapter 9);</li>
+      <li>scales better on large clusters.</li>
+    </ul>
+    <p>It works with overlay or VNet-routed IPs. It's the recommended dataplane for new clusters.</p>
+  </div>
+</section>
+
+<section class="step" id="s8">
+  <h2>8. kubenet is retiring</h2>
+  <div class="body">
+    <p>Older clusters used <b>kubenet</b>: pods behind the node, with routes managed in a route table. It has been announced for retirement (31 March 2028). It lacks features newer clusters rely on, and Azure CNI Overlay replaces it with the same IP efficiency.</p>
+    <p>Existing kubenet clusters can be <b>upgraded in place</b> to Azure CNI Overlay. New clusters should never choose kubenet.</p>
+  </div>
+</section>
+
+<section class="step" id="s9">
+  <h2>9. Network policy engines</h2>
+  <div class="body">
+    <p>NetworkPolicies only work if something enforces them. On AKS:</p>
+    <ul>
+      <li><b>Cilium</b>: comes with the Cilium dataplane. Recommended.</li>
+      <li><b>Calico</b>: a long-standing open-source option (<code>--network-policy calico</code>).</li>
+      <li><b>Azure Network Policy Manager</b>: being retired; don't choose it for new clusters.</li>
+    </ul>
+    <p>The engine is chosen when the cluster is created. Chapter 9 is all about writing the policies.</p>
+  </div>
+</section>
+
+<section class="step" id="s10">
+  <h2>10. Match plugin to trait</h2>
+  <div class="check" data-type="match">
+    <p class="q">Match each option to what it's known for.</p>
+    <table class="pairs">
+      <tr><td>Azure CNI Overlay</td><td>Pod IPs from a private range; the subnet only holds nodes</td></tr>
+      <tr><td>Azure CNI, VNet-routed</td><td>Pods directly reachable by VNet IP; uses many subnet IPs</td></tr>
+      <tr><td>Cilium dataplane</td><td>eBPF forwarding plus NetworkPolicy enforcement</td></tr>
+      <tr><td>kubenet</td><td>Legacy and retiring; migrate to overlay</td></tr>
+    </table>
+    <div class="explain">Contoso chooses overlay + Cilium: IP-efficient, fast, with policy enforcement built in.</div>
+  </div>
+</section>
+
+<section class="step" id="s11">
+  <h2>11. Can overlay pods reach VNet resources?</h2>
+  <div class="body">
+    <p>Yes, a common misconception. A pod calling a database's private endpoint at <code>10.20.5.4</code> works fine. The packet leaves the node with the <b>node's</b> IP as its source.</p>
+    <p>What you can't do is reach a pod <b>directly</b> from outside the cluster by its pod IP. You go through a Service, load balancer or gateway instead, which is the right design anyway.</p>
+  </div>
+</section>
+
+<section class="step summary" id="s12">
+  <h2>CNI, sorted</h2>
+  <ul>
+    <li>Overlay: nodes in the VNet, pods in a private range. The default choice.</li>
+    <li>VNet-routed: pods get VNet IPs; size the subnet for nodes × pods.</li>
+    <li>Cilium dataplane for performance and policy; kubenet is retiring.</li>
+    <li>VNet, pod CIDR and Service CIDR must never overlap; size for max nodes plus surge.</li>
+  </ul>
+</section>
+</article>
+</body>
+</html>

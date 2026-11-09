@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>11.3 · Canary</title>
+<link rel="stylesheet" href="../content.css">
+</head>
+<body>
+<article class="lesson" data-id="11.3" data-chapter="11">
+<nav class="crumbs"><a href="../index.html">Course</a> / <a href="index.html">Chapter 11</a> / 11.3</nav>
+<header>
+  <p class="kicker">Chapter 11 · Lesson 11.3 · ~13 steps · ~16 min</p>
+  <h1>Canary</h1>
+  <p class="meta">You'll be able to send a small, precise share of traffic to a new version, compare it with the stable one, and promote or abort it.</p>
+</header>
+
+<section class="step" id="s1">
+  <h2>1. Test in production, carefully</h2>
+  <div class="body">
+    <p>Staging never matches production's real traffic. A <b>canary</b> release sends a small share of real users, say 10%, to the new version. You watch error rates and latency, then increase the share step by step or abort.</p>
+    <p>A bad release hurts 10% of requests for a few minutes, not everyone.</p>
+  </div>
+  <aside class="coming" data-set="A">
+    <dl>
+      <dt>Windows/IIS admin</dt><dd>Like App Service slot "traffic routing" percentages, or adding one server with the new build to the farm and watching it.</dd>
+      <dt>Linux admin</dt><dd>Like weighted upstreams in nginx or HAProxy.</dd>
+      <dt>Developer (Compose)</dt><dd>No Compose equivalent; this needs a traffic-splitting proxy.</dd>
+      <dt>Other clouds</dt><dd>Like ALB weighted target groups, or Cloud Run traffic splitting.</dd>
+    </dl>
+  </aside>
+</section>
+
+<section class="step" id="s2">
+  <h2>2. Two ways to split traffic</h2>
+  <table>
+    <tr><th>Method</th><th>How</th><th>Precision</th></tr>
+    <tr><td><b>Replica ratio</b></td><td>Run 1 canary pod next to 9 stable pods behind one Service</td><td>Coarse: ≈10% only if the counts work out, and connection reuse skews it</td></tr>
+    <tr><td><b>Weighted routing</b></td><td>The gateway or mesh splits by weight between two Services</td><td>Exact, independent of pod counts</td></tr>
+  </table>
+  <div class="body"><p>"Canary = 1 pod out of N" is the coarse form. With 2 replicas, the smallest replica-based canary is 33% or 50%, hardly small.</p></div>
+</section>
+
+<section class="step" id="s3">
+  <h2>3. Weighted HTTPRoute</h2>
+  <div class="body"><p>With the Gateway API (Chapter 8), run two Deployments and two Services, <code>orders-api-stable</code> and <code>orders-api-canary</code>, and split with weights. Then change only the weights to progress: 90/10 → 50/50 → 0/100.</p></div>
+  <pre class="code" data-file="k8s/gateway/orders-route.yaml (rules)">rules:
+  - matches:
+      - path: { type: PathPrefix, value: /api }
+    backendRefs:
+      - name: orders-api-stable
+        port: 80
+        weight: 90
+      - name: orders-api-canary
+        port: 80
+        weight: 10</pre>
+  <div class="widget" data-widget="canary-dashboard">A weight slider (stable vs canary), a request generator, and two live charts: error rate and p95 latency, one line per version. Buttons: "Promote" (move toward 100% canary) and "Abort" (back to 0%). Scenarios include a healthy canary and one that starts throwing 5xx errors at 10%.</div>
+</section>
+
+<section class="step" id="s4">
+  <h2>4. Abort the bad canary</h2>
+  <div class="check" data-type="custom">
+    <p class="q">In the canary dashboard, start at 10%. The canary's error rate climbs to 8% while stable stays at 0.2%. Do the right thing.</p>
+    <div class="widget" data-widget="canary-dashboard">Success when the learner presses Abort (weights back to 100/0) within the simulated observation window, without promoting first. Promoting gives: "You just sent 50% of users to a version with 40× the error rate."</div>
+    <div class="explain">Compare the canary <b>against stable at the same time</b>, not against yesterday. A canary is only useful if you're willing to stop it.</div>
+  </div>
+</section>
+
+<section class="step" id="s5">
+  <h2>5. What to measure</h2>
+  <div class="body">
+    <ul>
+      <li><b>Error rate</b> (5xx share) of canary vs stable.</li>
+      <li><b>Latency</b> (p95/p99) of canary vs stable.</li>
+      <li><b>Saturation</b>: CPU and memory of canary pods.</li>
+      <li><b>Business signals</b> where you can, such as checkout success rate.</li>
+    </ul>
+    <p>Decide the thresholds <b>before</b> the release: for example, "abort if canary 5xx &gt; 2× stable for 5 minutes". Chapter 14 builds these metrics; lesson 11.4 automates the decision.</p>
+  </div>
+</section>
+
+<section class="step" id="s6">
+  <h2>6. The KubernetesManifest canary strategy</h2>
+  <div class="body">
+    <p>Azure Pipelines' <code>KubernetesManifest@1</code> has a built-in canary. With <code>strategy: canary</code> and <code>percentage</code>, it creates a <code>-canary</code> Deployment (and optionally a <code>-baseline</code>) next to the stable one. Later, an <code>action: promote</code> or <code>action: reject</code> step finishes or undoes it.</p>
+    <p>With the default <code>trafficSplitMethod: pod</code> the split is by <b>replica ratio</b>, which is coarse. With <code>smi</code> it uses an SMI TrafficSplit, which needs a mesh that supports it.</p>
+  </div>
+  <div class="check" data-type="fill">
+    <p class="q">Deploy a canary that takes 10% (by replica ratio).</p>
+    <pre class="code" data-file="(steps excerpt)">- task: KubernetesManifest@1
+  inputs:
+    action: deploy
+    strategy: canary
+    <span class="blank">?</span>: 10
+    namespace: orders
+    manifests: $(bake.manifestsBundle)
+    containers: contosoacr.azurecr.io/orders-api:$(Build.BuildId)</pre>
+    <ul class="chips">
+      <li class="correct"><code>percentage</code></li>
+      <li><code>weight</code> <span class="why"><code>weight</code> belongs to HTTPRoute backendRefs, not this task.</span></li>
+      <li><code>increments</code> <span class="why"><code>increments</code> is part of the deployment job's <code>strategy</code> (lesson 11.4), not the task.</span></li>
+      <li><code>replicas</code> <span class="why">The task computes canary replicas from the percentage.</span></li>
+    </ul>
+    <div class="explain">Inside a canary deployment job, use <code>percentage: $(strategy.increment)</code> so each increment sets it.</div>
+  </div>
+</section>
+
+<section class="step" id="s7">
+  <h2>7. Baseline: a fair comparison</h2>
+  <div class="body"><p>A brand-new canary pod differs from long-running stable pods: cold caches, fresh memory. The task can also start a <b>baseline</b> Deployment, new pods running the <i>old</i> version. Comparing canary with baseline isolates the effect of the code change.</p></div>
+</section>
+
+<section class="step" id="s8">
+  <h2>8. The Istio add-on alternative</h2>
+  <div class="body"><p>With AKS's Istio-based service mesh add-on, a <code>VirtualService</code> (or a Gateway API HTTPRoute) splits traffic by weight, header or cookie. That allows "internal users first" canaries, and the mesh's telemetry gives per-version metrics for free. It's more machinery, but the most precise control.</p></div>
+</section>
+
+<section class="step" id="s9">
+  <h2>9. Header-based canaries</h2>
+  <div class="body"><p>Weights pick users at random. Match on a header (<code>x-canary: true</code>, set for employees or beta testers) to send a <b>chosen</b> group to the canary first. Lesson 8.4's header matches do exactly this.</p></div>
+</section>
+
+<section class="step" id="s10">
+  <h2>10. Sticky users</h2>
+  <div class="body"><p>With pure weights, one user's requests can bounce between versions: the page is from v1 and the API call from v2. If that breaks your app, use header or cookie-based routing, or make sure both versions are compatible with each other (lesson 11.2, step 6).</p></div>
+</section>
+
+<section class="step" id="s11">
+  <h2>11. Promote</h2>
+  <div class="body"><p>Once the canary has run at 100% (or passed every step), make it the new stable: update <code>orders-api-stable</code>'s image to the canary's, reset the weights to 100/0, and scale the canary to 0. With KubernetesManifest, <code>action: promote</code> does this; <code>action: reject</code> removes the canary and baseline.</p></div>
+</section>
+
+<section class="step" id="s12">
+  <h2>12. Canary checklist</h2>
+  <ul>
+    <li>Precise split: weights (Gateway API or mesh), not replica ratios, when the percentage matters.</li>
+    <li>Per-version metrics with thresholds decided in advance.</li>
+    <li>Compatible versions (API, schema, sessions).</li>
+    <li>An automated abort path (next lesson).</li>
+  </ul>
+</section>
+
+<section class="step summary" id="s13">
+  <h2>Canary, sorted</h2>
+  <ul>
+    <li>Send a small share of real traffic to the new version; compare with stable; step up or abort.</li>
+    <li>Weighted <code>backendRefs</code> for exact splits; replica ratios are coarse.</li>
+    <li><code>KubernetesManifest@1</code>: <code>strategy: canary</code>, <code>percentage</code>, then <code>promote</code>/<code>reject</code>.</li>
+    <li>A baseline makes the comparison fair; headers allow targeted canaries.</li>
+  </ul>
+</section>
+</article>
+</body>
+</html>

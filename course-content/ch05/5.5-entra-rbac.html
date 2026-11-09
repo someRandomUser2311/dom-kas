@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>5.5 · Humans in: Entra ID + Azure RBAC</title>
+<link rel="stylesheet" href="../content.css">
+</head>
+<body>
+<article class="lesson" data-id="5.5" data-chapter="5">
+<nav class="crumbs"><a href="../index.html">Course</a> / <a href="index.html">Chapter 5</a> / 5.5</nav>
+<header>
+  <p class="kicker">Chapter 5 · Lesson 5.5 · ~11 steps · ~14 min</p>
+  <h1>Humans in: Entra ID + Azure RBAC</h1>
+  <p class="meta">You'll be able to explain how people sign in to an AKS cluster with Entra ID, and grant them exactly the Kubernetes permissions they need, down to one namespace, with Azure role assignments.</p>
+</header>
+
+<section class="step" id="s1">
+  <h2>1. Two questions for every request</h2>
+  <div class="body">
+    <p>Every <code>kubectl</code> call hits the API server, which asks two questions:</p>
+    <ul>
+      <li><b>Who are you?</b> This is authentication. With Entra ID integration, the answer is an Entra ID token for your user, group membership included.</li>
+      <li><b>What may you do?</b> This is authorisation. It's answered by <b>Azure RBAC</b> (role assignments in Azure) or <b>Kubernetes RBAC</b> (Role and RoleBinding objects in the cluster), or both.</li>
+    </ul>
+  </div>
+  <aside class="coming" data-set="A">
+    <dl>
+      <dt>Windows/IIS admin</dt><dd>It's like Windows authentication plus NTFS permissions: you sign in with your directory account, and permissions are granted to groups.</dd>
+      <dt>Linux admin</dt><dd>It's like SSO via OIDC plus sudoers rules, but the rules live in Azure.</dd>
+      <dt>Developer (Compose)</dt><dd>Docker has no per-user permissions on a host; this is new territory.</dd>
+      <dt>Other clouds</dt><dd>Like EKS access entries with IAM, or GKE with Google Groups RBAC. <b>Careful:</b> with Azure RBAC, permissions live in Azure, not in an in-cluster ConfigMap.</dd>
+    </dl>
+  </aside>
+</section>
+
+<section class="step" id="s2">
+  <h2>2. Signing in: kubelogin</h2>
+  <div class="body">
+    <p>With <code>--enable-aad</code>, the kubeconfig from <code>az aks get-credentials</code> doesn't contain a secret. It tells kubectl to run <b>kubelogin</b>, which gets an Entra ID token on demand.</p>
+    <p><code>kubelogin convert-kubeconfig -l azurecli</code> makes it reuse your <code>az login</code> session, so there's no extra prompt. Pipelines use other login modes, such as workload identity or a service principal.</p>
+  </div>
+  <pre class="code" data-file="terminal">az login
+az aks get-credentials -g rg-orders-dev -n aks-orders-dev
+kubelogin convert-kubeconfig -l azurecli
+kubectl get pods -n orders</pre>
+</section>
+
+<section class="step" id="s3">
+  <h2>3. Azure RBAC for Kubernetes</h2>
+  <div class="body">
+    <p>With <code>--enable-azure-rbac</code>, Azure role assignments decide what you can do <i>inside</i> the cluster. There are four built-in roles:</p>
+    <ul>
+      <li><b>Azure Kubernetes Service RBAC Reader</b>: view most objects (not Secrets).</li>
+      <li><b>Azure Kubernetes Service RBAC Writer</b>: create, change and delete most objects, and read Secrets. It can't change roles or bindings.</li>
+      <li><b>Azure Kubernetes Service RBAC Admin</b>: full control of a namespace, including RBAC within it.</li>
+      <li><b>Azure Kubernetes Service RBAC Cluster Admin</b>: everything, cluster-wide.</li>
+    </ul>
+    <p>Users also need <b>Azure Kubernetes Service Cluster User Role</b> on the cluster resource. It lets them download the kubeconfig (<code>get-credentials</code>), but grants nothing inside the cluster.</p>
+  </div>
+</section>
+
+<section class="step" id="s4">
+  <h2>4. Scope: down to a namespace</h2>
+  <div class="body">
+    <p>The scope can be the whole cluster, or a single <b>namespace</b>, by appending <code>/namespaces/&lt;name&gt;</code> to the cluster's resource ID.</p>
+    <p>As always, grant to <b>Entra ID groups</b>, not to individuals.</p>
+  </div>
+  <pre class="code" data-file="assign.sh">AKS_ID=$(az aks show -g rg-orders-dev -n aks-orders-dev --query id -o tsv)
+
+az role assignment create \
+  --assignee-object-id "$DEV_GROUP_ID" --assignee-principal-type Group \
+  --role "Azure Kubernetes Service RBAC Writer" \
+  --scope "$AKS_ID/namespaces/orders"</pre>
+  <div class="check" data-type="mcq">
+    <p class="q">Developers must deploy and debug in namespace <code>orders</code> in dev, and nothing else. Which assignment?</p>
+    <ol class="options">
+      <li>RBAC Cluster Admin at the cluster <span class="why">Far too broad.</span></li>
+      <li class="correct">RBAC Writer scoped to <code>…/namespaces/orders</code> (plus Cluster User Role on the cluster)</li>
+      <li>RBAC Reader at the cluster <span class="why">They need to deploy, not just read.</span></li>
+      <li>Contributor on the resource group <span class="why">Contributor manages the Azure resource; it doesn't grant permissions inside the cluster.</span></li>
+    </ol>
+    <div class="explain">Writer is enough to deploy; namespace scope keeps it contained. Give Admin only to people who manage RBAC inside the namespace.</div>
+  </div>
+</section>
+
+<section class="step" id="s5">
+  <h2>5. Do it from the CLI</h2>
+  <div class="check" data-type="command">
+    <p class="q">Give the group with object ID <code>$SRE_GROUP_ID</code> read-only access to the whole cluster (<code>$AKS_ID</code>).</p>
+    <p class="answer"><code>az role assignment create --assignee-object-id $SRE_GROUP_ID --assignee-principal-type Group --role "Azure Kubernetes Service RBAC Reader" --scope $AKS_ID</code></p>
+    <p class="accept">Also accepted: <code>--assignee $SRE_GROUP_ID</code> instead of the object-id pair.</p>
+    <div class="explain">Cluster scope = the cluster's resource ID with no <code>/namespaces/…</code> suffix.</div>
+  </div>
+</section>
+
+<section class="step" id="s6">
+  <h2>6. Contributor isn't kubectl access</h2>
+  <div class="body">
+    <p>Azure has two planes for AKS:</p>
+    <ul>
+      <li>The <b>Azure resource</b> (control plane of Azure): scale pools, upgrade, delete the cluster. Contributor and Owner work here.</li>
+      <li>The <b>Kubernetes API</b> (data plane): pods, Deployments, Secrets. The AKS RBAC roles work here.</li>
+    </ul>
+    <p>A Contributor on the resource group can delete the whole cluster but, with Azure RBAC, can't list its pods without an AKS RBAC role. Grant each plane deliberately.</p>
+  </div>
+</section>
+
+<section class="step" id="s7">
+  <h2>7. Local accounts off</h2>
+  <div class="body">
+    <p>Even with Entra ID enabled, AKS still has a <b>local admin</b> certificate unless you disable it. <code>az aks get-credentials --admin</code> gives full cluster-admin with no Entra ID sign-in and no audit trail of who used it.</p>
+    <p><code>--disable-local-accounts</code> removes it. Do it in every environment, after confirming an Entra ID group holds Cluster Admin, so you can't lock yourself out.</p>
+  </div>
+  <div class="check" data-type="tapline" data-match="disableLocalAccounts: false">
+    <p class="q">This cluster's settings fail the security review. Tap the reason.</p>
+    <pre class="code" data-file="az aks show (excerpt)">"aadProfile": {
+  "managed": true,
+  "enableAzureRbac": true
+},
+"disableLocalAccounts": false,
+"oidcIssuerProfile": { "enabled": true },
+"securityProfile": { "workloadIdentity": { "enabled": true } }</pre>
+    <div class="explain">Entra ID and Azure RBAC are on, but a static admin credential still exists. Set <code>disableLocalAccounts: true</code>.</div>
+  </div>
+</section>
+
+<section class="step" id="s8">
+  <h2>8. Kubernetes RBAC: the alternative</h2>
+  <div class="body">
+    <p>Instead of Azure RBAC, you can use Entra ID for sign-in and native <b>Kubernetes RBAC</b> for permissions: <code>Role</code>/<code>ClusterRole</code> objects bound to Entra ID group object IDs with <code>RoleBinding</code>s.</p>
+    <p>That's more flexible: custom verbs and resources, managed as YAML. But permissions then live inside each cluster rather than in Azure. Chapter 15 covers Kubernetes RBAC in depth, because you still need it for ServiceAccounts.</p>
+  </div>
+</section>
+
+<section class="step" id="s9">
+  <h2>9. Debugging "Forbidden"</h2>
+  <pre class="output">$ kubectl get secrets -n orders
+Error from server (Forbidden): secrets is forbidden: User "aisha@contoso.com" cannot list resource "secrets"
+in API group "" in the namespace "orders": User does not have access to the resource in Azure.
+Update role assignment to allow access.</pre>
+  <div class="body"><p>The message names the user, verb, resource and namespace. Here, Aisha has RBAC Reader, which can't read Secrets, by design. <code>kubectl auth can-i list secrets -n orders</code> checks before you try.</p></div>
+</section>
+
+<section class="step" id="s10">
+  <h2>10. Just-in-time access</h2>
+  <div class="body">
+    <p>For production, combine Azure RBAC with <b>Entra ID Privileged Identity Management (PIM)</b>. Engineers are <i>eligible</i> for a role, and activate it for a few hours with a reason and, optionally, an approval.</p>
+    <p>Nobody holds standing write access to production. Pipelines do the deploying (Chapter 7).</p>
+  </div>
+</section>
+
+<section class="step summary" id="s11">
+  <h2>Human access, sorted</h2>
+  <ul>
+    <li>Entra ID signs people in (through kubelogin); Azure RBAC decides what they may do.</li>
+    <li>Four AKS RBAC roles (Reader, Writer, Admin, Cluster Admin), scoped to the cluster or <code>/namespaces/&lt;ns&gt;</code>; plus Cluster User Role to get credentials.</li>
+    <li>Azure Contributor ≠ Kubernetes access.</li>
+    <li>Disable local accounts; use groups and PIM.</li>
+  </ul>
+</section>
+</article>
+</body>
+</html>

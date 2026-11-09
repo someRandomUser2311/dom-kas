@@ -1,0 +1,124 @@
+# The capstone project (Chapter 17): a multi-file lab graded by group, with
+# the weights from lesson 17.4. Rule texts live here because the project
+# page describes the rules as a table, not a list.
+lab: ch17/project
+weights:
+  Dockerfile: 5
+  k8s/base: 20
+  k8s/overlays: 10
+  k8s/policies: 10
+  k8s/gateway: 5
+  k8s/secrets: 5
+  infra: 20
+  infra-pipeline.yml: 10
+  pipelines: 15
+files:
+  - name: Dockerfile
+    start: "# Multi-stage build for orders-api (Go, distroless nonroot)\n"
+  - name: k8s/base/deployment.yaml
+    start: "# Deployment orders-api in namespace orders\n"
+  - name: k8s/base/service.yaml
+    start: "# Service orders-api (ClusterIP, port 80 → http)\n"
+  - name: k8s/base/configmap.yaml
+    start: "# ConfigMap orders-api-config (no secrets!)\n"
+  - name: k8s/base/hpa.yaml
+    start: "# HPA min 2 / max 10\n"
+  - name: k8s/base/pdb.yaml
+    start: "# PDB allowing 1 disruption\n"
+  - name: k8s/base/serviceaccount.yaml
+    start: "# ServiceAccount orders-api with the workload identity client-id annotation\n"
+  - name: k8s/overlays/dev/kustomization.yaml
+    start: "resources:\n  - ../../base\n"
+  - name: k8s/overlays/prod/kustomization.yaml
+    start: "resources:\n  - ../../base\n"
+  - name: k8s/policies/networkpolicies.yaml
+    start: "# Default-deny and the allowed flows for web, orders and db\n"
+  - name: k8s/policies/cluster/policies.yaml
+    start: "# Cluster policies (Kyverno or Azure Policy): allowed registries, no latest, limits, no privileged, signed images\n"
+  - name: k8s/gateway/gateway.yaml
+    start: "# Gateway shop-gateway in gateway-infra (HTTPS + HTTP redirect)\n"
+  - name: k8s/gateway/routes.yaml
+    start: "# HTTPRoutes: /api → orders/orders-api:80, / → web/web:80, and the HTTP → HTTPS redirect\n"
+  - name: k8s/secrets/secretproviderclass.yaml
+    start: "# SecretProviderClass for kv-orders-prod\n"
+  - name: infra/terraform/main.tf
+    start: "# Terraform (choose Terraform OR Bicep; leave the other file empty)\n"
+  - name: infra/bicep/main.bicep
+    start: "// Bicep (choose Terraform OR Bicep; leave the other file empty)\n"
+  - name: infra-pipeline.yml
+    start: "# Infra pipeline: PR checks → plan/what-if → approval → apply/deploy\n"
+  - name: templates/build.yml
+    start: "# Build template: build → scan → push → SBOM → sign\n"
+  - name: azure-pipelines.yml
+    start: "# Release pipeline: Build → DeployDev → DeployProd (canary)\n"
+fixture:
+  pods:
+    - { name: web, ns: web, labels: { app: web }, ports: [8080] }
+    - { name: orders-api, ns: orders, labels: { app: orders-api }, ports: [8080] }
+    - { name: orders-worker, ns: orders, labels: { app: orders-worker } }
+    - { name: postgres, ns: db, labels: { app: postgres }, ports: [5432] }
+    - { name: gateway, ns: gateway-infra, labels: { app: gateway } }
+    - { name: kube-dns, ns: kube-system, labels: { k8s-app: kube-dns }, ports: [53] }
+  expect:
+    - 'gateway -> web:8080'
+    - 'gateway -> orders-api:8080'
+    - 'web -> orders-api:8080'
+    - 'orders-api,orders-worker -> postgres:5432'
+    - '* -> kube-dns:53'
+rules:
+  # --- Dockerfile (5%)
+  - { group: Dockerfile, file: Dockerfile, text: 'Dockerfile: multi-stage build', all: [ { re: '(?i)^FROM\s(?s:.*)^FROM\s' }, { re: '(?i)^COPY\s+--from=' } ] }
+  - { group: Dockerfile, file: Dockerfile, text: 'Dockerfile: base images pinned by digest', re: '(?i)^FROM\s+\S+@sha256:' }
+  - { group: Dockerfile, file: Dockerfile, text: 'Dockerfile: the final stage runs as a non-root USER', critical: true, fn: dockerfile_final_user }
+  - { group: Dockerfile, file: Dockerfile, text: 'Dockerfile: no secrets in ENV or ARG', critical: true, not_re: '(?i)^\s*(ENV|ARG)\s+[A-Z0-9_]*(PASSWORD|SECRET|TOKEN|KEY)[A-Z0-9_]*\s*[= ]\s*\S+' }
+  # --- k8s/base (20%)
+  - { group: k8s/base, file: 'k8s/base/*', text: 'Base: every container has readiness and liveness probes', all: [ { kind: Deployment, each: 'spec.template.spec.containers[*]', path: readinessProbe, op: exists }, { kind: Deployment, each: 'spec.template.spec.containers[*]', path: livenessProbe, op: exists } ] }
+  - { group: k8s/base, file: 'k8s/base/*', text: "Base: liveness doesn't depend on the database", critical: true, kind: Deployment, each: 'spec.template.spec.containers[*]', path: livenessProbe, op: not_re, value: '(?i)health/db|psql|pg_isready|5432' }
+  - { group: k8s/base, file: 'k8s/base/*', text: 'Base: memory limit set on every container', critical: true, kind: Deployment, each: 'spec.template.spec.containers[*]', path: resources.limits.memory, op: exists }
+  - { group: k8s/base, file: 'k8s/base/*', text: 'Base: Pod Security restricted (non-root, not privileged)', critical: true, fn: restricted_pss }
+  - { group: k8s/base, file: 'k8s/base/*', text: 'Base: Service selector and Deployment selector match the pod labels', critical: true, all: [ { fn: service_selects_pods }, { fn: deploy_selector_matches } ] }
+  - { group: k8s/base, file: 'k8s/base/*', text: 'Base: HPA min 2 / max 10 and a PDB allowing 1 disruption', all: [ { kind: HorizontalPodAutoscaler, path: spec.minReplicas, op: eq, value: 2 }, { kind: HorizontalPodAutoscaler, path: spec.maxReplicas, op: eq, value: 10 }, { fn: pdb_matches } ] }
+  - { group: k8s/base, file: 'k8s/base/*', text: 'Base: topology spread across zones', kind: Deployment, path: 'spec.template.spec.topologySpreadConstraints[*].topologyKey', op: eq, value: topology.kubernetes.io/zone }
+  - { group: k8s/base, file: 'k8s/base/*', text: 'Base: workload identity ServiceAccount and the use label', all: [ { fn: sa_reference }, { re: 'azure\.workload\.identity/use:\s*["'']true["'']' }, { kind: ServiceAccount, path: 'metadata.annotations["azure.workload.identity/client-id"]', op: exists } ] }
+  - { group: k8s/base, file: 'k8s/base/*', text: 'Base: no secrets in ConfigMaps', critical: true, fn: no_secrets_in_configmaps }
+  # --- overlays (10%)
+  - { group: k8s/overlays, file: 'k8s/overlays/prod/*', text: 'Prod overlay: replicas/HPA and limits set', all: [ { re: '(minReplicas|replicas):\s*\d+' }, { re: 'memory:\s*\S+' } ] }
+  - { group: k8s/overlays, file: 'k8s/overlays/*/*', text: 'Overlays: image set via images:, pinned (not latest)', critical: true, all: [ { re: 'images:\s*\n' }, { re: 'newTag:\s*["'']?\d|digest:\s*["'']?sha256:' }, { not_re: 'newTag:\s*["'']?latest' } ] }
+  - { group: k8s/overlays, file: 'k8s/overlays/*/*', text: 'Overlays: probes and security left identical to the base', not_re: '(livenessProbe|readinessProbe|securityContext|privileged)' }
+  # --- policies (10%)
+  - { group: k8s/policies, file: 'k8s/policies/*.yaml', text: 'Policies: default-deny in every namespace', critical: true, fn: netpol, args: { mode: default_deny, namespaces: [web, orders, db] } }
+  - { group: k8s/policies, file: 'k8s/policies/*.yaml', text: 'Policies: only orders-api and orders-worker reach the database', critical: true, fn: netpol, args: { mode: matrix, to: postgres } }
+  - { group: k8s/policies, file: 'k8s/policies/*.yaml', text: 'Policies: the connectivity matrix matches (gateway → web/api, web → api, DNS)', fn: netpol, args: { mode: matrix } }
+  - { group: k8s/policies, file: 'k8s/policies/*.yaml', text: 'Policies: no allow-all rules', fn: netpol, args: { mode: no_allow_all } }
+  - { group: k8s/policies, file: 'k8s/policies/cluster/*', text: 'Cluster policies: allowed registries, no latest, limits, no privileged, signed images', all: [ { re: 'contosoacr\.azurecr\.io/' }, { re: '(?i)latest' }, { re: '(?i)limits' }, { re: '(?i)privileged' }, { re: '(?i)(verifyImages|notation|signature|signed)' } ] }
+  # --- gateway (5%)
+  - { group: k8s/gateway, file: 'k8s/gateway/*', text: 'Gateway: routes attach to the Gateway and reach existing Services', all: [ { fn: gateway_parent_refs }, { fn: route_backends_exist, args: { services: ['orders/orders-api:80', 'web/web:80'] } } ] }
+  - { group: k8s/gateway, file: 'k8s/gateway/*', text: 'Gateway: HTTPS listener with certificateRefs, no TLS keys in files', critical: true, all: [ { kind: Gateway, path: 'spec.listeners[*].tls.certificateRefs[*].name', op: exists }, { not_re: 'tls\.key\s*:|PRIVATE KEY-----' } ] }
+  - { group: k8s/gateway, file: 'k8s/gateway/*', text: 'Gateway: HTTP → HTTPS redirect', all: [ { re: 'type:\s*RequestRedirect' }, { re: 'scheme:\s*https' } ] }
+  # --- secrets (5%)
+  - { group: k8s/secrets, file: 'k8s/secrets/*|k8s/base/*', text: 'SecretProviderClass: clientID matches the SA, and a volume references it', fn: spc_matches }
+  - { group: k8s/secrets, file: 'k8s/secrets/*', text: 'SecretProviderClass: Key Vault name and objects set; no secret values', critical: true, all: [ { kind: SecretProviderClass, path: spec.parameters.keyvaultName, op: exists }, { kind: SecretProviderClass, path: spec.parameters.objects, op: exists }, { fn: no_secret_objects_with_data } ] }
+  # --- infra (20%): Terraform or Bicep
+  - { group: infra, file: 'infra/*/*', text: 'IaC: private cluster', critical: true, any: [ { re: 'private_cluster_enabled\s*=\s*true' }, { re: 'enablePrivateCluster:\s*true' } ] }
+  - { group: infra, file: 'infra/*/*', text: 'IaC: OIDC issuer and workload identity', any: [ { all: [ { re: 'oidc_issuer_enabled\s*=\s*true' }, { re: 'workload_identity_enabled\s*=\s*true' } ] }, { all: [ { re: 'oidcIssuerProfile:\s*\{\s*enabled:\s*true' }, { re: 'workloadIdentity:\s*\{\s*enabled:\s*true' } ] } ] }
+  - { group: infra, file: 'infra/*/*', text: 'IaC: Azure RBAC on and local accounts off', critical: true, any: [ { all: [ { re: 'azure_rbac_enabled\s*=\s*true' }, { re: 'local_account_disabled\s*=\s*true' } ] }, { all: [ { re: 'enableAzureRBAC:\s*true' }, { re: 'disableLocalAccounts:\s*true' } ] } ] }
+  - { group: infra, file: 'infra/*/*', text: 'IaC: Standard tier', any: [ { re: 'sku_tier\s*=\s*"Standard"' }, { re: 'tier:\s*''Standard''' } ] }
+  - { group: infra, file: 'infra/*/*', text: 'IaC: system pool in zones 1–3 with at least 2 nodes', any: [ { all: [ { re: 'zones\s*=\s*\[\s*"1"\s*,\s*"2"\s*,\s*"3"\s*\]' }, { re: '(node_count|min_count)\s*=\s*([2-9]|\d\d)\b' } ] }, { all: [ { re: 'availabilityZones:\s*\[\s*''1''[\s,]*''2''[\s,]*''3''\s*\]' }, { re: '(count|minCount):\s*([2-9]|\d\d)\b' } ] } ] }
+  - { group: infra, file: 'infra/*/*', text: 'IaC: overlay networking with Cilium', any: [ { all: [ { re: 'network_plugin_mode\s*=\s*"overlay"' }, { re: '(network_data_plane|network_dataplane)\s*=\s*"cilium"' } ] }, { all: [ { re: 'networkPluginMode:\s*''overlay''' }, { re: 'networkDataplane:\s*''cilium''' } ] } ] }
+  - { group: infra, file: 'infra/*/*', text: 'IaC: AcrPull for the kubelet identity', any: [ { all: [ { re: 'AcrPull' }, { re: 'kubelet_identity\[0\]\.object_id' } ] }, { re: 'kubeletidentity\.objectId' } ] }
+  - { group: infra, file: 'infra/*/*', text: 'IaC: federated credential subject system:serviceaccount:orders:orders-api', re: 'system:serviceaccount:orders:orders-api' }
+  - { group: infra, file: 'infra/*/*', text: 'IaC: Terraform has a remote backend and a pinned provider, or Bicep uses guid() names and @secure()', any: [ { all: [ { re: 'backend\s+"azurerm"' }, { re: 'version\s*=\s*"~>' } ] }, { all: [ { re: 'guid\(' }, { re: '@secure\(\)' } ] } ] }
+  - { group: infra, file: 'infra/*/*', text: 'IaC: no secrets in variables or params', critical: true, all: [ { not_re: '(?i)^\s*\w*(password|secret|token|client_secret|access_key)\w*\s*=\s*"[^"$]+"' }, { not_re: '(?i)^param\s+\w*(password|secret|token)\w*\s*=\s*''[^'']+''' } ] }
+  # --- infra pipeline (10%)
+  - { group: infra-pipeline.yml, file: infra-pipeline.yml, text: 'Infra pipeline: PR checks (fmt/validate or bicep lint)', any: [ { all: [ { re: 'terraform\s+fmt\s+-check' }, { re: 'terraform\s+validate' } ] }, { re: 'az\s+bicep\s+(lint|build)' } ] }
+  - { group: infra-pipeline.yml, file: infra-pipeline.yml, text: 'Infra pipeline: plan/what-if → approval (deployment job + environment) → apply', all: [ { re: '(terraform\s+plan|what-if)' }, { re: '-\s*deployment:' }, { re: 'environment:\s*\S+' } ] }
+  - { group: infra-pipeline.yml, file: infra-pipeline.yml, text: 'Infra pipeline: Terraform applies the saved plan (Bicep: deploy after the approved what-if)', critical: true, any: [ { all: [ { re: 'terraform\s+plan\b[^\n]*-out[= ]\S+' }, { re: 'terraform\s+apply\b[^\n]*\s\S*plan\S*\s*$' } ] }, { all: [ { re: '(?i)what-if' }, { re: 'az\s+(deployment|stack)\s+group\s+create' } ] } ] }
+  - { group: infra-pipeline.yml, file: infra-pipeline.yml, text: 'Infra pipeline: WIF authentication, no client secret', all: [ { re: '(ARM_USE_OIDC|AzureCLI@2|TerraformTask|azureSubscription)' }, { not_re: '(?i)ARM_CLIENT_SECRET|client[-_]?secret' } ] }
+  # --- release pipeline (15%)
+  - { group: pipelines, file: 'templates/*|azure-pipelines.yml', text: 'Pipeline: scan before push, failing on fixable HIGH/CRITICAL', critical: true, all: [ { re: '--exit-code\s+1' }, { re: '--severity\s+["'']?(HIGH,CRITICAL|CRITICAL,HIGH)' }, { re: '--ignore-unfixed' }, { before: ['(?i)trivy', '(?i)(command:\s*["'']?push|docker\s+push)'] } ] }
+  - { group: pipelines, file: 'templates/*|azure-pipelines.yml', text: 'Pipeline: SBOM and signing with Notation + Key Vault', all: [ { re: '(?i)(spdx|cyclonedx)' }, { re: 'notation\s+sign' }, { re: '(?i)azure-kv' } ] }
+  - { group: pipelines, file: 'templates/*|azure-pipelines.yml', text: 'Pipeline: deploy by digest, dev → prod', all: [ { re: '@sha256:|@\$\(\w*[Dd]igest\w*\)|[Dd]igest\)' }, { re: 'stage:\s*DeployProd(?s:.*?)dependsOn:\s*\[?\s*["'']?DeployDev' } ] }
+  - { group: pipelines, file: 'templates/*|azure-pipelines.yml', text: 'Pipeline: prod via a deployment job with an approved environment', critical: true, all: [ { re: '-\s*deployment:' }, { re: 'environment:\s*["'']?prod|environment:\s*\n\s+name:\s*["'']?prod' } ] }
+  - { group: pipelines, file: 'templates/*|azure-pipelines.yml', text: 'Pipeline: canary with on: failure → reject', critical: true, all: [ { re: 'canary:' }, { re: 'failure:(?s:.*?)action:\s*["'']?reject' } ] }
+  - { group: pipelines, file: 'templates/*|azure-pipelines.yml', text: 'Pipeline: private-network pool for prod; no inline secrets', all: [ { re: 'pool:\s*\n\s+name:\s*\S+' }, { not_re: '(?i)^\s*[\w.-]*(password|secret|token)[\w.-]*\s*:\s*["'']?[A-Za-z0-9+/=_-]{6,}' } ] }
+  - { group: pipelines, file: 'templates/*|azure-pipelines.yml', text: 'Pipeline: no signing keys in the repo', critical: true, all: [ { not_re: '-----BEGIN [A-Z ]*PRIVATE KEY-----' }, { not_re: '\S+\.(key|pem)\b' } ] }

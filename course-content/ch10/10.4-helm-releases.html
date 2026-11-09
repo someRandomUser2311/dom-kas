@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>10.4 · Releases: install, upgrade, rollback</title>
+<link rel="stylesheet" href="../content.css">
+</head>
+<body>
+<article class="lesson" data-id="10.4" data-chapter="10">
+<nav class="crumbs"><a href="../index.html">Course</a> / <a href="index.html">Chapter 10</a> / 10.4</nav>
+<header>
+  <p class="kicker">Chapter 10 · Lesson 10.4 · ~10 steps · ~12 min</p>
+  <h1>Releases: install, upgrade, rollback</h1>
+  <p class="meta">You'll be able to install and upgrade a chart safely in one idempotent command, roll back a bad release, and get out of a stuck release.</p>
+</header>
+
+<section class="step" id="s1">
+  <h2>1. A release</h2>
+  <div class="body">
+    <p>Installing a chart creates a <b>release</b>: a named instance of the chart in a namespace, such as <code>orders-api</code> in <code>orders</code>. Every install, upgrade or rollback adds a numbered <b>revision</b>.</p>
+    <p>Helm stores each revision (rendered manifests and values) as a Secret in that namespace.</p>
+  </div>
+  <aside class="coming" data-set="A">
+    <dl>
+      <dt>Windows/IIS admin</dt><dd>Like an installed program with version history and "restore previous version".</dd>
+      <dt>Linux admin</dt><dd>Like a package's install history, with a downgrade command that actually works.</dd>
+      <dt>Developer (Compose)</dt><dd>Compose has no history; Helm remembers what each deploy looked like.</dd>
+      <dt>Other clouds</dt><dd>The same on any cluster.</dd>
+    </dl>
+  </aside>
+</section>
+
+<section class="step" id="s2">
+  <h2>2. One command for install and upgrade</h2>
+  <div class="body">
+    <p><code>helm upgrade --install</code> installs the release if it's missing and upgrades it if it exists. It's idempotent, so the pipeline can always run the same command. Add the safety flags:</p>
+    <ul>
+      <li><code>--wait</code>: wait until resources are ready (Deployments rolled out).</li>
+      <li><code>--atomic</code>: if the upgrade fails or times out, <b>roll back automatically</b>. Helm 4 renames it <code>--rollback-on-failure</code>; <code>--atomic</code> remains as an alias.</li>
+      <li><code>--timeout 5m</code>: how long to wait.</li>
+    </ul>
+  </div>
+  <div class="check" data-type="command">
+    <p class="q">Install or upgrade release <code>orders-api</code> from <code>charts/orders-api</code> into namespace <code>orders</code> with <code>values-prod.yaml</code>, waiting for readiness and rolling back automatically on failure.</p>
+    <p class="answer"><code>helm upgrade --install orders-api charts/orders-api -n orders -f values-prod.yaml --atomic --wait --timeout 5m</code></p>
+    <p class="accept">Also accepted: <code>--rollback-on-failure</code> instead of <code>--atomic</code>; <code>--namespace</code>; <code>--values</code>; any timeout; <code>--create-namespace</code>; flags in any order. <code>--atomic</code> (or <code>--rollback-on-failure</code>) is required.</p>
+    <div class="explain">This is the safe default for pipelines. A failed rollout leaves the previous revision running, and the pipeline step fails.</div>
+  </div>
+</section>
+
+<section class="step" id="s3">
+  <h2>3. History and rollback</h2>
+  <pre class="output">$ helm history orders-api -n orders
+REVISION  UPDATED                   STATUS      CHART             APP VERSION  DESCRIPTION
+1         Mon Nov  2 09:10:11 2026  superseded  orders-api-0.3.0  1.4.1        Install complete
+2         Tue Nov  3 14:22:40 2026  superseded  orders-api-0.3.0  1.4.2        Upgrade complete
+3         Wed Nov  4 10:05:02 2026  deployed    orders-api-0.3.1  1.5.0        Upgrade complete
+$ helm rollback orders-api 2 -n orders
+Rollback was a success! Happy Helming!</pre>
+  <div class="body"><p>A rollback creates a <b>new</b> revision (4) with revision 2's manifests. As with <code>kubectl rollout undo</code>, fix the source too, or the next pipeline run re-deploys the bad version.</p></div>
+</section>
+
+<section class="step" id="s4">
+  <h2>4. Values per environment</h2>
+  <div class="body">
+    <p>The pipeline passes the environment's values file and the image tag:</p>
+    <ul>
+      <li>dev: <code>-f values-dev.yaml --set image.tag=$(Build.BuildId)</code></li>
+      <li>prod: <code>-f values-prod.yaml --set image.tag=$(Build.BuildId)</code></li>
+    </ul>
+    <p>The same chart version and image go to both; only the values differ.</p>
+  </div>
+</section>
+
+<section class="step" id="s5">
+  <h2>5. No secrets in values</h2>
+  <div class="body">
+    <p>Values files live in Git, and Helm stores every revision's values in the cluster. A password in values ends up in both places.</p>
+    <p>Reference secrets instead: a SecretProviderClass for Key Vault (Chapter 15), or an existing Secret's name. Never the value itself. <code>--set password=…</code> from a pipeline variable still lands in Helm's release Secret.</p>
+  </div>
+</section>
+
+<section class="step" id="s6">
+  <h2>6. Stuck releases</h2>
+  <div class="check" data-type="diagnose">
+    <p class="q">The pipeline fails immediately on every run since yesterday. Why?</p>
+    <pre class="output">$ helm upgrade --install orders-api charts/orders-api -n orders -f values-prod.yaml --atomic --wait
+Error: UPGRADE FAILED: another operation (install/upgrade/rollback) is in progress
+$ helm history orders-api -n orders | tail -2
+3         Wed Nov  4 10:05:02 2026  deployed         orders-api-0.3.1  1.5.0   Upgrade complete
+4         Thu Nov  5 16:41:19 2026  pending-upgrade  orders-api-0.3.2  1.5.1   Preparing upgrade</pre>
+    <ol class="options">
+      <li>Two pipelines are running right now <span class="why">Possible, but the pending revision is from yesterday: nothing is actually running.</span></li>
+      <li class="correct">A previous upgrade was interrupted (e.g. the agent was cancelled) and left revision 4 in <code>pending-upgrade</code>, which locks the release</li>
+      <li>The chart version is invalid <span class="why">That gives a different error.</span></li>
+      <li>The namespace is full <span class="why">Quota errors look different.</span></li>
+    </ol>
+    <div class="explain">Recover with <code>helm rollback orders-api 3 -n orders</code>, which completes the release from the last good revision. Prevent it with pipeline concurrency limits (one deploy per environment at a time) and generous timeouts.</div>
+  </div>
+</section>
+
+<section class="step" id="s7">
+  <h2>7. Upgrades that change immutable fields</h2>
+  <div class="body"><p>If a chart change alters a Deployment's selector (an immutable field), the upgrade fails. That's why <code>selectorLabels</code> must never change between chart versions (lesson 10.3). Helm's <code>--force</code> recreates objects, which means downtime. Avoid it.</p></div>
+</section>
+
+<section class="step" id="s8">
+  <h2>8. Hooks</h2>
+  <div class="body"><p>Annotate a Job with <code>helm.sh/hook: pre-upgrade</code> to run it before each upgrade, for example the database migration from lesson 3.6. If the hook fails, the upgrade fails, and <code>--atomic</code> rolls back.</p></div>
+</section>
+
+<section class="step" id="s9">
+  <h2>9. Seeing what's deployed</h2>
+  <pre class="code" data-file="terminal">helm list -n orders
+helm get values orders-api -n orders          # values in effect
+helm get manifest orders-api -n orders        # exact YAML applied
+helm diff upgrade orders-api charts/orders-api -n orders -f values-prod.yaml   # with the helm-diff plugin</pre>
+</section>
+
+<section class="step summary" id="s10">
+  <h2>Releases, sorted</h2>
+  <ul>
+    <li>Release = named install; every change is a revision stored in the namespace.</li>
+    <li><code>helm upgrade --install --atomic --wait --timeout</code> (<code>--rollback-on-failure</code> in Helm 4).</li>
+    <li><code>helm history</code> / <code>rollback</code>; fix the source too.</li>
+    <li>No secrets in values; recover stuck releases with a rollback; keep selectors stable.</li>
+  </ul>
+</section>
+</article>
+</body>
+</html>

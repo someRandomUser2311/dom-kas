@@ -1,0 +1,210 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>2.3 · ReplicaSets &amp; Deployments</title>
+<link rel="stylesheet" href="../content.css">
+</head>
+<body>
+<article class="lesson" data-id="2.3" data-chapter="2">
+<nav class="crumbs"><a href="../index.html">Course</a> / <a href="index.html">Chapter 2</a> / 2.3</nav>
+<header>
+  <p class="kicker">Chapter 2 · Lesson 2.3 · ~12 steps · ~15 min</p>
+  <h1>ReplicaSets &amp; Deployments</h1>
+  <p class="meta">You'll be able to write a Deployment, explain how it rolls out a new version through ReplicaSets, and roll back a bad release.</p>
+</header>
+
+<section class="step" id="s1">
+  <h2>1. Three layers</h2>
+  <div class="body">
+    <p>You write a <b>Deployment</b>. It creates a <b>ReplicaSet</b>, which creates <b>Pods</b>.</p>
+    <ul>
+      <li><b>ReplicaSet</b>: "keep N identical pods running". That's all it does.</li>
+      <li><b>Deployment</b>: manages ReplicaSets over time. Each version of your pod template gets its own ReplicaSet, and the Deployment moves traffic from the old to the new by scaling them.</li>
+    </ul>
+    <p>You almost never create a ReplicaSet directly.</p>
+  </div>
+  <aside class="coming" data-set="A">
+    <dl>
+      <dt>Windows/IIS admin</dt><dd>Like a web farm behind a load balancer where updates drain and replace servers one at a time, except it's automatic and takes seconds.</dd>
+      <dt>Linux admin</dt><dd>Think of a ReplicaSet as "N copies of a systemd unit across hosts", and a Deployment as the release process on top.</dd>
+      <dt>Developer (Compose)</dt><dd><code>deploy.replicas</code> in Compose sets a count; a Deployment adds versioned rollouts and rollback.</dd>
+      <dt>Other clouds</dt><dd>Like an auto-scaling group with a launch-template version and an instance refresh.</dd>
+    </dl>
+  </aside>
+</section>
+
+<section class="step" id="s2">
+  <h2>2. A Deployment manifest</h2>
+  <div class="body">
+    <p>A Deployment has three key parts in its <code>spec</code>:</p>
+    <ul>
+      <li><code>replicas</code>: how many pods.</li>
+      <li><code>selector</code>: which pods it owns.</li>
+      <li><code>template</code>: a full pod spec (metadata and spec) used to create every pod.</li>
+    </ul>
+    <p>Deployments live in the <code>apps</code> API group.</p>
+  </div>
+  <pre class="code" data-file="k8s/base/deployment.yaml">apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: orders-api
+  namespace: orders
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: orders-api
+  template:
+    metadata:
+      labels:
+        app: orders-api
+    spec:
+      containers:
+        - name: api
+          image: contosoacr.azurecr.io/orders-api:1.4.2
+          ports:
+            - containerPort: 8080</pre>
+</section>
+
+<section class="step" id="s3">
+  <h2>3. The selector must match the template</h2>
+  <div class="body">
+    <p>The Deployment's <code>selector.matchLabels</code> must match the labels in <code>template.metadata.labels</code>. If they don't, the API server rejects the Deployment. Unlike a Service, a Deployment won't let you create pods it couldn't find.</p>
+    <p>In <code>apps/v1</code> the selector is also <b>immutable</b>. To change it, you delete and recreate the Deployment.</p>
+  </div>
+  <div class="check" data-type="tapline" data-match="        app: orders-api">
+    <p class="q">In the manifest above, tap the line that must match <code>selector.matchLabels</code>.</p>
+    <div class="explain">The pod template's label <code>app: orders-api</code> (under <code>template.metadata.labels</code>). Every pod the Deployment creates carries it, so the selector finds them.</div>
+  </div>
+</section>
+
+<section class="step" id="s4">
+  <h2>4. A rolling update</h2>
+  <div class="body">
+    <p>Change anything in the <b>template</b>, usually the image, and the Deployment starts a rollout:</p>
+    <ol>
+      <li>It creates a new ReplicaSet for the new template.</li>
+      <li>It scales the new ReplicaSet up and the old one down, a few pods at a time.</li>
+      <li>It only removes old pods once new ones are <b>ready</b>.</li>
+    </ol>
+    <p>Changing <code>replicas</code> alone doesn't start a rollout. It just scales the current ReplicaSet.</p>
+  </div>
+  <div class="widget" data-widget="rollout-sim">Two ReplicaSet columns: old (1.4.2) and new (1.5.0). The learner changes the image and steps through the rollout. Pods appear as tiles moving through ContainerCreating → Ready, and old pods move to Terminating. A counter shows available pods, which never drops below the minimum. Sliders for <code>maxSurge</code> and <code>maxUnavailable</code> change the pace.</div>
+</section>
+
+<section class="step" id="s5">
+  <h2>5. maxSurge and maxUnavailable</h2>
+  <div class="body">
+    <p>The default strategy is <code>RollingUpdate</code>, with two knobs. Both can be a number or a percentage, and both default to 25%.</p>
+    <ul>
+      <li><code>maxSurge</code>: how many <b>extra</b> pods may exist above <code>replicas</code> during the update.</li>
+      <li><code>maxUnavailable</code>: how many pods may be <b>missing</b> below <code>replicas</code>.</li>
+    </ul>
+    <p>With 3 replicas, <code>maxSurge: 1</code> and <code>maxUnavailable: 0</code>, there are always 3 ready pods, at the cost of one extra pod during the rollout.</p>
+    <p>The other strategy, <code>Recreate</code>, stops all old pods first. That means downtime, but it's useful when two versions must never run at once.</p>
+  </div>
+  <pre class="code" data-file="k8s/base/deployment.yaml" data-diff>spec:
+  replicas: 3
++ strategy:
++   type: RollingUpdate
++   rollingUpdate:
++     maxSurge: 1
++     maxUnavailable: 0</pre>
+</section>
+
+<section class="step" id="s6">
+  <h2>6. Order of events</h2>
+  <div class="check" data-type="order">
+    <p class="q">You change the image from 1.4.2 to 1.5.0 (3 replicas, maxSurge 1, maxUnavailable 0). Put the events in order.</p>
+    <ol class="options">
+      <li>A new ReplicaSet for 1.5.0 is created</li>
+      <li>The new ReplicaSet scales to 1; a 1.5.0 pod starts</li>
+      <li>The 1.5.0 pod becomes Ready</li>
+      <li>The old ReplicaSet scales down from 3 to 2</li>
+      <li>Repeat until the new ReplicaSet has 3 and the old has 0</li>
+    </ol>
+    <div class="explain">With <code>maxUnavailable: 0</code>, an old pod is only removed after a new one is ready. Readiness, which Chapter 3 defines with probes, is what makes rollouts safe.</div>
+  </div>
+</section>
+
+<section class="step" id="s7">
+  <h2>7. Watching a rollout</h2>
+  <pre class="output">$ kubectl set image deployment/orders-api api=contosoacr.azurecr.io/orders-api:1.5.0 -n orders
+deployment.apps/orders-api image updated
+$ kubectl rollout status deployment/orders-api -n orders
+Waiting for deployment "orders-api" rollout to finish: 1 out of 3 new replicas have been updated...
+Waiting for deployment "orders-api" rollout to finish: 2 out of 3 new replicas have been updated...
+deployment "orders-api" successfully rolled out
+$ kubectl get rs -n orders
+NAME                    DESIRED   CURRENT   READY   AGE
+orders-api-7d9c5f6b8    0         0         0       3d
+orders-api-5b6f4c9d7    3         3         3       40s</pre>
+  <div class="body">
+    <p>The old ReplicaSet stays, scaled to 0, so a rollback is instant. <code>revisionHistoryLimit</code> (default 10) controls how many old ones are kept.</p>
+    <p><code>kubectl set image</code> is handy for demos, but in real work you change the YAML and re-apply it. In Chapter 7, a pipeline does this.</p>
+  </div>
+</section>
+
+<section class="step" id="s8">
+  <h2>8. Rollout history and rollback</h2>
+  <div class="body">
+    <p>Each template change is a numbered <b>revision</b>. If 1.5.0 is broken, <code>kubectl rollout undo</code> scales the previous ReplicaSet back up. It's the same rolling process, in reverse.</p>
+  </div>
+  <pre class="output">$ kubectl rollout history deployment/orders-api -n orders
+REVISION  CHANGE-CAUSE
+1         &lt;none&gt;
+2         &lt;none&gt;</pre>
+  <div class="check" data-type="command">
+    <p class="q">Version 1.5.0 returns errors. Roll <code>orders-api</code> back to the previous revision.</p>
+    <p class="answer"><code>kubectl rollout undo deployment/orders-api -n orders</code></p>
+    <p class="accept">Also accepted: <code>deployment orders-api</code> or <code>deploy/orders-api</code>; <code>--namespace orders</code>; <code>--to-revision=1</code>.</p>
+    <div class="explain">The previous ReplicaSet scales back up. Afterwards, fix the manifest in Git too. Otherwise the next pipeline run re-deploys 1.5.0.</div>
+  </div>
+</section>
+
+<section class="step" id="s9">
+  <h2>9. A rollout that never finishes</h2>
+  <div class="body">
+    <p>If new pods never become ready (a bad image, a crash, a failing probe), the rollout <b>stalls</b>. With <code>maxUnavailable: 0</code>, the old pods keep serving, so users are fine.</p>
+    <p>After <code>progressDeadlineSeconds</code> (default 600), the Deployment's status reports <code>ProgressDeadlineExceeded</code>. <code>kubectl rollout status</code> exits with an error, which is how a pipeline step knows to fail.</p>
+  </div>
+  <pre class="output">$ kubectl rollout status deployment/orders-api -n orders --timeout=5m
+Waiting for deployment "orders-api" rollout to finish: 1 out of 3 new replicas have been updated...
+error: deployment "orders-api" exceeded its progress deadline</pre>
+</section>
+
+<section class="step" id="s10">
+  <h2>10. Scaling</h2>
+  <div class="body">
+    <p>Change <code>replicas</code> in the YAML and apply it, or use <code>kubectl scale deployment/orders-api --replicas=5</code> for a quick test.</p>
+    <p>For production, run at least <b>2 replicas</b> so one pod can be lost or replaced without downtime. In Chapter 3 an autoscaler takes over this number.</p>
+  </div>
+</section>
+
+<section class="step" id="s11">
+  <h2>11. Other workload controllers, briefly</h2>
+  <div class="body">
+    <ul>
+      <li><b>StatefulSet</b>: stable pod names (<code>db-0</code>, <code>db-1</code>) and a disk per pod, for databases and queues.</li>
+      <li><b>DaemonSet</b>: one pod on every node (or every matching node), for log agents and node monitoring.</li>
+      <li><b>Job</b> / <b>CronJob</b>: run to completion, once or on a schedule, for migrations and reports.</li>
+    </ul>
+    <p><code>orders-api</code> is stateless, so it's a Deployment.</p>
+  </div>
+</section>
+
+<section class="step summary" id="s12">
+  <h2>Deployments, sorted</h2>
+  <ul>
+    <li>Deployment → ReplicaSet (one per template version) → Pods.</li>
+    <li><code>selector.matchLabels</code> must match the template labels, and it's immutable.</li>
+    <li>Template changes roll out gradually; <code>maxSurge</code> and <code>maxUnavailable</code> set the pace.</li>
+    <li><code>rollout status</code>, <code>history</code> and <code>undo</code>; old ReplicaSets make rollback instant.</li>
+    <li>Stalled rollouts hit <code>progressDeadlineSeconds</code>; run 2+ replicas in production.</li>
+  </ul>
+</section>
+</article>
+</body>
+</html>

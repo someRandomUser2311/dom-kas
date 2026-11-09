@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Service connections &amp; ACR · Lesson 4</title>
+<link rel="stylesheet" href="assets/styles.css">
+</head>
+<body data-page="l4">
+<header id="topbar"></header>
+<div class="lesson-shell">
+<aside class="curriculum" id="curriculum"></aside>
+<main class="reader"><div class="reader-inner">
+
+  <div class="breadcrumb"><a href="index.html">Home</a><span class="sep">/</span><a href="chapter.html">Ch 7 · Azure Pipelines</a><span class="sep">/</span><span>Lesson 4</span></div>
+  <div class="lesson-head">
+    <span class="badge badge-accent">Lesson 4 · Reference view</span> <a class="badge badge-violet" href="lesson.html?l=ch07/l4">▶ Take the guided version</a>
+    <h1 style="margin-top:10px">Service connections, service principals &amp; ACR</h1>
+    <div class="meta"><span>⏱ 20 min</span><span>·</span><span>Token-flow walkthrough</span><span>·</span><span>Simulated Azure DevOps form</span></div>
+  </div>
+
+  <p>Your pipeline needs to <em>push</em> an image to ACR and <em>deploy</em> to AKS. Both are protected Azure resources. So how does a pipeline prove who it is, <strong>without anyone pasting a password into the YAML</strong>?</p>
+  <p>The answer is a chain of three ideas: an <strong>identity</strong> in Entra ID, a <strong>service connection</strong> in Azure DevOps that uses it, and <strong>RBAC roles</strong> on the Azure resources.</p>
+
+  <h2>The identity: who is the pipeline?</h2>
+  <div class="table-wrap">
+    <table class="table">
+      <tr><th>Term</th><th>What it is</th><th>Analogy</th></tr>
+      <tr><td><strong>App registration</strong></td><td>The global definition of an application in Entra ID (client ID, credentials, federated credentials).</td><td>The job description</td></tr>
+      <tr><td><strong>Service principal</strong></td><td>The app's identity <em>inside your tenant</em>. This is what RBAC roles are assigned to. "SP" for short.</td><td>The employee badge</td></tr>
+      <tr><td><strong>Managed identity</strong></td><td>A service principal whose credentials Azure manages for you. No secrets to rotate.</td><td>A badge that renews itself</td></tr>
+      <tr><td><strong>Service connection</strong></td><td>An Azure DevOps object that stores <em>how</em> to authenticate as one of the above, so pipelines can reference it by name.</td><td>The key card reader config</td></tr>
+    </table>
+  </div>
+
+  <h2>How the pipeline gets a token</h2>
+  <p>Compare the two credential types. <strong>Workload identity federation</strong> is the recommended default: no secret exists anywhere, so there's nothing to leak or rotate.</p>
+
+  <div class="card">
+    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:14px">
+      <div class="tabs" id="mode-tabs">
+        <button class="tab active" data-mode="wif">🔗 Workload identity federation</button>
+        <button class="tab" data-mode="secret">🔑 Client secret</button>
+      </div>
+      <span class="subtle" id="seq-count"></span>
+    </div>
+    <div class="seq">
+      <div class="seq-actors">
+        <div class="seq-actor" data-a="agent"><span class="sa-ico">🖥️</span>Agent / task</div>
+        <div class="seq-actor" data-a="ado"><span class="sa-ico">🔷</span>Azure DevOps</div>
+        <div class="seq-actor" data-a="entra"><span class="sa-ico">🪪</span>Entra ID</div>
+        <div class="seq-actor" data-a="azure"><span class="sa-ico">☁️</span>ACR / AKS</div>
+      </div>
+      <div class="seq-msg" id="seq-msg"></div>
+      <div style="display:flex;gap:10px">
+        <button class="btn btn-sm" id="seq-prev">← Back</button>
+        <button class="btn btn-sm btn-primary" id="seq-next">Next →</button>
+      </div>
+    </div>
+  </div>
+
+  <h2>Least-privilege RBAC for an AKS pipeline</h2>
+  <p>An identity with no roles can authenticate but can't <em>do</em> anything. Give each identity exactly what it needs, scoped as narrowly as possible:</p>
+  <div class="table-wrap">
+    <table class="table">
+      <tr><th>Who</th><th>Role</th><th>Scope</th><th>Why</th></tr>
+      <tr><td>Pipeline SP</td><td><code>AcrPush</code></td><td>The ACR</td><td>Push (and pull) images. Not <code>Contributor</code>!</td></tr>
+      <tr><td>Pipeline SP</td><td><code>Azure Kubernetes Service Cluster User Role</code></td><td>The AKS cluster</td><td>Download a kubeconfig (<code>az aks get-credentials</code>)</td></tr>
+      <tr><td>Pipeline SP</td><td><code>Azure Kubernetes Service RBAC Writer</code></td><td>Namespace <code>orders</code></td><td>Create and update workloads, with Azure RBAC for Kubernetes enabled</td></tr>
+      <tr><td>AKS kubelet identity</td><td><code>AcrPull</code></td><td>The ACR</td><td>Nodes pull images. Granted by <code>az aks update --attach-acr</code></td></tr>
+    </table>
+  </div>
+
+  <div class="callout danger"><span class="c-ico">🚫</span><div><strong>Anti-pattern:</strong> a single SP with <code>Owner</code> on the subscription, shared by every pipeline, with a two-year client secret. If it leaks, an attacker owns everything. Scope narrowly, prefer federation, and don't "grant access to all pipelines".</div></div>
+
+  <h2>Try it: create a service connection</h2>
+  <div class="callout lab"><span class="c-ico">🎯</span><div><strong>Scenario:</strong> create an Azure Resource Manager connection named <code>azure-orders-dev</code> that uses <b>workload identity federation</b>, is scoped to resource group <code>rg-orders-dev</code> in subscription <code>KubeQuest-Dev</code>, and is <b>not</b> available to every pipeline.</div></div>
+
+  <div class="ado-form">
+    <div class="ado-head">🔷 Project settings › Service connections › New Azure service connection</div>
+    <div class="ado-body">
+      <div class="field">
+        <label>Identity type</label>
+        <select class="input" id="f-identity">
+          <option value="">Select…</option>
+          <option value="auto">App registration (automatic)</option>
+          <option value="manual">App registration or managed identity (manual)</option>
+          <option value="mi">Managed identity</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>Credential</label>
+        <div class="radio-cards">
+          <label class="radio-card"><input type="radio" name="cred" value="wif"><span><span class="rc-title">Workload identity federation</span><br><span class="rc-sub">Short-lived OIDC tokens. No secret is stored.</span></span></label>
+          <label class="radio-card"><input type="radio" name="cred" value="secret"><span><span class="rc-title">Secret</span><br><span class="rc-sub">Client secret stored in the connection. Expires; must be rotated.</span></span></label>
+        </div>
+      </div>
+      <div class="grid grid-2" style="gap:14px">
+        <div class="field"><label>Scope level</label>
+          <select class="input" id="f-scope"><option value="sub">Subscription</option><option value="mg">Management group</option></select></div>
+        <div class="field"><label>Subscription</label>
+          <select class="input" id="f-sub"><option value="">Select…</option><option>KubeQuest-Dev</option><option>KubeQuest-Prod</option></select></div>
+      </div>
+      <div class="field"><label>Resource group <span class="subtle">(optional; leave empty for the whole subscription)</span></label>
+        <select class="input" id="f-rg"><option value="">(none: entire subscription)</option><option>rg-orders-dev</option><option>rg-orders-prod</option><option>rg-shared</option></select></div>
+      <div class="field"><label>Service connection name</label><input class="input mono" id="f-name" placeholder="e.g. azure-orders-dev"></div>
+      <label class="checkline"><input type="checkbox" id="f-all" checked> Grant access permission to all pipelines</label>
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+        <button class="btn btn-primary" id="f-save">Save</button>
+        <span class="subtle">Simulated. In the real app this is graded by the backend and also creates the matching identity in floci-az.</span>
+      </div>
+      <div id="f-result"></div>
+    </div>
+  </div>
+
+  <h2>ACR in one screen</h2>
+  <p>Azure Container Registry is a private Docker registry. Its <strong>login server</strong> looks like <code>&lt;name&gt;.azurecr.io</code>, and images are referenced as <code>kqacr.azurecr.io/orders-api:1427</code>. In a pipeline you usually reference ACR through a <em>Docker Registry</em> service connection (as <code>Docker@2</code> did in lesson 2) or through an ARM connection with <code>az acr login</code>.</p>
+  <div id="acr-cmds"></div>
+  <p class="subtle">You'll run exactly these commands against the local floci-az emulator in the terminal lab at the end of this chapter.</p>
+
+  <div class="check-card" data-answer="d">
+    <div class="kicker">Check your knowledge</div>
+    <strong>Pods in AKS are stuck in <code>ImagePullBackOff</code> with "401 Unauthorized" from <code>kqacr.azurecr.io</code>. The pipeline pushed the image successfully. What's most likely missing?</strong>
+    <div class="options">
+      <button class="option" data-v="a"><span class="key">A</span><span><code>AcrPush</code> for the pipeline service principal</span></button>
+      <button class="option" data-v="b"><span class="key">B</span><span>A Docker Registry service connection in Azure DevOps</span></button>
+      <button class="option" data-v="c"><span class="key">C</span><span>Workload identity federation on the service connection</span></button>
+      <button class="option" data-v="d"><span class="key">D</span><span><code>AcrPull</code> for the AKS kubelet identity (e.g. via <code>--attach-acr</code>)</span></button>
+    </div>
+    <div class="check-result" data-ok="The push worked, so the pipeline side is fine. Pulling happens later, done by the <em>nodes</em>, which authenticate as the kubelet managed identity. That identity needs <code>AcrPull</code>."></div>
+  </div>
+
+  <div id="lesson-nav"></div>
+</div></main>
+</div>
+
+<script src="assets/app.js"></script>
+<script src="assets/yaml.js"></script>
+<script>
+const FLOWS = {
+  wif: [
+    { a: ["agent"], h: "1 · Step needs Azure", d: "A step such as <code>AzureCLI@2</code> or <code>Docker@2</code> references the service connection <code>azure-orders-dev</code> by name. No credentials appear in the YAML." },
+    { a: ["agent", "ado"], h: "2 · Agent → Azure DevOps", d: "Azure DevOps issues a short-lived <b>OIDC token</b> for this run. Its <code>issuer</code> is your Azure DevOps organization and its <code>subject</code> identifies the exact service connection: <code>sc://&lt;org&gt;/&lt;project&gt;/azure-orders-dev</code>." },
+    { a: ["agent", "entra"], h: "3 · Token exchange with Entra ID", d: "The task presents that OIDC token to Entra ID. Entra checks the <b>federated credential</b> on the app registration or managed identity: do the issuer and subject match exactly? No password is involved." },
+    { a: ["entra", "agent"], h: "4 · Entra ID → access token", d: "If they match, Entra returns an <b>access token</b> valid for about an hour. There's nothing long-lived to steal or rotate." },
+    { a: ["agent", "azure"], h: "5 · Call ACR / AKS", d: "The task calls ACR or AKS with the access token. Azure <b>RBAC</b> then decides what's allowed, e.g. <code>AcrPush</code> on the registry." },
+  ],
+  secret: [
+    { a: ["agent"], h: "1 · Step needs Azure", d: "Same start: the step references the service connection by name." },
+    { a: ["ado", "agent"], h: "2 · Secret handed to the job", d: "Azure DevOps decrypts the stored <b>client secret</b> and gives it to the task on the agent. Anything running in that job could, in theory, read it." },
+    { a: ["agent", "entra"], h: "3 · client_credentials grant", d: "The task sends <code>client_id + client_secret</code> to Entra ID. Whoever holds that secret can do the same from anywhere, until it expires." },
+    { a: ["entra", "agent"], h: "4 · Entra ID → access token", d: "Entra returns an access token. The flow works, but the <b>secret lives for months or years</b>, must be rotated, and is a classic leak in logs and laptops." },
+    { a: ["agent", "azure"], h: "5 · Call ACR / AKS", d: "RBAC applies the same way. The only difference is how the pipeline proved its identity, and that is the part attackers target." },
+  ],
+};
+let mode = "wif", step = 0;
+function paint() {
+  const f = FLOWS[mode][step];
+  document.querySelectorAll(".seq-actor").forEach(el => el.classList.toggle("on", f.a.includes(el.dataset.a)));
+  const arrow = f.a.length > 1 ? `${f.a[0]} → ${f.a[1]}` : f.a[0];
+  document.getElementById("seq-msg").innerHTML = `<div class="sm-arrow">${f.h.toUpperCase()} &nbsp;·&nbsp; ${arrow}</div>${f.d}`;
+  document.getElementById("seq-count").textContent = `Step ${step + 1} / ${FLOWS[mode].length}`;
+  document.getElementById("seq-prev").disabled = step === 0;
+  document.getElementById("seq-next").textContent = step === FLOWS[mode].length - 1 ? "Restart ↺" : "Next →";
+}
+document.getElementById("seq-next").onclick = () => { step = step === FLOWS[mode].length - 1 ? 0 : step + 1; paint(); };
+document.getElementById("seq-prev").onclick = () => { if (step) { step--; paint(); } };
+document.querySelectorAll("#mode-tabs .tab").forEach(t => t.onclick = () => {
+  document.querySelectorAll("#mode-tabs .tab").forEach(x => x.classList.toggle("active", x === t));
+  mode = t.dataset.mode; step = 0; paint();
+});
+paint();
+
+// simulated form grading
+document.getElementById("f-save").onclick = () => {
+  const v = id => document.getElementById(id).value.trim();
+  const cred = (document.querySelector('input[name="cred"]:checked') || {}).value;
+  const checks = [
+    [v("f-identity") === "auto" || v("f-identity") === "manual" || v("f-identity") === "mi", "An identity type is selected", "Pick how the identity is created. \"App registration (automatic)\" lets Azure DevOps create it for you."],
+    [cred === "wif", "Uses workload identity federation", "The scenario asks for federation, so there's no secret to rotate or leak."],
+    [v("f-sub") === "KubeQuest-Dev", "Subscription is KubeQuest-Dev", "Dev pipelines must never hold credentials for the prod subscription."],
+    [v("f-rg") === "rg-orders-dev", "Scoped to resource group rg-orders-dev", "Leaving the resource group empty grants access to the <b>entire subscription</b>."],
+    [v("f-name") === "azure-orders-dev", "Named azure-orders-dev", "Pipelines reference this exact name, e.g. <code>azureSubscription: azure-orders-dev</code>."],
+    [!document.getElementById("f-all").checked, "Not granted to all pipelines", "Untick it, then authorize individual pipelines on first use. Otherwise any pipeline in the project, including one from a malicious PR branch, could use it."],
+  ];
+  const passed = checks.filter(c => c[0]).length;
+  document.getElementById("f-result").innerHTML = `<div style="margin-top:4px">${checks.map(c => `<div class="rule ${c[0] ? "pass" : "fail"}"><span class="r-ico">${c[0] ? "✓" : "✕"}</span><div><div class="r-title">${c[1]}</div>${c[0] ? "" : `<div class="r-hint">${c[2]}</div>`}</div></div>`).join("")}</div>
+    <div style="font-weight:700;margin-top:6px;color:${passed === checks.length ? "var(--success-strong)" : "var(--text-2)"}">${passed === checks.length ? "🎉 Perfect: a least-privilege, secretless connection." : `${passed}/${checks.length} checks passed`}</div>`;
+  if (passed === checks.length) KQ.addXP(15);
+};
+
+KQY.block(document.getElementById("acr-cmds"), `# create a registry and let the cluster pull from it
+az acr create -g rg-orders-dev -n kqacr --sku Standard
+az aks update -g rg-orders-dev -n aks-orders-dev --attach-acr kqacr   # grants AcrPull to kubelet
+
+# what a pipeline step does under the hood
+az acr login -n kqacr
+docker build -t kqacr.azurecr.io/orders-api:1427 .
+docker push kqacr.azurecr.io/orders-api:1427`, { title: "bash · Azure CLI" });
+</script>
+</body>
+</html>

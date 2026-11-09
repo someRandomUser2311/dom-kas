@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>14.6 · When the pipeline deploy fails</title>
+<link rel="stylesheet" href="../content.css">
+</head>
+<body>
+<article class="lesson" data-id="14.6" data-chapter="14">
+<nav class="crumbs"><a href="../index.html">Course</a> / <a href="index.html">Chapter 14</a> / 14.6</nav>
+<header>
+  <p class="kicker">Chapter 14 · Lesson 14.6 · ~9 steps · ~11 min</p>
+  <h1>When the pipeline deploy fails</h1>
+  <p class="meta">You'll be able to read a failed deploy step's log, tell a cluster problem from a pipeline problem, and turn on extra diagnostics.</p>
+</header>
+
+<section class="step" id="s1">
+  <h2>1. Read the log bottom-up</h2>
+  <div class="body">
+    <p>A failed step's last lines say <i>that</i> it failed. The real cause is usually a few lines above, in the tool's own output (kubectl, helm, az).</p>
+    <p>Classify it first:</p>
+    <ul>
+      <li><b>Can't connect</b>: network or DNS.</li>
+      <li><b>Not allowed</b>: identity or RBAC.</li>
+      <li><b>Rejected</b>: the manifest or a policy.</li>
+      <li><b>Didn't become healthy</b>: the app.</li>
+    </ul>
+  </div>
+  <aside class="coming" data-set="B">
+    <dl>
+      <dt>GitHub Actions</dt><dd>Same reading habits; <code>ACTIONS_STEP_DEBUG</code> is the debug switch there.</dd>
+      <dt>GitLab CI</dt><dd>Job logs, with <code>CI_DEBUG_TRACE</code> for verbose mode (careful: it can print secrets).</dd>
+      <dt>Jenkins</dt><dd>Console output; the same four categories of failure.</dd>
+      <dt>Classic pipelines</dt><dd>Same task logs and the same <code>system.debug</code> variable.</dd>
+    </dl>
+  </aside>
+</section>
+
+<section class="step" id="s2">
+  <h2>2. Diagnose: rollout timeout</h2>
+  <div class="check" data-type="diagnose">
+    <p class="q">The deploy step failed. Where's the problem?</p>
+    <pre class="output">##[section]Starting: KubernetesManifest (deploy)
+deployment.apps/orders-api configured
+service/orders-api unchanged
+/usr/local/bin/kubectl rollout status Deployment/orders-api --timeout 0s --namespace orders
+Waiting for deployment "orders-api" rollout to finish: 1 out of 3 new replicas have been updated...
+...
+error: deployment "orders-api" exceeded its progress deadline
+##[error]Error: error: deployment "orders-api" exceeded its progress deadline
+##[section]Finishing: KubernetesManifest (deploy)</pre>
+    <ol class="options">
+      <li>The service connection is wrong <span class="why">The apply succeeded ("configured"), so connection and permissions worked.</span></li>
+      <li class="correct">The manifests applied, but the new pods never became ready. It's an app or config problem: switch to the cluster triage (14.1–14.4)</li>
+      <li>The agent ran out of disk <span class="why">Nothing points to the agent.</span></li>
+      <li>kubectl is the wrong version <span class="why">It ran fine.</span></li>
+    </ol>
+    <div class="explain">"configured" then a rollout timeout = Kubernetes accepted the change, but the new version isn't healthy. Roll back (lesson 11.1), then debug the pods.</div>
+  </div>
+</section>
+
+<section class="step" id="s3">
+  <h2>3. Diagnose: forbidden</h2>
+  <div class="check" data-type="diagnose">
+    <p class="q">What's wrong?</p>
+    <pre class="output">Error from server (Forbidden): error when retrieving current configuration of:
+Resource: "apps/v1, Resource=deployments", GroupVersionKind: "apps/v1, Kind=Deployment"
+Name: "orders-api", Namespace: "orders"
+from server for: "/home/vsts/work/_temp/Deployment_orders-api.yaml": deployments.apps "orders-api" is forbidden:
+User "6c1f…" cannot get resource "deployments" in API group "apps" in the namespace "orders":
+User does not have access to the resource in Azure. Update role assignment to allow access.</pre>
+    <ol class="options">
+      <li>The namespace doesn't exist <span class="why">That would be NotFound.</span></li>
+      <li class="correct">The service connection's identity lacks an AKS RBAC role (e.g. Writer) on namespace <code>orders</code></li>
+      <li>The agent can't reach the cluster <span class="why">It reached the API server, which answered 403.</span></li>
+      <li>The YAML is invalid <span class="why">It was parsed fine.</span></li>
+    </ol>
+    <div class="explain">Grant "Azure Kubernetes Service RBAC Writer" on <code>$AKS_ID/namespaces/orders</code> to the pipeline identity (lesson 5.5), ideally in IaC (lesson 12.5).</div>
+  </div>
+</section>
+
+<section class="step" id="s4">
+  <h2>4. Diagnose: image not found</h2>
+  <div class="check" data-type="diagnose">
+    <p class="q">Build and deploy both passed, but the rollout timed out. The pod events show "not found" for <code>contosoacr.azurecr.io/orders-api:$(Build.BuildId)</code>, with that text literally in the tag. Why?</p>
+    <ol class="options">
+      <li>The registry is down <span class="why">The tag is literally the unexpanded text.</span></li>
+      <li class="correct">The variable wasn't expanded where it was used, for example in a file the pipeline doesn't process, or in a template expression context, so the literal string became the tag</li>
+      <li>AcrPull is missing <span class="why">That would be 401.</span></li>
+      <li>The Docker task failed <span class="why">The Build stage passed and pushed the numeric tag.</span></li>
+    </ol>
+    <div class="explain">Azure Pipelines macro syntax <code>$(…)</code> only expands in task inputs and scripts, not inside files in your repo. Set the image with <code>containers:</code> on KubernetesManifest, <code>kustomize edit set image</code>, or <code>--set image.tag=</code> (lesson 10.6).</div>
+  </div>
+</section>
+
+<section class="step" id="s5">
+  <h2>5. Can't connect</h2>
+  <pre class="output">Unable to connect to the server: dial tcp: lookup aks-orders-prod-x7y8z9.privatelink.westeurope.azmk8s.io: no such host</pre>
+  <div class="body"><p>A private cluster reached from an agent that can't resolve its private DNS name (lesson 6.5). The job ran on the wrong pool, or the agent VNet's DNS isn't set up.</p></div>
+</section>
+
+<section class="step" id="s6">
+  <h2>6. Rejected by policy</h2>
+  <pre class="output">Error from server (Forbidden): error when creating "deployment.yaml": admission webhook "validation.gatekeeper.sh"
+denied the request: [azurepolicy-k8sazurev2containerallowedimages-…] Container image orders-api:1.5.0 for
+container api has not been allowed.</pre>
+  <div class="body"><p>A Forbidden from an <b>admission webhook</b> is a policy decision, not RBAC. The manifest breaks a rule. Here the image isn't from the approved registry (the short name lacks <code>contosoacr.azurecr.io/</code>). Chapters 15–16 cover these policies.</p></div>
+</section>
+
+<section class="step" id="s7">
+  <h2>7. More detail: <code>system.debug</code></h2>
+  <div class="body">
+    <p>Queue the run with the variable <code>system.debug = true</code> (or tick "Enable system diagnostics") to get verbose task logs: the exact commands, the inputs as resolved, and HTTP details.</p>
+    <p>Secret variables stay masked, but review logs before sharing them.</p>
+  </div>
+</section>
+
+<section class="step" id="s8">
+  <h2>8. Make failures obvious</h2>
+  <ul>
+    <li>Always run <code>rollout status</code> (or <code>helm --wait</code>), so a bad release fails the pipeline instead of passing silently.</li>
+    <li>Print useful context on failure: <code>kubectl get pods</code> and <code>kubectl describe</code> of failing pods, and recent events, in a step with <code>condition: failed()</code>.</li>
+    <li>Link the run to the environment's deployment history and the alert dashboard.</li>
+  </ul>
+  <pre class="code" data-file="(step)">- script: |
+    kubectl get pods -n orders -o wide
+    kubectl events -n orders --types=Warning | tail -30
+  displayName: Diagnostics on failure
+  condition: failed()</pre>
+</section>
+
+<section class="step summary" id="s9">
+  <h2>Pipeline failures, sorted</h2>
+  <ul>
+    <li>Classify: can't connect (DNS/network), Forbidden (RBAC), denied by webhook (policy), timeout (app health).</li>
+    <li>"configured" + rollout timeout → debug the pods, roll back.</li>
+    <li><code>$(var)</code> doesn't expand inside repo files; set images through tasks or tools.</li>
+    <li><code>system.debug</code> for detail; always wait for rollouts; dump diagnostics on failure.</li>
+  </ul>
+</section>
+</article>
+</body>
+</html>

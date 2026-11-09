@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>1.2 · Why orchestration?</title>
+<link rel="stylesheet" href="../content.css">
+</head>
+<body>
+<article class="lesson" data-id="1.2" data-chapter="1">
+<nav class="crumbs"><a href="../index.html">Course</a> / <a href="index.html">Chapter 1</a> / 1.2</nav>
+<header>
+  <p class="kicker">Chapter 1 · Lesson 1.2 · ~10 steps · ~10 min</p>
+  <h1>Why orchestration?</h1>
+  <p class="meta">You'll be able to name the five problems one container host can't solve on its own, and the Kubernetes feature that solves each.</p>
+</header>
+
+<section class="step" id="s1">
+  <h2>1. One VM, one <code>docker run</code></h2>
+  <div class="body">
+    <p>Contoso's first production setup:</p>
+    <ul>
+      <li>one Linux VM</li>
+      <li>Docker installed</li>
+      <li>one command, <code>docker run -d -p 80:8080 orders-api:1.0.0</code></li>
+    </ul>
+    <p>It works on launch day. Over the next few steps, things go wrong one at a time. For each, ask yourself: <b>who fixes this?</b></p>
+  </div>
+  <div class="widget" data-widget="one-vm">A single VM with one <code>orders-api</code> container and a traffic gauge. Buttons: "Container crashes", "VM reboots", "Black Friday traffic", "Deploy v1.1", "Add a second service". Each event plays out on the one VM and leaves a red "nobody handled this" note. The same widget reappears on each of the next five steps with one button highlighted.</div>
+  <aside class="coming" data-set="A">
+    <dl>
+      <dt>Windows/IIS admin</dt><dd>It's like running a site on a single IIS server: app-pool recycling helps a bit, but a server reboot, a traffic spike or a deployment is still on you.</dd>
+      <dt>Linux admin</dt><dd>systemd can restart a crashed process on <i>one</i> host. Everything that spans hosts is what's missing.</dd>
+      <dt>Developer (Compose)</dt><dd>This is <code>docker compose up</code> on a single server. <code>restart: always</code> covers crashes, but nothing else in this lesson.</dd>
+      <dt>Other clouds</dt><dd>You've likely used ECS or Cloud Run, which solve these problems in their own way. Kubernetes solves them in a portable way.</dd>
+    </dl>
+  </aside>
+</section>
+
+<section class="step" id="s2">
+  <h2>2. Problem 1: the container crashes</h2>
+  <div class="body">
+    <p>A bug makes <code>orders-api</code> exit at 2 am. Docker's restart policy (<code>--restart=always</code>) brings it back on this VM.</p>
+    <p>But what if the bug is a <b>hang</b>: the process is alive and not answering? Docker sees a running process and does nothing.</p>
+    <p>Kubernetes restarts failed containers, <i>and</i> it can run <b>health probes</b> that detect "alive but broken" and restart those too (Chapter 3).</p>
+  </div>
+</section>
+
+<section class="step" id="s3">
+  <h2>3. Problem 2: the machine dies</h2>
+  <div class="body">
+    <p>The VM's host has a hardware fault. The VM is gone, and so is the only copy of the app.</p>
+    <p>Restart policies can't help: they run <i>on</i> the machine that just died.</p>
+    <p>An orchestrator manages a <b>pool of machines</b>, called <b>nodes</b>. When one disappears, it re-creates the lost containers on the others.</p>
+  </div>
+  <div class="check" data-type="mcq">
+    <p class="q">The single VM reboots at 3 am for patching. With only Docker, what brings <code>orders-api</code> back?</p>
+    <ol class="options">
+      <li>Nothing, ever <span class="why">Docker's restart policy <i>does</i> start it again once the VM is back.</span></li>
+      <li class="correct">Docker's restart policy, but only after the VM is back up. Until then, the app is down.</li>
+      <li>Another VM takes over automatically <span class="why">Only if something manages several machines, which is what an orchestrator does.</span></li>
+    </ol>
+    <div class="explain">With one machine, there's always downtime while it's away. Kubernetes runs replicas on several nodes, so one node rebooting doesn't take the app down.</div>
+  </div>
+</section>
+
+<section class="step" id="s4">
+  <h2>4. Problem 3: more traffic</h2>
+  <div class="body">
+    <p>Black Friday triples the traffic. You need more copies of the app, quickly, spread across machines, with traffic shared between them.</p>
+    <p>By hand that means:</p>
+    <ul>
+      <li>starting containers on other VMs</li>
+      <li>picking free ports</li>
+      <li>updating a load balancer</li>
+      <li>removing it all again afterwards</li>
+    </ul>
+    <p>Kubernetes <b>scales</b> replicas with one number. It can also do it automatically from CPU or other metrics, using the HorizontalPodAutoscaler (Chapter 3).</p>
+  </div>
+</section>
+
+<section class="step" id="s5">
+  <h2>5. Problem 4: deploying a new version</h2>
+  <div class="body">
+    <p>Version 1.1 is ready. With one container, you stop the old one and start the new one, and users see errors in between. If 1.1 is broken, you scramble to bring 1.0 back.</p>
+    <p>Kubernetes does <b>rolling updates</b>. It starts new pods, waits until they're ready, then removes old ones a few at a time. A bad version can be <b>rolled back</b> with one command (Chapter 2, and Chapter 11 for safer strategies).</p>
+  </div>
+</section>
+
+<section class="step" id="s6">
+  <h2>6. Problem 5: finding each other</h2>
+  <div class="body">
+    <p>Contoso adds a <code>web</code> frontend that calls <code>orders-api</code>. Which IP and port should it call? Containers come and go, and their addresses change every time.</p>
+    <p>Kubernetes gives each set of pods a stable name and virtual IP, called a <b>Service</b>, plus cluster DNS. <code>web</code> calls <code>http://orders-api</code> and always reaches a healthy copy.</p>
+  </div>
+</section>
+
+<section class="step" id="s7">
+  <h2>7. Bonus problem: wasted machines</h2>
+  <div class="body">
+    <p>With one app per VM, most VMs sit at 10–20% CPU. Packing several apps onto shared machines saves money, but someone must decide <i>where</i> each one fits.</p>
+    <p>That decision is <b>bin-packing</b>, and the Kubernetes <b>scheduler</b> makes it automatically. It places each pod on a node with enough free CPU and memory, based on the <b>requests</b> you declare (Chapter 3).</p>
+  </div>
+</section>
+
+<section class="step" id="s8">
+  <h2>8. Match each problem to its fix</h2>
+  <div class="check" data-type="match">
+    <p class="q">Match each problem to the Kubernetes feature that handles it.</p>
+    <table class="pairs">
+      <tr><td>A container hangs but doesn't exit</td><td>Liveness probe and restart</td></tr>
+      <tr><td>A node fails</td><td>Pods re-created on other nodes</td></tr>
+      <tr><td>Traffic triples</td><td>Scaling replicas (manually or with an autoscaler)</td></tr>
+      <tr><td>Shipping v1.1 without downtime</td><td>Rolling update, with rollback</td></tr>
+      <tr><td><code>web</code> needs to find <code>orders-api</code></td><td>Service and cluster DNS</td></tr>
+      <tr><td>Machines are mostly idle</td><td>Scheduler bin-packing pods by their requests</td></tr>
+    </table>
+    <div class="explain">Each of these is a controller or component you'll meet in the next two lessons.</div>
+  </div>
+</section>
+
+<section class="step" id="s9">
+  <h2>9. What Kubernetes is not</h2>
+  <div class="body">
+    <ul>
+      <li>It's not a build tool: it runs images, it doesn't make them.</li>
+      <li>It doesn't make your app scalable by magic: an app that keeps state in memory or on local disk still needs work.</li>
+      <li>It's not free to run: someone operates the cluster. On AKS, Azure takes the hardest part (Chapter 4).</li>
+      <li>It's not always the right answer: a single small app may be better on Azure Container Apps or App Service. This course is for when you need Kubernetes.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="step summary" id="s10">
+  <h2>Orchestration, sorted</h2>
+  <ul>
+    <li>One host can't survive its own failure, scale out, update without downtime, or find services.</li>
+    <li>Kubernetes manages a pool of nodes and gives you restarts, rescheduling, scaling, rolling updates, Services and bin-packing.</li>
+    <li>You describe <i>what</i> you want; Kubernetes keeps working to make it true (lesson 1.4).</li>
+  </ul>
+</section>
+</article>
+</body>
+</html>

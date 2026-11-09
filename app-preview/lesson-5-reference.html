@@ -1,0 +1,215 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stages, conditions &amp; approvals · Lesson 5</title>
+<link rel="stylesheet" href="assets/styles.css">
+</head>
+<body data-page="l5">
+<header id="topbar"></header>
+<div class="lesson-shell">
+<aside class="curriculum" id="curriculum"></aside>
+<main class="reader"><div class="reader-inner" style="max-width:980px">
+
+  <div class="breadcrumb"><a href="index.html">Home</a><span class="sep">/</span><a href="chapter.html">Ch 7 · Azure Pipelines</a><span class="sep">/</span><span>Lesson 5</span></div>
+  <div class="lesson-head">
+    <span class="badge badge-accent">Lesson 5 · Reference view</span> <a class="badge badge-violet" href="lesson.html?l=ch07/l5">▶ Take the guided version</a>
+    <h1 style="margin-top:10px">Stages, conditions, environments &amp; approvals</h1>
+    <div class="meta"><span>⏱ 22 min</span><span>·</span><span>Live pipeline simulator</span><span>·</span><span>Strategy comparison</span></div>
+  </div>
+
+  <p>A real delivery pipeline isn't a straight line. Security scans run <em>in parallel</em> with the build, dev deploys happen on every branch, prod deploys only from <code>main</code> and only after someone approves, and the team gets notified when anything breaks. All of that comes from four tools: <strong><code>dependsOn</code></strong>, <strong><code>condition</code></strong>, <strong>environments</strong> and <strong>checks</strong>.</p>
+
+  <h2>Pipeline simulator</h2>
+  <p>Change the scenario on the left and watch the run on the right. The YAML below the graph is the pipeline being simulated.</p>
+
+  <div class="card">
+    <div style="display:flex;flex-wrap:wrap;gap:18px;align-items:center;padding-bottom:14px;border-bottom:1px solid var(--border);margin-bottom:12px">
+      <label class="toggle"><input type="checkbox" id="s-build"><span class="track"></span>Unit tests fail</label>
+      <label class="toggle"><input type="checkbox" id="s-scan"><span class="track"></span>Security scan fails</label>
+      <div style="display:flex;align-items:center;gap:8px;font-size:14px;font-weight:550">Branch
+        <div class="tabs" id="s-branch"><button class="tab active" data-v="main">main</button><button class="tab" data-v="feature/cart">feature/cart</button></div>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;font-size:14px;font-weight:550">Prod approval
+        <div class="tabs" id="s-appr"><button class="tab active" data-v="pending">Pending</button><button class="tab" data-v="approved">Approved</button><button class="tab" data-v="rejected">Rejected</button></div>
+      </div>
+    </div>
+    <div id="graph"></div>
+    <div class="seq-msg" id="explain" style="margin-top:10px;min-height:0"></div>
+  </div>
+
+  <div id="yaml"></div>
+
+  <h2>Conditions cheat sheet</h2>
+  <div class="table-wrap">
+    <table class="table">
+      <tr><th>Condition</th><th>Runs when…</th></tr>
+      <tr><td><code>succeeded()</code></td><td>All dependencies succeeded. <b>This is the default</b> if you write no condition.</td></tr>
+      <tr><td><code>failed()</code></td><td>At least one dependency failed. Use it for notifications and rollbacks.</td></tr>
+      <tr><td><code>succeededOrFailed()</code></td><td>Dependencies finished, whatever the result, <em>unless the run was cancelled</em>. Good for publishing test results.</td></tr>
+      <tr><td><code>always()</code></td><td>Always, even if cancelled. Use it for cleanup.</td></tr>
+      <tr><td><code>and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))</code></td><td>Succeeded <b>and</b> the run is for <code>main</code>. ⚠️ Writing a custom condition <em>replaces</em> the default, so include <code>succeeded()</code> yourself!</td></tr>
+      <tr><td><code>ne(variables['Build.Reason'], 'PullRequest')</code></td><td>Skip for PR validation runs, e.g. never deploy from a PR.</td></tr>
+    </table>
+  </div>
+
+  <h2>Environments, approvals &amp; checks</h2>
+  <p>An <strong>environment</strong> (<code>environment: prod</code>) is an Azure DevOps object that represents a deployment target. It gives you deployment history (which commit is in prod right now?) and, most importantly, <strong>checks</strong> that run before any job targeting it can start:</p>
+  <div class="grid grid-3">
+    <div class="card card-tight"><strong>✅ Approvals</strong><p class="subtle" style="margin:4px 0 0">Named people or groups must approve. Can block the requester from approving their own run.</p></div>
+    <div class="card card-tight"><strong>🌿 Branch control</strong><p class="subtle" style="margin:4px 0 0">Only runs from <code>refs/heads/main</code> (or release branches) may deploy here.</p></div>
+    <div class="card card-tight"><strong>🕘 Business hours</strong><p class="subtle" style="margin:4px 0 0">Deploy only Mon–Thu, 09:00–16:00. No Friday-night surprises.</p></div>
+    <div class="card card-tight"><strong>🔒 Exclusive lock</strong><p class="subtle" style="margin:4px 0 0">Only one run deploys to prod at a time; later runs queue or replace older ones.</p></div>
+    <div class="card card-tight"><strong>🌐 Invoke REST / Azure Function</strong><p class="subtle" style="margin:4px 0 0">Ask an external system ("is there an open incident?") before proceeding.</p></div>
+    <div class="card card-tight"><strong>📋 Required template</strong><p class="subtle" style="margin:4px 0 0">Only pipelines extending your approved, secure template may deploy.</p></div>
+  </div>
+  <div class="callout"><span class="c-ico">💡</span><div><strong>Why checks live on the environment, not in YAML:</strong> the YAML is editable by anyone who can push a branch. If approvals were YAML, a developer could just delete them. Checks are owned by whoever administers the environment.</div></div>
+
+  <h2>Deployment strategies</h2>
+  <div class="tabs" data-tabs="strat">
+    <button class="tab active" data-tab="once">runOnce</button>
+    <button class="tab" data-tab="rolling">rolling</button>
+    <button class="tab" data-tab="canary">canary</button>
+  </div>
+  <div data-panel="strat:once"><p style="margin-top:12px">Run the <code>deploy</code> hook once. For Kubernetes this is the most common choice, because the <strong>Kubernetes Deployment object already does a rolling update</strong> (<code>maxSurge</code> / <code>maxUnavailable</code>).</p><div id="y-once"></div></div>
+  <div data-panel="strat:rolling" class="hidden"><p style="margin-top:12px">Replaces the app on a few <em>targets</em> at a time. In Azure Pipelines the <code>rolling</code> strategy is meant for <strong>VM resources</strong> in an environment, not for Kubernetes. On AKS, use <code>runOnce</code> and let the Deployment roll.</p><div id="y-rolling"></div></div>
+  <div data-panel="strat:canary" class="hidden"><p style="margin-top:12px">Send a slice of traffic to the new version first. <code>KubernetesManifest@1</code> creates <code>-canary</code> and <code>-baseline</code> workloads; you then <strong>promote</strong> on success or <strong>reject</strong> on failure.</p><div id="y-canary"></div></div>
+
+  <div class="check-card" data-answer="b">
+    <div class="kicker">Check your knowledge</div>
+    <strong>A stage has <code>condition: eq(variables['Build.SourceBranch'], 'refs/heads/main')</code>. The Build stage it depends on <em>fails</em> on <code>main</code>. What happens to this stage?</strong>
+    <div class="options">
+      <button class="option" data-v="a"><span class="key">A</span><span>It's skipped, because dependencies failed</span></button>
+      <button class="option" data-v="b"><span class="key">B</span><span>It runs, because the custom condition replaced the default <code>succeeded()</code></span></button>
+      <button class="option" data-v="c"><span class="key">C</span><span>The pipeline errors at compile time</span></button>
+    </div>
+    <div class="check-result" data-ok="Custom conditions <b>replace</b> the implicit <code>succeeded()</code>. This stage only checks the branch, so it would deploy a broken build to prod! Always write <code>and(succeeded(), eq(...))</code>."></div>
+  </div>
+
+  <div id="lesson-nav"></div>
+</div></main>
+</div>
+
+<script src="assets/app.js"></script>
+<script src="assets/yaml.js"></script>
+<script src="assets/pipeline-graph.js"></script>
+<script>
+const S = { build: false, scan: false, branch: "main", appr: "pending" };
+function tabs(id, key) {
+  document.querySelectorAll(`#${id} .tab`).forEach(t => t.onclick = () => {
+    document.querySelectorAll(`#${id} .tab`).forEach(x => x.classList.toggle("active", x === t));
+    S[key] = t.dataset.v; run();
+  });
+}
+tabs("s-branch", "branch"); tabs("s-appr", "appr");
+document.getElementById("s-build").onchange = e => { S.build = e.target.checked; run(); };
+document.getElementById("s-scan").onchange = e => { S.scan = e.target.checked; run(); };
+
+function run() {
+  const st = {}, notes = {};
+  st.Build = S.build ? "failed" : "succeeded"; notes.Build = S.build ? "npm test exited with code 1" : "Image kqacr.azurecr.io/orders-api:1427 pushed";
+  st.Scan = S.scan ? "failed" : "succeeded"; notes.Scan = S.scan ? "2 critical CVEs found" : "No critical vulnerabilities";
+  if (st.Build !== "succeeded" || st.Scan !== "succeeded") { st.DeployDev = "skipped"; notes.DeployDev = "Skipped: a dependency failed (succeeded() = false)"; }
+  else { st.DeployDev = "succeeded"; notes.DeployDev = "Deployed to dev (environment: dev)"; }
+  if (st.DeployDev !== "succeeded") { st.DeployProd = "skipped"; notes.DeployProd = "Skipped: DeployDev did not succeed"; }
+  else if (S.branch !== "main") { st.DeployProd = "skipped"; notes.DeployProd = "Skipped: condition false (branch is not main)"; }
+  else if (S.appr === "pending") { st.DeployProd = "waiting"; notes.DeployProd = "Waiting: 1 approval required on environment prod"; }
+  else if (S.appr === "approved") { st.DeployProd = "succeeded"; notes.DeployProd = "Approved by @lead, deployed to prod"; }
+  else { st.DeployProd = "failed"; notes.DeployProd = "Rejected by approver: check failed"; }
+  const anyFailed = ["Build", "Scan", "DeployDev", "DeployProd"].some(k => st[k] === "failed");
+  st.Notify = anyFailed ? "succeeded" : "skipped"; notes.Notify = anyFailed ? "Ran because failed() = true: Teams message sent" : "Skipped: failed() = false";
+
+  const model = { stages: [
+    { name: "Build", displayName: "Build & test", dependsOn: [], state: st.Build, note: notes.Build, jobs: [{ name: "build", steps: ["checkout", "npm test", "Docker@2 buildAndPush"] }] },
+    { name: "Scan", displayName: "Security scan", dependsOn: [], state: st.Scan, note: notes.Scan, jobs: [{ name: "trivy", steps: ["trivy fs ."] }] },
+    { name: "DeployDev", displayName: "Deploy · dev", dependsOn: ["Build", "Scan"], state: st.DeployDev, note: notes.DeployDev, jobs: [{ name: "deploy", kind: "deployment", env: "dev", steps: ["KubernetesManifest@1"] }] },
+    { name: "DeployProd", displayName: "Deploy · prod", dependsOn: ["DeployDev"], state: st.DeployProd, note: notes.DeployProd, condition: "and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))", jobs: [{ name: "deploy", kind: "deployment", env: "prod", steps: ["KubernetesManifest@1"] }] },
+    { name: "Notify", displayName: "Notify on failure", dependsOn: ["DeployProd"], state: st.Notify, note: notes.Notify, condition: "failed()", jobs: [] },
+  ]};
+  KQG.render(document.getElementById("graph"), model);
+
+  let msg;
+  if (st.Build === "failed" || st.Scan === "failed") msg = "<b>A failure upstream skips every stage that uses the default <code>succeeded()</code></b>. Only <code>Notify</code>, which uses <code>failed()</code>, runs.";
+  else if (S.branch !== "main") msg = "Everything is green, but this is a <b>feature branch</b>. Prod's condition checks <code>Build.SourceBranch</code>, so the stage is skipped (not failed). Dev still gets the build for testing.";
+  else if (S.appr === "pending") msg = "The run is <b>paused</b> before the prod deployment job starts. No agent is held while it waits; the approval check is evaluated by Azure DevOps.";
+  else if (S.appr === "approved") msg = "Approved: the deployment job runs and the <code>prod</code> environment records which run (and which commits) are now live.";
+  else msg = "A rejected approval <b>fails the check</b>, so the prod stage fails and <code>Notify</code> fires.";
+  document.getElementById("explain").innerHTML = msg;
+}
+run();
+
+KQY.block(document.getElementById("yaml"), `stages:
+  - stage: Build
+    jobs: [ ... ]           # test, build & push image
+
+  - stage: Scan
+    dependsOn: []           # no deps, so it runs in parallel with Build
+    jobs: [ ... ]
+
+  - stage: DeployDev
+    dependsOn: [Build, Scan] # fan-in: waits for both
+    jobs:
+      - deployment: deploy
+        environment: dev
+        strategy: { runOnce: { deploy: { steps: [ ... ] } } }
+
+  - stage: DeployProd
+    dependsOn: DeployDev
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+    jobs:
+      - deployment: deploy
+        environment: prod   # approvals & checks are configured on this environment
+        strategy: { runOnce: { deploy: { steps: [ ... ] } } }
+
+  - stage: Notify
+    dependsOn: [Build, Scan, DeployDev, DeployProd]
+    condition: failed()
+    jobs: [ ... ]`, { title: "azure-pipelines.yml (simulated)" });
+
+KQY.block(document.getElementById("y-once"), `strategy:
+  runOnce:
+    deploy:
+      steps:
+        - checkout: self
+        - task: KubernetesManifest@1
+          inputs:
+            action: deploy
+            connectionType: kubernetesServiceConnection
+            kubernetesServiceConnection: aks-prod
+            namespace: orders
+            manifests: k8s/*.yaml
+            containers: kqacr.azurecr.io/orders-api:$(Build.BuildId)`, { title: "runOnce" });
+KQY.block(document.getElementById("y-rolling"), `# environment with VM resources (not AKS)
+environment:
+  name: web-vms
+  resourceType: VirtualMachine
+strategy:
+  rolling:
+    maxParallel: 2          # 2 VMs at a time
+    deploy:
+      steps:
+        - script: ./deploy.sh`, { title: "rolling (VMs)" });
+KQY.block(document.getElementById("y-canary"), `strategy:
+  canary:
+    increments: [25]
+    deploy:
+      steps:
+        - task: KubernetesManifest@1
+          inputs:
+            action: deploy
+            strategy: canary
+            percentage: $(strategy.increment)
+            manifests: k8s/*.yaml
+    on:
+      failure:
+        steps:
+          - task: KubernetesManifest@1
+            inputs: { action: reject, strategy: canary, manifests: k8s/*.yaml }
+      success:
+        steps:
+          - task: KubernetesManifest@1
+            inputs: { action: promote, strategy: canary, manifests: k8s/*.yaml }`, { title: "canary" });
+</script>
+</body>
+</html>

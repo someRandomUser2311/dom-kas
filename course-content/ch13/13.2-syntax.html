@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>13.2 · Bicep syntax</title>
+<link rel="stylesheet" href="../content.css">
+</head>
+<body>
+<article class="lesson" data-id="13.2" data-chapter="13">
+<nav class="crumbs"><a href="../index.html">Course</a> / <a href="index.html">Chapter 13</a> / 13.2</nav>
+<header>
+  <p class="kicker">Chapter 13 · Lesson 13.2 · ~13 steps · ~16 min</p>
+  <h1>Bicep syntax</h1>
+  <p class="meta">You'll be able to write parameters with decorators, variables, resources with symbolic references, existing and child resources, and outputs, and grow <code>main.bicep</code> to a network and registry.</p>
+</header>
+
+<section class="step" id="s1">
+  <h2>1. Parameters</h2>
+  <div class="body"><p>A <code>param</code> declares an input, with a type and an optional default. <b>Decorators</b> (<code>@…</code>) add rules and documentation.</p></div>
+  <pre class="code" data-file="main.bicep">@description('Environment name.')
+@allowed([ 'dev', 'prod' ])
+param environment string
+
+param location string = resourceGroup().location
+
+@minValue(1)
+@maxValue(20)
+param userPoolMaxCount int = 5</pre>
+  <aside class="coming" data-set="TF">
+    <dl>
+      <dt>Terraform</dt><dd><code>param</code> ≈ <code>variable</code>. <code>@allowed</code> ≈ a <code>validation</code> with <code>contains()</code>. <code>@secure()</code> ≈ <code>sensitive = true</code>, but stronger: secure values are never stored in deployment history.</dd>
+    </dl>
+  </aside>
+</section>
+
+<section class="step" id="s2">
+  <h2>2. Complete the decorator</h2>
+  <div class="check" data-type="fill">
+    <p class="q">Restrict <code>environment</code> to dev or prod.</p>
+    <pre class="code" data-file="main.bicep"><span class="blank">?</span>
+param environment string</pre>
+    <ul class="chips">
+      <li class="correct"><code>@allowed([ 'dev', 'prod' ])</code></li>
+      <li><code>@validate('dev|prod')</code> <span class="why">There's no <code>@validate</code> decorator.</span></li>
+      <li><code>@enum(dev, prod)</code> <span class="why">Not Bicep syntax.</span></li>
+      <li><code>@secure()</code> <span class="why">That hides values; it doesn't restrict them.</span></li>
+    </ul>
+    <div class="explain">A deployment with <code>environment = 'Prod'</code> fails validation before anything is created. Bicep strings use single quotes.</div>
+  </div>
+</section>
+
+<section class="step" id="s3">
+  <h2>3. Variables</h2>
+  <pre class="code" data-file="main.bicep" data-diff>+var nameSuffix = 'orders-${environment}'
++var isProd = environment == 'prod'
++var tags = {
++  app: 'orders'
++  environment: environment
++  managedBy: 'bicep'
++}</pre>
+  <div class="body"><p><code>var</code> ≈ Terraform <code>locals</code>. Interpolation uses <code>'${…}'</code> inside single-quoted strings.</p></div>
+</section>
+
+<section class="step" id="s4">
+  <h2>4. A resource and its symbolic name</h2>
+  <div class="body"><p><code>resource &lt;symbolicName&gt; '&lt;type&gt;@&lt;apiVersion&gt;' = { … }</code>. The symbolic name is used to refer to the resource elsewhere in the file. It's like Terraform's local name, and Azure never sees it.</p></div>
+  <pre class="code" data-file="main.bicep" data-diff>+resource vnet 'Microsoft.Network/virtualNetworks@2024-05-01' = {
++  name: 'vnet-${nameSuffix}'
++  location: location
++  tags: tags
++  properties: {
++    addressSpace: { addressPrefixes: [ '10.20.0.0/16' ] }
++    subnets: [
++      { name: 'snet-aks-nodes', properties: { addressPrefix: '10.20.0.0/22' } }
++      { name: 'snet-private-links', properties: { addressPrefix: '10.20.5.0/27' } }
++    ]
++  }
++}</pre>
+</section>
+
+<section class="step" id="s5">
+  <h2>5. Symbolic references and implicit dependencies</h2>
+  <div class="body">
+    <p>Use the symbolic name to read properties: <code>vnet.id</code>, <code>vnet.name</code>, <code>vnet.properties.subnets[0].id</code>.</p>
+    <p>Bicep generates <code>dependsOn</code> from these references automatically, so explicit <code>dependsOn</code> is rarely needed. The same rule as Terraform.</p>
+  </div>
+  <pre class="code" data-file="main.bicep (usage)">var aksSubnetId = vnet.properties.subnets[0].id</pre>
+</section>
+
+<section class="step" id="s6">
+  <h2>6. Child resources with <code>parent</code></h2>
+  <div class="body"><p>Some resources live under another: subnets under a VNet, agent pools under a cluster, federated credentials under an identity. Declare them with <code>parent</code>, and give just their own short name.</p></div>
+  <pre class="code" data-file="main.bicep (alternative to inline subnets)">resource aksSubnet 'Microsoft.Network/virtualNetworks/subnets@2024-05-01' = {
+  parent: vnet
+  name: 'snet-aks-nodes'
+  properties: { addressPrefix: '10.20.0.0/22' }
+}</pre>
+  <aside class="more"><p>Declare subnets <b>either</b> inline in the VNet <b>or</b> as child resources, not both. Mixing them makes each deployment remove the other's subnets.</p></aside>
+</section>
+
+<section class="step" id="s7">
+  <h2>7. Existing resources</h2>
+  <div class="body"><p><code>existing</code> refers to a resource that's already there, without deploying it. It's like a Terraform data source. Add <code>scope:</code> when it's in another resource group.</p></div>
+  <div class="check" data-type="tapline" data-match="resource acr 'Microsoft.ContainerRegistry/registries@2023-07-01' existing = {">
+    <p class="q">Tap the declaration that refers to the shared registry without creating or changing it.</p>
+    <pre class="code" data-file="main.bicep">resource law 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
+  name: 'log-${nameSuffix}'
+  location: location
+  properties: { sku: { name: 'PerGB2018' }, retentionInDays: 30 }
+}
+
+resource acr 'Microsoft.ContainerRegistry/registries@2023-07-01' existing = {
+  name: 'contosoacr'
+  scope: resourceGroup('rg-orders-shared')
+}</pre>
+    <div class="explain">The <code>existing</code> keyword. You can read <code>acr.id</code> and <code>acr.properties.loginServer</code>, and use it as a role-assignment scope. Nothing about it is deployed.</div>
+  </div>
+</section>
+
+<section class="step" id="s8">
+  <h2>8. Useful functions</h2>
+  <table>
+    <tr><th>Function</th><th>Use</th></tr>
+    <tr><td><code>resourceGroup().location</code>, <code>.id</code></td><td>Properties of the target resource group</td></tr>
+    <tr><td><code>subscription().subscriptionId</code>, <code>tenant().tenantId</code></td><td>Context values</td></tr>
+    <tr><td><code>uniqueString(resourceGroup().id)</code></td><td>A stable 13-character hash, for globally unique names</td></tr>
+    <tr><td><code>guid(a, b, c)</code></td><td>A deterministic GUID from inputs (role assignment names, lesson 13.4)</td></tr>
+    <tr><td><code>subscriptionResourceId(...)</code></td><td>The ID of a subscription-level resource such as a role definition</td></tr>
+  </table>
+</section>
+
+<section class="step" id="s9">
+  <h2>9. Globally unique names</h2>
+  <div class="check" data-type="mcq">
+    <p class="q">A team wants a per-environment registry. Why name it <code>'acr${uniqueString(resourceGroup().id)}'</code>?</p>
+    <ol class="options">
+      <li>It's random on every deployment <span class="why">The opposite: it's deterministic, the same input gives the same output every time.</span></li>
+      <li class="correct">Registry names are global; the hash is stable for this resource group but unique across Azure, so redeploys hit the same registry</li>
+      <li>ACR requires hashes <span class="why">It requires globally unique alphanumeric names; a hash is one way to get one.</span></li>
+      <li>To hide the name <span class="why">It's visible everywhere.</span></li>
+    </ol>
+    <div class="explain">Never use <code>newGuid()</code> or <code>utcNow()</code> in names; they change every deployment (lesson 13.4).</div>
+  </div>
+</section>
+
+<section class="step" id="s10">
+  <h2>10. Outputs</h2>
+  <pre class="code" data-file="main.bicep" data-diff>+output vnetId string = vnet.id
++output aksSubnetId string = vnet.properties.subnets[0].id
++output acrLoginServer string = acr.properties.loginServer</pre>
+  <div class="body"><p>Outputs are recorded in deployment history and readable with <code>az deployment group show --query properties.outputs</code>. Never output secrets.</p></div>
+</section>
+
+<section class="step" id="s11">
+  <h2>11. Secure parameters</h2>
+  <div class="body"><p><code>@secure()</code> on a string or object parameter keeps its value out of logs and deployment history. Better still, avoid secret parameters: use managed identities, or reference Key Vault from the parameters file with <code>getSecret()</code> (lesson 13.5).</p></div>
+  <pre class="code" data-file="(example)">@secure()
+param sqlAdminPassword string</pre>
+</section>
+
+<section class="step" id="s12">
+  <h2>12. Lint and build</h2>
+  <pre class="output">$ az bicep lint --file main.bicep
+main.bicep(14,7) : Warning no-unused-params: Parameter "userPoolMaxCount" is declared but never used.
+main.bicep(31,12) : Warning use-resource-symbol-reference: Use a resource reference instead of resourceId().</pre>
+  <div class="body"><p>Rules are configured in <code>bicepconfig.json</code>. Raise important ones to <code>error</code> so the PR pipeline fails on them.</p></div>
+</section>
+
+<section class="step summary" id="s13">
+  <h2>Syntax, sorted</h2>
+  <ul>
+    <li><code>param</code> + decorators (<code>@allowed</code>, <code>@minValue</code>, <code>@secure</code>, <code>@description</code>); <code>var</code>; <code>output</code>.</li>
+    <li><code>resource sym 'type@api' = { … }</code>; symbolic references create dependencies.</li>
+    <li><code>parent</code> for children; <code>existing</code> (+ <code>scope</code>) for resources you don't deploy.</li>
+    <li><code>uniqueString</code> and <code>guid</code> for stable names; lint everything.</li>
+  </ul>
+</section>
+</article>
+</body>
+</html>

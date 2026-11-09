@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chapter 12 · Practice</title>
+<link rel="stylesheet" href="../content.css">
+</head>
+<body>
+<main>
+<nav class="crumbs"><a href="../index.html">Course</a> / <a href="index.html">Chapter 12</a> / Practice</nav>
+<p class="kicker">Chapter 12 · Practice</p>
+<h1>Practice: quiz, predict, labs, try it locally</h1>
+
+<h2 id="quiz">Checkpoint quiz (12 drawn from 24)</h2>
+<div class="check" data-type="mcq"><p class="q">Which command downloads providers and configures the backend?</p><ol class="options"><li class="correct"><code>terraform init</code></li><li>plan</li><li>apply</li><li>validate</li></ol><div class="explain">Re-run it when providers, modules or the backend change.</div></div>
+<div class="check" data-type="mcq"><p class="q">In a plan, <code>-/+</code> means…</p><ol class="options"><li>Update in place</li><li class="correct">Destroy, then create a replacement</li><li>Read</li><li>No change</li></ol><div class="explain">Look for "forces replacement".</div></div>
+<div class="check" data-type="mcq"><p class="q">Which file must be committed?</p><ol class="options"><li><code>.terraform/</code></li><li class="correct"><code>.terraform.lock.hcl</code></li><li><code>terraform.tfstate</code></li><li><code>tfplan</code></li></ol><div class="explain">It pins provider builds.</div></div>
+<div class="check" data-type="mcq"><p class="q">What does <code>version = "~&gt; 4.0"</code> allow?</p><ol class="options"><li>Exactly 4.0</li><li class="correct">Any 4.x (≥ 4.0, &lt; 5.0)</li><li>Any version ≥ 4.0</li><li>4.0.x only</li></ol><div class="explain"><code>~&gt; 4.0.0</code> would allow 4.0.x only.</div></div>
+<div class="check" data-type="mcq"><p class="q">How does Terraform know to create the resource group before the VNet?</p><ol class="options"><li>File order</li><li class="correct">The VNet references the group's attributes (implicit dependency)</li><li>Alphabetical order</li><li>It doesn't</li></ol><div class="explain">Use <code>depends_on</code> only for hidden dependencies.</div></div>
+<div class="check" data-type="mcq"><p class="q">What does <code>sensitive = true</code> on a variable do?</p><ol class="options"><li>Encrypts it in state</li><li class="correct">Hides it in plan and apply output; it's still in state</li><li>Stores it in Key Vault</li><li>Blocks defaults</li></ol><div class="explain">Protect the state itself.</div></div>
+<div class="check" data-type="mcq"><p class="q">Which value wins: a default, <code>TF_VAR_x</code>, <code>terraform.tfvars</code> or <code>-var x=…</code>?</p><ol class="options"><li>The default</li><li>TF_VAR</li><li>terraform.tfvars</li><li class="correct"><code>-var</code></li></ol><div class="explain">The command line has the highest precedence.</div></div>
+<div class="check" data-type="mcq"><p class="q">A <code>data</code> block…</p><ol class="options"><li>Creates a resource</li><li class="correct">Reads an existing resource Terraform doesn't manage</li><li>Stores outputs</li><li>Defines a variable</li></ol><div class="explain">Terraform never changes data sources.</div></div>
+<div class="check" data-type="mcq"><p class="q">Which argument makes the system pool critical-add-ons-only?</p><ol class="options"><li><code>mode = "System"</code></li><li class="correct"><code>only_critical_addons_enabled = true</code></li><li><code>node_taints</code> on the cluster</li><li><code>system_only = true</code></li></ol><div class="explain">It adds the CriticalAddonsOnly taint.</div></div>
+<div class="check" data-type="mcq"><p class="q">Which azurerm argument disables static admin credentials?</p><ol class="options"><li><code>azure_rbac_enabled</code></li><li class="correct"><code>local_account_disabled = true</code></li><li><code>private_cluster_enabled</code></li><li><code>role_based_access_control_enabled = false</code></li></ol><div class="explain">Keep an admin group for Entra ID access.</div></div>
+<div class="check" data-type="mcq"><p class="q">AcrPull should be assigned to…</p><ol class="options"><li><code>azurerm_kubernetes_cluster.main.identity[0].principal_id</code></li><li class="correct"><code>azurerm_kubernetes_cluster.main.kubelet_identity[0].object_id</code></li><li>The pipeline identity</li><li>The workload identity</li></ol><div class="explain">The kubelet pulls images.</div></div>
+<div class="check" data-type="mcq"><p class="q">The federated credential's issuer comes from…</p><ol class="options"><li class="correct"><code>azurerm_kubernetes_cluster.main.oidc_issuer_url</code></li><li>The tenant ID</li><li>The kubelet identity</li><li>The ACR login server</li></ol><div class="explain">With subject <code>system:serviceaccount:ns:sa</code>.</div></div>
+<div class="check" data-type="mcq"><p class="q">The pipeline gets AuthorizationFailed on <code>roleAssignments/write</code>. It's Contributor. Fix?</p><ol class="options"><li>Make it Owner</li><li class="correct">Grant Role Based Access Control Administrator with a condition limiting assignable roles</li><li>Use a client secret</li><li>Remove the role assignment</li></ol><div class="explain">Least privilege, conditioned.</div></div>
+<div class="check" data-type="mcq"><p class="q">Removing the middle item from a <code>count</code> list…</p><ol class="options"><li>Removes only that resource</li><li class="correct">Shifts later indexes, so later resources are changed or replaced</li><li>Does nothing</li><li>Fails validation</li></ol><div class="explain">Use <code>for_each</code> over a map.</div></div>
+<div class="check" data-type="mcq"><p class="q">What is a <code>dynamic</code> block for?</p><ol class="options"><li>Creating resources in a loop</li><li class="correct">Generating nested blocks zero or more times</li><li>Reading data</li><li>Lazy evaluation</li></ol><div class="explain">E.g. a dev-only api_server_access_profile.</div></div>
+<div class="check" data-type="mcq"><p class="q">How do you pin a registry module?</p><ol class="options"><li><code>?ref=</code></li><li class="correct"><code>version = "x.y.z"</code></li><li><code>required_version</code></li><li>You can't</li></ol><div class="explain"><code>?ref=</code> is for Git sources.</div></div>
+<div class="check" data-type="mcq"><p class="q">Why one folder per environment rather than workspaces?</p><ol class="options"><li>Workspaces don't support azurerm</li><li class="correct">Separate state, credentials and versions; the path makes the environment explicit</li><li>Faster plans</li><li>Required by AVM</li></ol><div class="explain">Avoid "wrong workspace" accidents.</div></div>
+<div class="check" data-type="mcq"><p class="q">Why is state sensitive?</p><ol class="options"><li>It's large</li><li class="correct">It contains every attribute, secrets in plain text included</li><li>It's encrypted with your key</li><li>It's public</li></ol><div class="explain">Restrict and protect the storage.</div></div>
+<div class="check" data-type="mcq"><p class="q">How does the azurerm backend prevent two simultaneous applies?</p><ol class="options"><li>It doesn't</li><li class="correct">A blob lease lock on the state file</li><li>A Key Vault lock</li><li>Pipeline approvals</li></ol><div class="explain">Add exclusive-lock checks too.</div></div>
+<div class="check" data-type="mcq"><p class="q">You renamed a resource. How do you avoid destroy and recreate?</p><ol class="options"><li><code>import</code></li><li class="correct">A <code>moved</code> block</li><li><code>ignore_changes</code></li><li>Edit the state JSON</li></ol><div class="explain">Declarative and reviewed.</div></div>
+<div class="check" data-type="mcq"><p class="q">How do you bring a hand-made cluster under Terraform?</p><ol class="options"><li>Delete and recreate it</li><li class="correct">An <code>import</code> block with its Azure ID, plus matching code</li><li>A <code>moved</code> block</li><li>A data source</li></ol><div class="explain">Iterate until the plan shows no changes.</div></div>
+<div class="check" data-type="mcq"><p class="q">The cluster autoscaler changes node_count, and every plan wants to revert it. Fix?</p><ol class="options"><li>Disable the autoscaler</li><li class="correct"><code>lifecycle { ignore_changes = [default_node_pool[0].node_count] }</code></li><li><code>prevent_destroy</code></li><li>Run plan less often</li></ol><div class="explain">Don't fight another controller.</div></div>
+<div class="check" data-type="mcq"><p class="q">Why apply the saved <code>tfplan</code>?</p><ol class="options"><li>Speed</li><li class="correct">To apply exactly what was reviewed and approved</li><li>It skips locking</li><li>Required by OIDC</li></ol><div class="explain">A stale plan is refused.</div></div>
+<div class="check" data-type="mcq"><p class="q">Which env var turns on OIDC auth for azurerm?</p><ol class="options"><li><code>ARM_CLIENT_SECRET</code></li><li class="correct"><code>ARM_USE_OIDC=true</code></li><li><code>AZURE_OIDC=1</code></li><li><code>TF_OIDC</code></li></ol><div class="explain">Plus a token (or a service connection ID), client, tenant and subscription.</div></div>
+
+<h2 id="predict">Predict the outcome (4)</h2>
+<div class="check" data-type="predict"><p class="q">1 · <code>count</code> over <code>["a","b","c"]</code> node pools; remove <code>"a"</code>.</p><ol class="options"><li>Destroy pool a</li><li class="correct">[0] becomes b and [1] becomes c (replaced), [2] destroyed: all three pools touched</li><li>No changes</li><li>Error</li></ol><div class="explain">That's why <code>for_each</code> exists.</div></div>
+<div class="check" data-type="predict"><p class="q">2 · Portal drift: someone set the system pool from 3 to 4 nodes (no ignore_changes). Next plan?</p><ol class="options"><li>No changes</li><li class="correct">Update in place 4 → 3</li><li>Replace the cluster</li><li>Error</li></ol><div class="explain">Code wins; record intentional changes in code.</div></div>
+<div class="check" data-type="predict"><p class="q">3 · Rename <code>azurerm_kubernetes_cluster.main</code> → <code>.orders</code> without a <code>moved</code> block.</p><ol class="options"><li>Rename in place</li><li class="correct">Plan: destroy main, create orders, so the whole cluster is recreated (blocked if prevent_destroy is set)</li><li>No changes</li><li>Import automatically</li></ol><div class="explain">Always add <code>moved</code> when refactoring.</div></div>
+<div class="check" data-type="predict"><p class="q">4 · Two pipeline runs start apply on the same state at the same moment.</p><ol class="options"><li>Both apply, merging changes</li><li class="correct">One gets the lock; the other fails with "Error acquiring the state lock"</li><li>State is corrupted</li><li>Both wait forever</li></ol><div class="explain">Locking protects state; exclusive locks queue the runs.</div></div>
+
+<h2 id="lab">Write lab A: the Contoso cluster in Terraform</h2>
+<div class="lab">
+  <p><b>Brief:</b> Write <code>versions.tf</code>, <code>main.tf</code>, <code>variables.tf</code> and <code>outputs.tf</code> in <code>infra/terraform/envs/dev</code>. They create the resource group, VNet and node subnet, Log Analytics, the AKS cluster with a user pool, AcrPull for the kubelet on the shared <code>contosoacr</code> (data source), and the <code>orders-api</code> workload identity with a federated credential. Graded by <b>iac-rules (Terraform)</b>. The same requirement set is used for Bicep in Chapter 13.</p>
+  <ul class="rules">
+    <li>The azurerm provider is pinned with a <code>~&gt;</code> constraint; <code>required_version</code> is set.</li>
+    <li>An azurerm remote backend is configured with <code>use_azuread_auth</code> (no access keys).</li>
+    <li>Overlay networking: <code>network_plugin = "azure"</code> and <code>network_plugin_mode = "overlay"</code>.</li>
+    <li>OIDC issuer and workload identity enabled.</li>
+    <li>Azure RBAC enabled for Kubernetes authorization.</li>
+    <li class="critical"><code>local_account_disabled = true</code>.</li>
+    <li>The system pool spans zones 1, 2, 3 with at least 2 nodes and critical add-ons only.</li>
+    <li>AcrPull is assigned to <code>kubelet_identity[0].object_id</code> on the registry.</li>
+    <li>The federated credential uses <code>oidc_issuer_url</code> and subject <code>system:serviceaccount:orders:orders-api</code>.</li>
+    <li class="critical">No secrets in variable defaults or <code>.tfvars</code> (no password, secret, key or token values).</li>
+    <li><code>environment</code> has a validation allowing only dev/prod.</li>
+  </ul>
+  <details class="solution"><summary>Reference solution</summary><p>Assemble lessons <a href="12.2-hcl.html">12.2</a> (versions, network), <a href="12.3-variables.html">12.3</a> (variables, locals, outputs), <a href="12.4-aks.html">12.4</a> (cluster, pool, ACR data source), <a href="12.5-identity.html">12.5</a> (identities) and the backend from <a href="12.7-state.html#s3">12.7</a>.</p></details>
+</div>
+
+<h2 id="lab-b">Write lab B: the infra pipeline</h2>
+<div class="lab">
+  <p><b>Brief:</b> Write <code>infra-pipeline.yml</code> for <code>infra/terraform/envs/prod</code>. Graded by <b>pipeline-rules</b>.</p>
+  <ul class="rules">
+    <li>PR checks: <code>fmt -check</code>, <code>validate</code>, and a lint or security scan step.</li>
+    <li>A Plan stage runs <code>terraform plan -out=&lt;file&gt;</code> and publishes the file as an artifact.</li>
+    <li>Apply runs in a <b>deployment job</b> with an <code>environment</code>.</li>
+    <li class="critical">Apply uses the saved plan file (<code>terraform apply &lt;file&gt;</code>), never <code>-auto-approve</code> without a plan.</li>
+    <li class="critical">Apply runs only after an approval (the environment) and only on <code>main</code>.</li>
+    <li>Authentication uses a service connection with OIDC (<code>ARM_USE_OIDC</code>); no <code>ARM_CLIENT_SECRET</code>.</li>
+  </ul>
+  <details class="solution"><summary>Reference solution</summary><p>Lesson <a href="12.8-pipelines.html">12.8</a>, steps 2–5, combined into one file with a PR trigger on <code>infra/terraform/**</code>.</p></details>
+</div>
+
+<h2 id="walkthrough">Walkthrough: init → plan → apply → drift → fix</h2>
+<ol>
+  <li><code>terraform init</code> against the remote backend; <code>plan -var-file=dev.tfvars -out=tfplan</code>; read the plan.</li>
+  <li><code>apply tfplan</code> (~8 minutes); <code>terraform output</code>.</li>
+  <li>Change the user pool's max count in the portal.</li>
+  <li><code>terraform plan</code> shows <code>~ max_count</code>, the drift.</li>
+  <li>Decide: revert (apply) or adopt (change the code and apply). Never leave it.</li>
+</ol>
+
+<h2 id="try">Try it locally</h2>
+<p class="muted">No Azure account is needed. These boxes use Terraform with the free <code>local</code> and <code>random</code> providers, and <code>terraform test</code> with a mock azurerm provider. Versions are pinned in <code>lab/versions.env</code>.</p>
+<div class="try" data-lesson="12.1-12.3"><p><b>Workflow, variables, plan symbols.</b></p>
+<pre>cd lab/examples/ch12/basics &amp;&amp; terraform init
+terraform plan -var environment=dev -out=tfplan &amp;&amp; terraform apply tfplan
+terraform plan -var environment=Prod          # validation error
+terraform plan -var environment=prod          # ~ update and -/+ replace</pre>
+<p>Expected: files created by <code>local_file</code>; then a validation error; then a plan with both <code>~</code> and <code>-/+</code>.</p>
+<p><b>Cleanup:</b> <code>terraform destroy -auto-approve -var environment=dev</code></p></div>
+<div class="try" data-lesson="12.6-12.7"><p><b><code>count</code> vs <code>for_each</code>, <code>moved</code>, <code>import</code>.</b></p>
+<pre>cd lab/examples/ch12/state &amp;&amp; terraform init &amp;&amp; terraform apply -auto-approve
+terraform plan -var-file=remove-middle.tfvars    # count: shifts; for_each: one removal
+cp exercises/moved.tf . &amp;&amp; terraform plan      # rename without destroy
+terraform state list</pre>
+<p>Expected: the count resources show changes at [1] and [2]; the for_each resources show one destroy; with <code>moved.tf</code>, "has moved to" and 0 to destroy.</p>
+<p><b>Cleanup:</b> <code>terraform destroy -auto-approve; rm moved.tf</code></p></div>
+<div class="try" data-lesson="12.4-12.5"><p><b>Plan the real AKS configuration without Azure.</b></p>
+<pre>cd lab/examples/ch12/aks
+terraform init -backend=false &amp;&amp; terraform fmt -check &amp;&amp; terraform validate
+terraform test     # tests/*.tftest.hcl use mock_provider "azurerm"</pre>
+<p>Expected: all tests pass. They assert <code>local_account_disabled</code>, overlay, OIDC and three zones, using mocked plan values.</p>
+<p><b>Cleanup:</b> none.</p></div>
+</main>
+</body>
+</html>

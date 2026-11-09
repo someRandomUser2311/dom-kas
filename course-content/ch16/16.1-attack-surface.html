@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>16.1 · The attack surface</title>
+<link rel="stylesheet" href="../content.css">
+</head>
+<body>
+<article class="lesson" data-id="16.1" data-chapter="16">
+<nav class="crumbs"><a href="../index.html">Course</a> / <a href="index.html">Chapter 16</a> / 16.1</nav>
+<header>
+  <p class="kicker">Chapter 16 · Lesson 16.1 · ~9 steps · ~11 min</p>
+  <h1>The attack surface</h1>
+  <p class="meta">You'll be able to name every point where untrusted code can enter Contoso's path from source to cluster, and the type of control for each.</p>
+</header>
+
+<section class="step" id="s1">
+  <h2>1. Your app is mostly other people's code</h2>
+  <div class="body">
+    <p><code>orders-api</code> is a few thousand lines of Contoso code. Its image also contains:</p>
+    <ul>
+      <li>a base image;</li>
+      <li>dozens of Go modules;</li>
+      <li>CA certificates and libraries.</li>
+    </ul>
+    <p>It was built by a pipeline running on an agent, using tasks and tools downloaded at build time. Every one of those is a way in. That's the <b>software supply chain</b>.</p>
+  </div>
+  <div class="widget" data-widget="supply-chain-map">A pipeline drawn as hops: source repo → dependencies → base image → build agent/tasks → registry → deploy → cluster. Clicking a hop shows a real-world-style attack (typosquatted package, compromised base image tag, a poisoned build tool, a re-pushed tag in the registry, a manifest pointing at an attacker's image) and the control for it.</div>
+  <aside class="coming" data-set="A">
+    <dl>
+      <dt>Windows/IIS admin</dt><dd>Like trusting every DLL and MSI you install, plus the build server that made them.</dd>
+      <dt>Linux admin</dt><dd>Like trusting your distro's package mirrors, signing keys and build farm. The same model applies to containers.</dd>
+      <dt>Developer (Compose)</dt><dd>Every <code>FROM</code> and every <code>go get</code> in your Dockerfile is a trust decision.</dd>
+      <dt>Other clouds</dt><dd>The same problem everywhere; only the tool names differ (ECR scanning, Artifact Analysis, Binary Authorization).</dd>
+    </dl>
+  </aside>
+</section>
+
+<section class="step" id="s2">
+  <h2>2. The hops</h2>
+  <table>
+    <tr><th>Hop</th><th>What can go wrong</th><th>Control (this chapter)</th></tr>
+    <tr><td>Dependencies</td><td>Malicious or vulnerable packages</td><td>Lock files, scanning, SBOM</td></tr>
+    <tr><td>Base image</td><td>Vulnerable or tampered base; moving tags</td><td>Minimal images, digest pinning, rebuilds (16.2)</td></tr>
+    <tr><td>Build</td><td>A compromised agent or task injects code</td><td>Ephemeral agents, pinned tasks, provenance (16.1, 15.6)</td></tr>
+    <tr><td>Registry</td><td>Tags overwritten; images pushed by the wrong identity</td><td>Locked tags, AcrPush scoped, signing (16.4)</td></tr>
+    <tr><td>Deploy</td><td>Manifests pointing at unapproved images</td><td>Admission policy and signature verification (16.4–16.5)</td></tr>
+  </table>
+</section>
+
+<section class="step" id="s3">
+  <h2>3. Match the attack</h2>
+  <div class="check" data-type="match">
+    <p class="q">Match each attack to the hop where it happens.</p>
+    <table class="pairs">
+      <tr><td>A typosquatted Go module (<code>github.com/gorila/mux</code>) added to go.mod</td><td>Dependencies</td></tr>
+      <tr><td><code>FROM node:20</code> silently starts pointing at an image with a new vulnerability</td><td>Base image</td></tr>
+      <tr><td>A self-hosted agent kept from a previous job modifies the next build</td><td>Build</td></tr>
+      <tr><td>Someone with AcrPush re-pushes <code>orders-api:1.4.2</code> with different content</td><td>Registry</td></tr>
+      <tr><td>A manifest is changed to use <code>docker.io/evil/orders-api</code></td><td>Deploy</td></tr>
+    </table>
+    <div class="explain">Each needs its own control. No single tool covers the whole chain.</div>
+  </div>
+</section>
+
+<section class="step" id="s4">
+  <h2>4. Provenance</h2>
+  <div class="body"><p><b>Provenance</b> is a signed record of <i>how</i> an artifact was built: which source commit, which pipeline, which builder. With it, a deploy can check not only "is this our image?" but "was it built from main by our pipeline?".</p></div>
+</section>
+
+<section class="step" id="s5">
+  <h2>5. SLSA in one picture</h2>
+  <div class="body">
+    <p><b>SLSA</b> (Supply-chain Levels for Software Artifacts) grades build integrity in levels:</p>
+    <ul>
+      <li>builds are scripted, and provenance exists;</li>
+      <li>builds run on a hosted build service, which signs the provenance;</li>
+      <li>builds are hardened and isolated from each other.</li>
+    </ul>
+    <p>Contoso aims for: pipeline-only builds, ephemeral agents, signed images, and provenance stored as an OCI referrer. That's roughly the middle level.</p>
+  </div>
+</section>
+
+<section class="step" id="s6">
+  <h2>6. Scanning isn't a one-time thing</h2>
+  <div class="body"><p>New vulnerabilities are published every day for code that was fine yesterday. Scan at build time, and <b>continuously</b> in the registry and the cluster (Defender for Containers). Rebuild regularly so fixes in the base image actually reach production.</p></div>
+</section>
+
+<section class="step" id="s7">
+  <h2>7. Signing isn't a safety certificate</h2>
+  <div class="body"><p>A signature proves <i>who</i> built the image and that it <i>wasn't changed</i>. It says nothing about whether the code is safe. A signed image can still have vulnerabilities. You need both scanning and signing.</p></div>
+</section>
+
+<section class="step" id="s8">
+  <h2>8. Contoso's target pipeline</h2>
+  <pre class="code" data-file="(Build stage outline)">test → build image → scan (fail on fixable HIGH/CRITICAL) → push → SBOM attach
+     → sign (Key Vault key) → deploy by digest → admission verifies signature + policies</pre>
+</section>
+
+<section class="step summary" id="s9">
+  <h2>Attack surface, sorted</h2>
+  <ul>
+    <li>Dependencies, base images, build, registry, deploy: each is a way in.</li>
+    <li>Controls: pin and scan, minimal bases, ephemeral builds, locked tags and signing, admission policy.</li>
+    <li>Provenance and SLSA describe how much you can trust a build.</li>
+    <li>Scanning is continuous; signing proves origin, not safety.</li>
+  </ul>
+</section>
+</article>
+</body>
+</html>

@@ -1,0 +1,268 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Checkpoint quiz · Azure Pipelines</title>
+<link rel="stylesheet" href="assets/styles.css">
+</head>
+<body data-page="quiz">
+
+<div class="focus-top">
+  <a class="icon-btn" href="chapter.html" aria-label="Exit quiz" title="Exit quiz">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M6 6l12 12M18 6 6 18"/></svg>
+  </a>
+  <div style="flex:1;position:relative">
+    <div class="streak-label" id="streak" style="position:absolute;top:-16px;left:0"></div>
+    <div class="progress"><span id="bar" style="width:0%"></span></div>
+  </div>
+  <span class="stat-pill" title="Hearts">❤️ <span id="hearts">5</span></span>
+</div>
+
+<main class="focus-body" id="q"></main>
+
+<div class="feedback-bar" id="fb">
+  <div class="feedback-inner">
+    <div class="fb-icon" id="fb-icon"></div>
+    <div class="fb-text"><div class="fb-title" id="fb-title"></div><div class="fb-body" id="fb-body"></div></div>
+    <a class="btn btn-ghost hidden" id="fb-theory" href="#">📖 View theory</a>
+    <button class="btn btn-lg btn-ghost" id="skip">Skip</button>
+    <button class="btn btn-lg btn-success" id="check" disabled>Check</button>
+  </div>
+</div>
+
+<script src="assets/app.js"></script>
+<script src="assets/yaml.js"></script>
+<script>
+const Q = [
+  { type: "mcq", topic: "Stages", title: "Which setting makes a stage start in parallel with the stage above it?",
+    opts: ["<code>parallel: true</code>", "<code>dependsOn: []</code>", "<code>condition: always()</code>", "<code>strategy: parallel</code>"], ans: 1,
+    why: "By default each stage depends on the previous one. An empty <code>dependsOn</code> list removes that implicit dependency.", theory: "lesson.html?l=ch07/l5" },
+  { type: "multi", topic: "Deployment jobs", title: "Select <u>all</u> statements that are true about <code>deployment:</code> jobs.",
+    opts: ["They record deployment history against an environment", "They check out the repository automatically", "They are blocked by approvals & checks configured on their environment", "They can use a <code>canary</code> strategy with <code>KubernetesManifest@1</code>", "They don't need an agent"], ans: [0, 2, 3],
+    whyEach: { 1: "Deployment jobs skip checkout by default. Add <code>- checkout: self</code>.", 4: "Like every job, they run on an agent from a pool." },
+    why: "Deployment jobs = history + environment checks + strategies. They do <b>not</b> check out code automatically.", theory: "lesson.html?l=ch07/l2" },
+  { type: "order", topic: "CI job", title: "Put the steps of a CI job in the right order.",
+    items: ["checkout: self", "npm ci", "npm test", "Docker@2 build", "Docker@2 push", "PublishPipelineArtifact (k8s manifests)"],
+    why: "Get the code, install deps, test (fail fast!), and only then build and push the image. Publishing the manifests lets the deploy stage use the exact files from this commit.", theory: "lesson.html?l=ch07/l1" },
+  { type: "fill", topic: "YAML", title: "Complete the pipeline so it deploys to the <code>prod</code> environment with a one-shot deployment.",
+    code: `pool:
+  vmImage: [[0]]
+
+stages:
+  - stage: Deploy
+    jobs:
+      - [[1]]: DeployWeb
+        [[2]]: prod
+        strategy:
+          [[3]]:
+            deploy:
+              steps:
+                - script: ./deploy.sh`,
+    ans: ["ubuntu-latest", "deployment", "environment", "runOnce"],
+    chips: ["job", "ubuntu-latest", "runOnce", "pool", "deployment", "rolling", "environment", "stage"],
+    why: "A <code>deployment</code> job targets an <code>environment</code> and needs a <code>strategy</code>; <code>runOnce</code> is the simplest.", theory: "lesson.html?l=ch07/l5" },
+  { type: "bug", topic: "Conditions", title: "This pipeline deployed a <b>broken build</b> to prod. Click the line that caused it.",
+    code: `stages:
+  - stage: Build
+    jobs:
+      - job: build
+        steps:
+          - script: npm test
+
+  - stage: DeployProd
+    dependsOn: Build
+    condition: eq(variables['Build.SourceBranch'], 'refs/heads/main')
+    jobs:
+      - deployment: deploy
+        environment: prod`, ans: 10,
+    why: "A custom condition <b>replaces</b> the default <code>succeeded()</code>. Fix: <code>and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))</code>.", theory: "lesson.html?l=ch07/l5" },
+  { type: "mcq", topic: "Service connections", title: "Which credential type should a new Azure Resource Manager service connection use?",
+    opts: ["Client secret with 24-month expiry", "Workload identity federation", "A personal access token (PAT)", "The subscription owner's username & password"], ans: 1,
+    why: "Federation uses short-lived OIDC tokens. There's no secret to store, leak or rotate.", theory: "lesson.html?l=ch07/l4" },
+  { type: "mcq", topic: "Images", title: "Why tag images with <code>$(Build.BuildId)</code> instead of <code>latest</code>?",
+    opts: ["<code>latest</code> is not allowed by ACR", "Each tag maps to exactly one pipeline run, so deployments are traceable and rollbacks are deterministic", "It makes images smaller", "AKS can only pull numeric tags"], ans: 1,
+    why: "Immutable, unique tags tell you exactly which build is running and let you roll back to a known version. <code>latest</code> changes underneath you.", theory: "lesson.html?l=ch07/l2" },
+  { type: "bug", topic: "Secrets", title: "Click the line that is a <b>security problem</b>.",
+    code: `variables:
+  imageName: orders-api
+  acrName: kqacr
+  dbPassword: 'S3cr3t-Pa55!'
+  tag: $(Build.BuildId)
+
+steps:
+  - script: ./migrate.sh
+    env:
+      DB_PASSWORD: $(dbPassword)`, ans: 4,
+    why: "A plaintext secret in YAML is in your Git history forever. Use a secret variable or a Key Vault-backed variable group instead.", theory: "lesson.html?l=ch07/l6" },
+];
+
+let i = 0, correct = 0, hearts = 5, streak = 0, answered = false, state = null;
+const qEl = document.getElementById("q");
+const fb = document.getElementById("fb"), checkBtn = document.getElementById("check");
+const keyLabel = n => String.fromCharCode(65 + n);
+
+function setReady(ok) { checkBtn.disabled = !ok; }
+
+function render() {
+  answered = false; state = null;
+  fb.className = "feedback-bar";
+  document.getElementById("fb-icon").textContent = "";
+  document.getElementById("fb-title").textContent = "";
+  document.getElementById("fb-body").textContent = "";
+  document.getElementById("fb-theory").classList.add("hidden");
+  document.getElementById("skip").classList.remove("hidden");
+  checkBtn.textContent = "Check"; checkBtn.className = "btn btn-lg btn-success"; setReady(false);
+  document.getElementById("bar").style.width = (i / Q.length * 100) + "%";
+  const q = Q[i];
+  let html = `<div class="q-kicker">Question ${i + 1} of ${Q.length} · ${q.topic}</div><div class="q-title">${q.title}</div>`;
+
+  if (q.type === "mcq" || q.type === "multi") {
+    if (q.type === "multi") html += `<p class="subtle" style="margin-top:-8px">Select all that apply.</p>`;
+    html += `<div class="options">${q.opts.map((o, k) => `<button class="option" data-k="${k}"><span class="key">${q.type === "multi" ? "☐" : keyLabel(k)}</span><span>${o}<span class="why hidden"></span></span></button>`).join("")}</div>`;
+    qEl.innerHTML = html;
+    state = new Set();
+    qEl.querySelectorAll(".option").forEach(b => b.onclick = () => {
+      if (answered) return;
+      const k = +b.dataset.k;
+      if (q.type === "mcq") { state = new Set([k]); qEl.querySelectorAll(".option").forEach(x => x.classList.toggle("selected", x === b)); }
+      else { state.has(k) ? state.delete(k) : state.add(k); b.classList.toggle("selected"); b.querySelector(".key").textContent = state.has(k) ? "☑" : "☐"; }
+      setReady(state.size > 0);
+    });
+  }
+
+  if (q.type === "order") {
+    state = q.items.map((_, k) => k).sort(() => Math.random() - .5);
+    if (state.every((v, k) => v === k)) state.reverse();
+    html += `<p class="subtle" style="margin-top:-8px">Drag the cards, or use the arrows.</p><ol class="order-list" id="ol"></ol>`;
+    qEl.innerHTML = html;
+    drawOrder();
+    setReady(true);
+  }
+
+  if (q.type === "fill") {
+    state = q.ans.map(() => null);
+    html += `<div id="code"></div><div class="chip-bank" id="bank">${q.chips.map(c => `<span class="chip mono" data-c="${c}">${c}</span>`).join("")}</div><p class="subtle" style="margin-top:10px">Click a chip to fill the next empty blank. Click a filled blank to clear it.</p>`;
+    qEl.innerHTML = html;
+    KQY.block(document.getElementById("code"), q.code, { title: "azure-pipelines.yml" });
+    const codeEl = document.getElementById("code");
+    codeEl.innerHTML = codeEl.innerHTML.replace(/\[\[(\d)\]\]/g, (_, n) => `<span class="blank" data-b="${n}">?</span>`);
+    function paintBlanks() {
+      codeEl.querySelectorAll(".blank").forEach(b => { const v = state[+b.dataset.b]; b.textContent = v || "?"; b.classList.toggle("filled", !!v); });
+      document.querySelectorAll("#bank .chip").forEach(c => c.classList.toggle("used", state.includes(c.dataset.c)));
+      setReady(state.every(Boolean));
+    }
+    document.getElementById("bank").onclick = e => {
+      const c = e.target.closest(".chip"); if (!c || answered) return;
+      const slot = state.indexOf(null); if (slot < 0) return;
+      state[slot] = c.dataset.c; paintBlanks();
+    };
+    codeEl.onclick = e => { const b = e.target.closest(".blank"); if (!b || answered) return; state[+b.dataset.b] = null; paintBlanks(); };
+    paintBlanks();
+  }
+
+  if (q.type === "bug") {
+    html += `<div id="code"></div><p class="subtle">Click one line, then press Check.</p>`;
+    qEl.innerHTML = html;
+    const el = document.getElementById("code");
+    KQY.block(el, q.code, { title: "azure-pipelines.yml", clickable: true });
+    el.onclick = e => {
+      const ln = e.target.closest(".ln"); if (!ln || answered) return;
+      el.querySelectorAll(".ln").forEach(l => l.classList.toggle("hl", l === ln));
+      state = +ln.dataset.line; setReady(true);
+    };
+  }
+}
+
+function drawOrder() {
+  const q = Q[i], ol = document.getElementById("ol");
+  ol.innerHTML = state.map((k, pos) => `<li class="order-item" draggable="true" data-pos="${pos}"><span class="grip">⋮⋮</span><span class="num">${pos + 1}</span><code>${q.items[k]}</code><span class="mv"><button data-mv="-1" aria-label="Move up">↑</button><button data-mv="1" aria-label="Move down">↓</button></span></li>`).join("");
+  let from = null;
+  ol.querySelectorAll(".order-item").forEach(li => {
+    li.addEventListener("dragstart", () => { from = +li.dataset.pos; li.classList.add("dragging"); });
+    li.addEventListener("dragend", () => li.classList.remove("dragging"));
+    li.addEventListener("dragover", e => e.preventDefault());
+    li.addEventListener("drop", e => { e.preventDefault(); if (answered) return; const to = +li.dataset.pos; const [m] = state.splice(from, 1); state.splice(to, 0, m); drawOrder(); });
+    li.querySelectorAll("[data-mv]").forEach(b => b.onclick = () => {
+      if (answered) return;
+      const p = +li.dataset.pos, t = p + +b.dataset.mv;
+      if (t < 0 || t >= state.length) return;
+      [state[p], state[t]] = [state[t], state[p]]; drawOrder();
+    });
+  });
+}
+
+function grade() {
+  const q = Q[i];
+  let ok = false;
+  if (q.type === "mcq") {
+    const k = [...state][0]; ok = k === q.ans;
+    qEl.querySelectorAll(".option").forEach(b => { const n = +b.dataset.k; if (n === q.ans) b.classList.add("correct"); else if (n === k) b.classList.add("wrong"); b.classList.remove("selected"); });
+  }
+  if (q.type === "multi") {
+    const want = new Set(q.ans);
+    ok = state.size === want.size && [...state].every(k => want.has(k));
+    qEl.querySelectorAll(".option").forEach(b => {
+      const n = +b.dataset.k; b.classList.remove("selected");
+      if (want.has(n)) b.classList.add("correct");
+      else if (state.has(n)) { b.classList.add("wrong"); const w = b.querySelector(".why"); if (q.whyEach && q.whyEach[n]) { w.innerHTML = q.whyEach[n]; w.classList.remove("hidden"); } }
+    });
+  }
+  if (q.type === "order") {
+    ok = state.every((v, k) => v === k);
+    document.querySelectorAll("#ol .order-item").forEach((li, pos) => li.classList.add(state[pos] === pos ? "correct" : "wrong"));
+  }
+  if (q.type === "fill") {
+    ok = state.every((v, k) => v === q.ans[k]);
+    document.querySelectorAll("#code .blank").forEach(b => { const n = +b.dataset.b; b.classList.add(state[n] === q.ans[n] ? "ok" : "bad"); if (state[n] !== q.ans[n]) b.textContent = `${state[n]} → ${q.ans[n]}`; });
+  }
+  if (q.type === "bug") {
+    ok = state === q.ans;
+    document.querySelectorAll("#code .ln").forEach(l => { l.classList.remove("hl"); const n = +l.dataset.line; if (n === q.ans) l.classList.add("hl-ok"); else if (n === state) l.classList.add("hl-bad"); });
+  }
+  return ok;
+}
+
+checkBtn.onclick = () => {
+  if (!answered) {
+    answered = true;
+    const ok = grade();
+    if (ok) { correct++; streak++; KQ.addXP(10); } else { hearts = Math.max(0, hearts - 1); streak = 0; }
+    document.getElementById("hearts").textContent = hearts;
+    document.getElementById("streak").textContent = streak >= 2 ? `${streak} in a row 🔥` : "";
+    fb.className = "feedback-bar " + (ok ? "is-correct" : "is-wrong");
+    document.getElementById("fb-icon").textContent = ok ? "✓" : "✕";
+    document.getElementById("fb-title").textContent = ok ? ["Nice!", "Exactly right!", "Spot on!"][i % 3] : "Not quite";
+    document.getElementById("fb-body").innerHTML = Q[i].why;
+    const th = document.getElementById("fb-theory"); th.href = Q[i].theory; th.classList.toggle("hidden", ok);
+    document.getElementById("skip").classList.add("hidden");
+    checkBtn.textContent = "Continue"; checkBtn.className = "btn btn-lg " + (ok ? "btn-success" : "btn-danger"); checkBtn.disabled = false;
+    document.getElementById("bar").style.width = ((i + 1) / Q.length * 100) + "%";
+  } else {
+    i++;
+    if (i < Q.length) { render(); window.scrollTo(0, 0); }
+    else finish();
+  }
+};
+document.getElementById("skip").onclick = () => { if (!answered) { hearts = Math.max(0, hearts - 1); document.getElementById("hearts").textContent = hearts; i++; i < Q.length ? render() : finish(); } };
+
+function finish() {
+  const pct = Math.round(correct / Q.length * 100);
+  KQ.store.set("quizScore", pct);
+  KQ.markDone("quiz");
+  document.getElementById("bar").style.width = "100%";
+  fb.className = "feedback-bar hidden";
+  qEl.innerHTML = `<div class="score-hero">
+    <div class="confetti">${pct >= 70 ? "🎉" : "💪"}</div>
+    <div class="kicker" style="margin-top:10px">Checkpoint quiz complete</div>
+    <div class="big">${correct}/${Q.length}</div>
+    <p class="muted">${pct >= 70 ? "You passed the checkpoint. Next: predict how a real pipeline run behaves." : "Below the 70% pass mark. Review the lessons linked in the feedback, then retry. Your best score counts."}</p>
+    <div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap;margin-top:16px">
+      <a class="btn btn-lg" href="quiz.html">↺ Retry</a>
+      <a class="btn btn-lg btn-primary" href="predict.html">Continue to “Predict the run” →</a>
+    </div></div>`;
+}
+render();
+</script>
+</body>
+</html>

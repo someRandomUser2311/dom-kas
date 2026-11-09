@@ -1,0 +1,225 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>3.2 · Steering pods: selectors, affinity, taints</title>
+<link rel="stylesheet" href="../content.css">
+</head>
+<body>
+<article class="lesson" data-id="3.2" data-chapter="3">
+<nav class="crumbs"><a href="../index.html">Course</a> / <a href="index.html">Chapter 3</a> / 3.2</nav>
+<header>
+  <p class="kicker">Chapter 3 · Lesson 3.2 · ~12 steps · ~16 min</p>
+  <h1>Steering pods: selectors, affinity, taints</h1>
+  <p class="meta">You'll be able to put pods on the right nodes, keep them off the wrong ones, spread them across zones, and read the scheduler's "why not" messages.</p>
+</header>
+
+<section class="step" id="s1">
+  <h2>1. Why steer at all?</h2>
+  <div class="body">
+    <p>By default the scheduler puts a pod on any node with room. Sometimes that's not enough:</p>
+    <ul>
+      <li>A GPU workload must land on GPU nodes, and nothing else should waste them.</li>
+      <li><code>orders-api</code>'s replicas should be in <b>different zones</b>, so one datacentre failure doesn't take them all.</li>
+      <li>System add-ons should stay on the system node pool (Chapter 4).</li>
+    </ul>
+    <p>There are four tools, from simple to precise.</p>
+  </div>
+  <div class="widget" data-widget="scheduler-sim">Four nodes with label chips and taint badges:
+    <ul>
+      <li><code>node-1</code>: zone-1</li>
+      <li><code>node-2</code>: zone-2</li>
+      <li><code>node-3</code>: zone-3</li>
+      <li><code>gpu-1</code>: zone-1, <code>gpu=true</code>, taint <code>gpu=true:NoSchedule</code></li>
+    </ul>
+    The learner edits a pod spec (nodeSelector, affinity, tolerations, topology spread) and presses "Schedule". Each node shows ✓ or ✗ with the reason; the pod lands on the chosen node or stays Pending with the real-style event message.</div>
+  <aside class="coming" data-set="A">
+    <dl>
+      <dt>Windows/IIS admin</dt><dd>Like failover-cluster preferred owners and anti-affinity class names for VMs, but declared per workload.</dd>
+      <dt>Linux admin</dt><dd>Like constraints in Nomad or Swarm placement preferences.</dd>
+      <dt>Developer (Compose)</dt><dd>Compose has <code>deploy.placement.constraints</code> in Swarm mode; this is the much richer version.</dd>
+      <dt>Other clouds</dt><dd>Same Kubernetes fields on EKS and GKE. Only the node label names differ; AKS uses <code>kubernetes.azure.com/…</code>.</dd>
+    </dl>
+  </aside>
+</section>
+
+<section class="step" id="s2">
+  <h2>2. nodeSelector: the simple filter</h2>
+  <div class="body">
+    <p><code>nodeSelector</code> lists node labels that must all match. A node without them is never chosen.</p>
+  </div>
+  <pre class="code" data-file="pod spec">spec:
+  nodeSelector:
+    kubernetes.io/os: linux
+    kubernetes.azure.com/agentpool: user</pre>
+</section>
+
+<section class="step" id="s3">
+  <h2>3. Node affinity: required and preferred</h2>
+  <div class="body">
+    <p><b>Node affinity</b> is nodeSelector with operators (<code>In</code>, <code>NotIn</code>, <code>Exists</code>, <code>Gt</code>…) and two strengths:</p>
+    <ul>
+      <li><code>requiredDuringSchedulingIgnoredDuringExecution</code>: a hard rule; no match means Pending.</li>
+      <li><code>preferredDuringSchedulingIgnoredDuringExecution</code>: a weighted wish; it's used if possible, ignored if not.</li>
+    </ul>
+    <p>"IgnoredDuringExecution" means that if a node's labels change later, running pods aren't moved.</p>
+  </div>
+  <pre class="code" data-file="pod spec">affinity:
+  nodeAffinity:
+    requiredDuringSchedulingIgnoredDuringExecution:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - key: gpu
+              operator: In
+              values: ["true"]</pre>
+</section>
+
+<section class="step" id="s4">
+  <h2>4. Taints and tolerations: keeping pods away</h2>
+  <div class="body">
+    <p>A <b>taint</b> on a node repels pods. Only pods with a matching <b>toleration</b> may be scheduled there.</p>
+    <p>Effects:</p>
+    <ul>
+      <li><code>NoSchedule</code>: no new pods without a toleration.</li>
+      <li><code>PreferNoSchedule</code>: avoid if possible.</li>
+      <li><code>NoExecute</code>: also evicts running pods that don't tolerate it.</li>
+    </ul>
+    <p>Our GPU node has <code>gpu=true:NoSchedule</code>, so ordinary pods stay off it.</p>
+  </div>
+  <pre class="code" data-file="pod spec">tolerations:
+  - key: gpu
+    operator: Equal
+    value: "true"
+    effect: NoSchedule</pre>
+</section>
+
+<section class="step" id="s5">
+  <h2>5. A toleration allows, it doesn't attract</h2>
+  <div class="body">
+    <p>This is the most common mistake. A toleration only says "I <i>may</i> go to tainted nodes". The scheduler can still put the pod on any untainted node.</p>
+    <p>To get a pod onto the GPU node <b>and only there</b>, you need both:</p>
+    <ul>
+      <li>a <b>toleration</b>, so it's allowed on the tainted node;</li>
+      <li><b>node affinity</b> (or nodeSelector) for <code>gpu=true</code>, so it isn't allowed anywhere else.</li>
+    </ul>
+  </div>
+  <div class="check" data-type="custom">
+    <p class="q">In the scheduler simulator, make the <code>train-model</code> pod land on <code>gpu-1</code>, and make sure it can never land on any other node.</p>
+    <div class="widget" data-widget="scheduler-sim">Success when the spec has a toleration for <code>gpu=true:NoSchedule</code> AND a required node affinity (or nodeSelector) on <code>gpu=true</code>. Feedback:
+      <ul>
+        <li><b>Toleration only:</b> "It landed on node-2. A toleration lets it in; it doesn't pull it there."</li>
+        <li><b>Affinity only:</b> "Pending: gpu-1 has a taint the pod doesn't tolerate."</li>
+      </ul></div>
+    <details class="solution"><summary>Solution</summary><pre>spec:
+  nodeSelector:
+    gpu: "true"
+  tolerations:
+    - key: gpu
+      operator: Equal
+      value: "true"
+      effect: NoSchedule</pre></details>
+    <div class="explain">Taints keep others out; affinity keeps this pod in. Dedicated node pools on AKS use exactly this pair.</div>
+  </div>
+</section>
+
+<section class="step" id="s6">
+  <h2>6. Pod anti-affinity: not next to each other</h2>
+  <div class="body">
+    <p><b>Pod affinity and anti-affinity</b> place pods relative to <i>other pods</i>, by label, within a <b>topology</b> such as a node (<code>kubernetes.io/hostname</code>) or a zone (<code>topology.kubernetes.io/zone</code>).</p>
+    <p>For example: "don't put two <code>orders-api</code> pods on the same node".</p>
+  </div>
+  <pre class="code" data-file="pod spec">affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          topologyKey: kubernetes.io/hostname
+          labelSelector:
+            matchLabels:
+              app: orders-api</pre>
+</section>
+
+<section class="step" id="s7">
+  <h2>7. Topology spread: even across zones</h2>
+  <div class="body">
+    <p>For spreading replicas evenly, <b><code>topologySpreadConstraints</code></b> is simpler and more precise than anti-affinity.</p>
+    <p><code>maxSkew: 1</code> means no zone may have more than one pod more than any other zone. <code>whenUnsatisfiable</code> sets what happens when it can't comply:</p>
+    <ul>
+      <li><code>DoNotSchedule</code>: hard.</li>
+      <li><code>ScheduleAnyway</code>: soft.</li>
+    </ul>
+  </div>
+  <pre class="code" data-file="k8s/base/deployment.yaml (pod spec)">topologySpreadConstraints:
+  - maxSkew: 1
+    topologyKey: topology.kubernetes.io/zone
+    whenUnsatisfiable: DoNotSchedule
+    labelSelector:
+      matchLabels:
+        app: orders-api</pre>
+  <aside class="more"><p>On AKS, nodes in a zonal node pool carry <code>topology.kubernetes.io/zone=westeurope-1</code> (and <code>-2</code>, <code>-3</code>). A non-zonal pool's nodes all report the same value. Spreading then does nothing useful, so create pools with zones (Chapter 4).</p></aside>
+</section>
+
+<section class="step" id="s8">
+  <h2>8. Reading "why Pending?"</h2>
+  <div class="check" data-type="diagnose">
+    <p class="q">The pod is Pending. Read the event: what's the fix?</p>
+    <pre class="output">Events:
+  Type     Reason            From               Message
+  ----     ------            ----               -------
+  Warning  FailedScheduling  default-scheduler  0/4 nodes are available: 1 node(s) had untolerated taint {gpu: true},
+           3 node(s) didn't match Pod's node affinity/selector. preemption: 0/4 nodes are available:
+           4 Preemption is not helpful for scheduling.</pre>
+    <ol class="options">
+      <li>Add more CPU to the nodes <span class="why">No node is listed as "Insufficient cpu".</span></li>
+      <li class="correct">Add a toleration for <code>gpu=true:NoSchedule</code>: the only node matching the affinity is tainted</li>
+      <li>Remove the node affinity <span class="why">Then it would run on a non-GPU node, which isn't what's wanted.</span></li>
+      <li>Restart the scheduler <span class="why">The scheduler is working fine; it's explaining itself.</span></li>
+    </ol>
+    <div class="explain">The scheduler's message counts the reasons per node. 3 fail the affinity and 1 fails the taint, so the pod needs the toleration.</div>
+  </div>
+</section>
+
+<section class="step" id="s9">
+  <h2>9. Priority and preemption, briefly</h2>
+  <div class="body">
+    <p>A <b>PriorityClass</b> gives pods a priority. When a high-priority pod can't fit, the scheduler may <b>preempt</b> (evict) lower-priority pods to make room.</p>
+    <p>AKS system components use the built-in <code>system-cluster-critical</code> and <code>system-node-critical</code> classes. Most apps don't need custom priorities.</p>
+  </div>
+</section>
+
+<section class="step" id="s10">
+  <h2>10. Which tool?</h2>
+  <div class="check" data-type="match">
+    <p class="q">Match each goal to the tool.</p>
+    <table class="pairs">
+      <tr><td>Only run on Linux nodes in the <code>user</code> pool</td><td>nodeSelector</td></tr>
+      <tr><td>Keep ordinary pods off the GPU nodes</td><td>Taint on the GPU nodes</td></tr>
+      <tr><td>Spread 6 replicas evenly over 3 zones</td><td>topologySpreadConstraints</td></tr>
+      <tr><td>Prefer, but don't require, nodes with fast disks</td><td>Preferred node affinity</td></tr>
+      <tr><td>Never put the cache and the API in the same zone</td><td>Pod anti-affinity with a zone topologyKey</td></tr>
+    </table>
+    <div class="explain">Node rules pick nodes by node labels; pod rules place pods relative to other pods; taints are the node saying no.</div>
+  </div>
+</section>
+
+<section class="step" id="s11">
+  <h2>11. The AKS system pool taint</h2>
+  <div class="body">
+    <p>On AKS you'll often taint the <b>system</b> node pool with <code>CriticalAddonsOnly=true:NoSchedule</code>. AKS system add-ons tolerate it; your apps don't, so they go to user pools.</p>
+    <p>You'll configure this in Chapter 4, and again in Terraform and Bicep in Chapters 12–13.</p>
+  </div>
+</section>
+
+<section class="step summary" id="s12">
+  <h2>Steering pods, sorted</h2>
+  <ul>
+    <li>nodeSelector for simple must-haves; node affinity for operators and required vs preferred.</li>
+    <li>Taints repel; a toleration only <i>allows</i>. For dedicated nodes, use a taint plus affinity.</li>
+    <li>Pod (anti-)affinity places pods relative to pods; topology spread balances across zones.</li>
+    <li><code>FailedScheduling</code> events count the reasons per node; read them.</li>
+  </ul>
+</section>
+</article>
+</body>
+</html>

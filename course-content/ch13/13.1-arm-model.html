@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>13.1 · Bicep &amp; ARM: the model</title>
+<link rel="stylesheet" href="../content.css">
+</head>
+<body>
+<article class="lesson" data-id="13.1" data-chapter="13">
+<nav class="crumbs"><a href="../index.html">Course</a> / <a href="index.html">Chapter 13</a> / 13.1</nav>
+<header>
+  <p class="kicker">Chapter 13 · Lesson 13.1 · ~11 steps · ~13 min</p>
+  <h1>Bicep &amp; ARM: the model</h1>
+  <p class="meta">You'll be able to explain how a Bicep file becomes Azure resources, why there's no state file, and how to deploy and inspect a deployment.</p>
+</header>
+
+<section class="step" id="s1">
+  <h2>1. Bicep compiles to ARM</h2>
+  <div class="body">
+    <p>Every Azure change, whether from the portal, the CLI, Terraform or Bicep, goes through <b>Azure Resource Manager (ARM)</b>. ARM accepts deployments described as <b>ARM JSON templates</b>.</p>
+    <p><b>Bicep</b> is a much friendlier language that <b>compiles</b> to that JSON. The <code>az</code> CLI compiles it for you when you deploy.</p>
+  </div>
+  <div class="widget" data-widget="bicep-compile">Two panes: a Bicep file (editable) and the ARM JSON it compiles to, updated live. Highlighting links each Bicep line to its JSON. Shows how <code>vnet.id</code> becomes <code>[resourceId(...)]</code> and how implicit <code>dependsOn</code> is generated.</div>
+  <aside class="coming" data-set="TF">
+    <dl>
+      <dt>Terraform</dt><dd>Terraform calls ARM's REST API resource by resource through the azurerm provider. Bicep instead hands ARM a whole template, and ARM does the ordering and execution. There's no <code>init</code> and no provider download: the "provider" is ARM itself.</dd>
+    </dl>
+  </aside>
+  <aside class="coming" data-set="C">
+    <dl>
+      <dt>Portal/ARM</dt><dd>If you've exported or edited ARM JSON, Bicep is the same model with a tenth of the syntax.</dd>
+      <dt>az CLI scripts</dt><dd>You keep using <code>az</code>; you just call <code>az deployment group create</code> with a file instead of many commands.</dd>
+      <dt>CloudFormation</dt><dd>Bicep ≈ CloudFormation's role on AWS: the provider's native template language.</dd>
+      <dt>Pulumi</dt><dd>Pulumi's azure-native provider uses the same ARM resource types and API versions.</dd>
+    </dl>
+  </aside>
+</section>
+
+<section class="step" id="s2">
+  <h2>2. No state file</h2>
+  <div class="body">
+    <p>Bicep keeps <b>no state</b>. When you deploy, ARM compares the template with what currently exists in the target scope, and creates or updates resources to match.</p>
+    <p>Azure itself is the source of truth. There's no state to lock, store, protect or lose.</p>
+  </div>
+  <div class="check" data-type="mcq">
+    <p class="q">Where does Bicep keep track of the resources it has deployed?</p>
+    <ol class="options">
+      <li>In a <code>.bicepstate</code> file <span class="why">There's no such file.</span></li>
+      <li>In a storage account backend <span class="why">That's Terraform.</span></li>
+      <li class="correct">Nowhere separately: ARM reads the current resources in Azure (plus deployment history)</li>
+      <li>In the Bicep registry <span class="why">Registries hold modules, not state.</span></li>
+    </ol>
+    <div class="explain">The trade-off: no state to manage, but also no memory of what you <i>removed</i> from the file. Lesson 13.7 explains why that matters.</div>
+  </div>
+</section>
+
+<section class="step" id="s3">
+  <h2>3. Resource types and API versions</h2>
+  <div class="body">
+    <p>Every resource is declared with its <b>type</b> and an <b>API version</b>: <code>'Microsoft.ContainerService/managedClusters@2024-09-01'</code>.</p>
+    <p>The API version fixes which properties exist and what they mean. New AKS features appear in new API versions, often the day they launch. You choose when to move up.</p>
+  </div>
+  <pre class="code" data-file="main.bicep">resource vnet 'Microsoft.Network/virtualNetworks@2024-05-01' = {
+  name: 'vnet-orders-dev'
+  location: resourceGroup().location
+  properties: {
+    addressSpace: { addressPrefixes: [ '10.20.0.0/16' ] }
+  }
+}</pre>
+</section>
+
+<section class="step" id="s4">
+  <h2>4. Deploying</h2>
+  <div class="body"><p>A deployment targets a <b>scope</b>, usually a resource group. The parameters file supplies values per environment.</p></div>
+  <pre class="code" data-file="terminal">az deployment group create \
+  --resource-group rg-orders-dev \
+  --template-file main.bicep \
+  --parameters main.dev.bicepparam \
+  --name orders-$(date +%Y%m%d%H%M)</pre>
+</section>
+
+<section class="step" id="s5">
+  <h2>5. Deployment history</h2>
+  <div class="body"><p>Every deployment is recorded on its scope, with its template, parameters (secure ones hidden), outputs and status. That's your audit trail: <code>az deployment group list -g rg-orders-dev -o table</code>, or "Deployments" in the portal.</p></div>
+  <pre class="output">$ az deployment group list -g rg-orders-dev --query "[].{name:name, state:properties.provisioningState, time:properties.timestamp}" -o table
+Name                  State      Time
+--------------------  ---------  --------------------------------
+orders-202611051410   Succeeded  2026-11-05T14:18:42.11+00:00
+orders-202611041022   Failed     2026-11-04T10:24:03.57+00:00</pre>
+</section>
+
+<section class="step" id="s6">
+  <h2>6. Preview with what-if</h2>
+  <div class="body"><p><code>what-if</code> asks ARM what a deployment <i>would</i> change, without changing anything. It's Bicep's equivalent of a plan. Lesson 13.7 covers its output in detail.</p></div>
+  <pre class="code" data-file="terminal">az deployment group what-if -g rg-orders-dev -f main.bicep -p main.dev.bicepparam</pre>
+</section>
+
+<section class="step" id="s7">
+  <h2>7. Terraform → Bicep</h2>
+  <div class="check" data-type="match">
+    <p class="q">Match each Terraform concept to its Bicep counterpart.</p>
+    <table class="pairs">
+      <tr><td><code>terraform plan</code></td><td><code>az deployment group what-if</code></td></tr>
+      <tr><td><code>terraform apply</code></td><td><code>az deployment group create</code></td></tr>
+      <tr><td>State file</td><td>None: ARM reads Azure directly</td></tr>
+      <tr><td><code>.tfvars</code></td><td><code>.bicepparam</code></td></tr>
+      <tr><td>Provider version</td><td>Per-resource API version</td></tr>
+    </table>
+    <div class="explain">The biggest difference is what happens when you delete something from the file. Keep reading.</div>
+  </div>
+</section>
+
+<section class="step" id="s8">
+  <h2>8. Tooling</h2>
+  <ul>
+    <li>The Bicep CLI comes with <code>az</code> (<code>az bicep install</code> / <code>upgrade</code>), or is available standalone.</li>
+    <li>The VS Code Bicep extension gives completion, type checking for every resource and API version, and the linter.</li>
+    <li><code>az bicep build -f main.bicep</code> shows the ARM JSON; <code>az bicep decompile</code> turns existing ARM JSON into Bicep.</li>
+  </ul>
+</section>
+
+<section class="step" id="s9">
+  <h2>9. Day-zero Azure support</h2>
+  <div class="body"><p>Because Bicep uses ARM types directly, any new resource property is usable as soon as its API version ships. You never wait for a provider release. The VS Code extension may warn that a type isn't in its local schema yet, but the deployment works.</p></div>
+</section>
+
+<section class="step" id="s10">
+  <h2>10. Contoso's layout</h2>
+  <pre class="code" data-file="infra/bicep/">infra/bicep/
+├─ main.bicep              # the platform for one environment
+├─ modules/
+│  ├─ network.bicep
+│  ├─ aks.bicep
+│  └─ identity.bicep
+├─ main.dev.bicepparam
+├─ main.prod.bicepparam
+└─ bicepconfig.json        # linter rules, registry aliases</pre>
+</section>
+
+<section class="step summary" id="s11">
+  <h2>The model, sorted</h2>
+  <ul>
+    <li>Bicep → ARM JSON → ARM deploys it; every resource has type@apiVersion.</li>
+    <li>No state file: Azure is the source of truth; deployment history is the audit trail.</li>
+    <li><code>what-if</code> previews; <code>az deployment group create</code> deploys with a <code>.bicepparam</code>.</li>
+    <li>New Azure features are available immediately through new API versions.</li>
+  </ul>
+</section>
+</article>
+</body>
+</html>

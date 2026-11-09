@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>KubeQuest · Home</title>
+<link rel="stylesheet" href="assets/styles.css">
+</head>
+<body data-page="home">
+<header id="topbar"></header>
+
+<main class="page">
+  <div class="with-rail">
+    <div>
+      <div class="kicker">Good evening</div>
+      <h1 style="margin-top:4px">Continue learning</h1>
+
+      <div class="card hero-card" style="margin-top:16px">
+        <div class="hero-art">🚀</div>
+        <div>
+          <span class="badge badge-accent">Chapter 7 · DevOps track</span>
+          <h2 style="margin:10px 0 4px">Azure Pipelines: CI/CD to AKS</h2>
+          <p class="muted" style="margin-bottom:12px">Next up: <strong id="next-title">Anatomy of azure-pipelines.yml</strong></p>
+          <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px">
+            <div class="progress" style="flex:1"><span id="hero-progress" style="width:10%"></span></div>
+            <span class="subtle" id="hero-pct">10%</span>
+            <span class="subtle">· ~2h 40m left</span>
+          </div>
+          <div style="display:flex;gap:10px;flex-wrap:wrap">
+            <a class="btn btn-primary btn-lg" id="resume-btn" href="lesson.html?l=ch07/l2">Resume lesson →</a>
+            <a class="btn btn-lg" href="chapter.html">Chapter overview</a>
+          </div>
+        </div>
+      </div>
+
+      <h2>Your course map</h2>
+      <p class="muted">Kubernetes → AKS → DevOps → infrastructure as code → security. Every lesson runs in your browser, so you never need an Azure subscription. Optional “Try it locally” boxes use a free <code>kind</code> cluster on your machine.</p>
+
+      <div class="chapter-map" id="chapter-map"></div>
+    </div>
+
+    <aside class="rail">
+      <div class="card">
+        <div class="card-title">🔥 12-day streak</div>
+        <div class="week">
+          <div class="day on"><i>✓</i>M</div>
+          <div class="day on"><i>✓</i>T</div>
+          <div class="day on"><i>✓</i>W</div>
+          <div class="day on"><i>✓</i>T</div>
+          <div class="day on today"><i>✓</i>F</div>
+          <div class="day today"><i></i>S</div>
+          <div class="day"><i></i>S</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">This week</div>
+        <div style="display:flex;align-items:baseline;gap:8px"><span style="font-size:28px;font-weight:800">410</span><span class="subtle">XP · 3h 12m practice</span></div>
+        <div class="bars">
+          <span class="on" style="height:45%"></span><span class="on" style="height:70%"></span><span class="on" style="height:30%"></span><span class="on" style="height:90%"></span><span class="on" style="height:55%"></span><span style="height:8%"></span><span style="height:8%"></span>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">🧪 Local lab (optional)</div>
+        <div class="env-row"><span class="dot warn"></span>kind cluster <span class="mono">3 workers + gpu</span></div>
+        <div class="env-row"><span class="dot warn"></span>Local registry <span class="mono">localhost:5001</span></div>
+        <p class="subtle" style="margin:10px 0 0">Not needed for any graded work. Set it up in lesson 0.6 to run the “Try it locally” boxes.</p>
+      </div>
+
+      <div class="card">
+        <div class="card-title">🎯 Skills mastered</div>
+        <div class="skill-list">
+          <span class="badge badge-success">kubectl</span><span class="badge badge-success">Deployments</span><span class="badge badge-success">Services</span><span class="badge badge-success">Probes</span><span class="badge badge-success">AKS node pools</span><span class="badge badge-accent">Pipelines YAML</span><span class="badge">Ingress</span><span class="badge">Network policy</span>
+        </div>
+      </div>
+    </aside>
+  </div>
+</main>
+
+<script src="assets/app.js"></script>
+<script src="content/course.js"></script>
+<script>
+  (function renderMap() {
+    const esc = KQ.escapeHtml, pct = KQ.chapterProgress();
+    document.getElementById("chapter-map").innerHTML = COURSE.parts.map(part =>
+      `<div class="chapter-group-title">${esc(part)}</div>` + COURSE.chapters.filter(c => c.part === part).map(c => {
+        const body = `<span class="ch-num">${c.num}</span><span class="ch-body"><div class="ch-title">${esc(c.title)}</div><div class="ch-sub">${esc(c.lessons)}${c.optional ? " · optional" : ""}</div></span>`;
+        return c.built
+          ? `<a class="chapter-row current" href="${c.href}">${body}<span class="badge badge-accent">${pct >= 100 ? "✓ Completed" : pct ? pct + "% · In progress" : "Start"}</span></a>`
+          : `<div class="chapter-row locked">${body}<span class="badge">Planned</span></div>`;
+      }).join("")).join("");
+  })();
+  document.addEventListener("DOMContentLoaded", () => {
+    const pct = Math.max(KQ.chapterProgress(), 0);
+    document.getElementById("hero-progress").style.width = pct + "%";
+    document.getElementById("hero-pct").textContent = pct + "%";
+    const next = KQ.ORDER.find(i => !KQ.isDone(i.id)) || KQ.ORDER[KQ.ORDER.length - 1];
+    document.getElementById("next-title").textContent = next.title;
+    const r = document.getElementById("resume-btn");
+    r.href = next.href;
+    r.textContent = (pct === 0 ? "Start chapter" : "Resume") + " →";
+  });
+</script>
+</body>
+</html>

@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>15.1 · Kubernetes RBAC</title>
+<link rel="stylesheet" href="../content.css">
+</head>
+<body>
+<article class="lesson" data-id="15.1" data-chapter="15">
+<nav class="crumbs"><a href="../index.html">Course</a> / <a href="index.html">Chapter 15</a> / 15.1</nav>
+<header>
+  <p class="kicker">Chapter 15 · Lesson 15.1 · ~13 steps · ~16 min</p>
+  <h1>Kubernetes RBAC</h1>
+  <p class="meta">You'll be able to write Roles and bindings that grant exactly what's needed, understand how scope works, and check any permission with <code>kubectl auth can-i</code>.</p>
+</header>
+
+<section class="step" id="s1">
+  <h2>1. Why native RBAC still matters</h2>
+  <div class="body">
+    <p>Azure RBAC (lesson 5.5) covers people and pipelines on AKS. Kubernetes' own RBAC is still needed for:</p>
+    <ul>
+      <li><b>ServiceAccounts</b>: identities of pods and in-cluster tools such as operators and CI agents;</li>
+      <li>custom, fine-grained permissions the four built-in Azure roles don't express;</li>
+      <li>clusters that use Entra ID authentication with Kubernetes RBAC authorization.</li>
+    </ul>
+    <p>Kubernetes RBAC is <b>allow-only</b>, like NetworkPolicy: no rule means no access.</p>
+  </div>
+  <aside class="coming" data-set="A">
+    <dl>
+      <dt>Windows/IIS admin</dt><dd>Roles are like permission sets on an OU; bindings are like adding a group to it. There's no "Deny" entry: if nothing grants it, it's denied.</dd>
+      <dt>Linux admin</dt><dd>Like sudoers rules: a subject, the allowed commands (verbs) and the objects (resources).</dd>
+      <dt>Developer (Compose)</dt><dd>Docker has no per-API permissions; this is how a pod's ServiceAccount is limited.</dd>
+      <dt>Other clouds</dt><dd>The same Kubernetes RBAC on EKS and GKE; only the human identity mapping differs.</dd>
+    </dl>
+  </aside>
+</section>
+
+<section class="step" id="s2">
+  <h2>2. A Role: rules</h2>
+  <div class="body"><p>A <b>Role</b> lists rules, each made of <code>apiGroups</code> + <code>resources</code> + <code>verbs</code>. Core resources (pods, services, configmaps) are in the group <code>""</code>; Deployments are in <code>apps</code>.</p></div>
+  <pre class="code" data-file="rbac/deployer-role.yaml">apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: deployer
+  namespace: orders
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+  - apiGroups: [""]
+    resources: ["services", "configmaps"]
+    verbs: ["get", "list", "create", "update", "patch"]</pre>
+</section>
+
+<section class="step" id="s3">
+  <h2>3. A RoleBinding: who gets it</h2>
+  <pre class="code" data-file="rbac/deployer-binding.yaml">apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: deployer
+  namespace: orders
+subjects:
+  - kind: ServiceAccount
+    name: deployer
+    namespace: ci
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: deployer</pre>
+  <div class="body"><p>Subjects can be <code>ServiceAccount</code>s, <code>User</code>s or <code>Group</code>s (with Entra ID, groups are identified by their object IDs). <code>roleRef</code> can't be changed after creation; recreate the binding instead.</p></div>
+</section>
+
+<section class="step" id="s4">
+  <h2>4. Role vs ClusterRole, RoleBinding vs ClusterRoleBinding</h2>
+  <table>
+    <tr><th></th><th>Defined where</th><th>Grants where</th></tr>
+    <tr><td>Role + RoleBinding</td><td>One namespace</td><td>That namespace</td></tr>
+    <tr><td>ClusterRole + <b>RoleBinding</b></td><td>Cluster-wide definition</td><td><b>Only the RoleBinding's namespace</b></td></tr>
+    <tr><td>ClusterRole + ClusterRoleBinding</td><td>Cluster-wide</td><td><b>Every namespace</b>, plus cluster-scoped resources</td></tr>
+  </table>
+  <div class="body"><p>Binding a reusable ClusterRole (like the built-in <code>edit</code> or <code>view</code>) with a RoleBinding is a common, safe pattern. A ClusterRoleBinding is rarely what an app or pipeline needs.</p></div>
+</section>
+
+<section class="step" id="s5">
+  <h2>5. Grant the deployer</h2>
+  <div class="check" data-type="custom">
+    <p class="q">Give ServiceAccount <code>ci/deployer</code> the rights to manage Deployments (get, list, watch, create, update, patch) <b>only in namespace <code>orders</code></b>.</p>
+    <div class="widget" data-widget="rbac-eval">An RBAC editor plus a test table. Success when these all hold:
+      <ul>
+        <li><code>patch deployments -n orders</code>: allow</li>
+        <li><code>patch deployments -n payments</code>: deny</li>
+        <li><code>delete deployments -n orders</code>: deny</li>
+        <li><code>get secrets -n orders</code>: deny</li>
+        <li><code>create clusterroles</code>: deny</li>
+      </ul>
+      Each result shows the rule and binding that granted it, or "no rule".</div>
+    <div class="explain">A Role in <code>orders</code> plus a RoleBinding for the ServiceAccount from namespace <code>ci</code>.</div>
+  </div>
+</section>
+
+<section class="step" id="s6">
+  <h2>6. The wildcard that over-grants</h2>
+  <div class="check" data-type="tapline" data-match="resources: [&quot;*&quot;]">
+    <p class="q">This Role was meant to let the deployer manage the app. Tap the line that makes it far too powerful.</p>
+    <pre class="code" data-file="rbac/deployer-role.yaml (rules)">rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list", "patch"]
+  - apiGroups: [""]
+    resources: ["*"]
+    verbs: ["get", "list", "create", "update", "patch"]</pre>
+    <div class="explain"><code>resources: ["*"]</code> in the core group includes <b>secrets</b> and <b>pods/exec</b>, and with <code>create</code> it allows creating pods that mount any secret or ServiceAccount in the namespace. Always list resources explicitly.</div>
+  </div>
+</section>
+
+<section class="step" id="s7">
+  <h2>7. Dangerous permissions</h2>
+  <div class="body">
+    <p>Some permissions are much stronger than they look:</p>
+    <ul>
+      <li><code>create pods</code>: run anything as any ServiceAccount in the namespace, and mount its secrets.</li>
+      <li><code>get/list secrets</code>: read every credential in the namespace.</li>
+      <li><code>pods/exec</code>: a shell in any pod, with its identity.</li>
+      <li><code>escalate</code>, <code>bind</code>, <code>impersonate</code>: grant yourself more.</li>
+      <li>Anything cluster-wide on <code>nodes</code>, <code>clusterroles</code>, <code>validatingwebhookconfigurations</code>.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="step" id="s8">
+  <h2>8. Check with <code>auth can-i</code></h2>
+  <div class="body"><p><code>kubectl auth can-i &lt;verb&gt; &lt;resource&gt;</code> asks the API server. Add <code>--as</code> to test another subject; impersonation itself needs permission. <code>--list</code> shows everything.</p></div>
+  <div class="check" data-type="command">
+    <p class="q">Check whether ServiceAccount <code>deployer</code> in namespace <code>ci</code> can delete Deployments in namespace <code>orders</code>.</p>
+    <p class="answer"><code>kubectl auth can-i delete deployments -n orders --as=system:serviceaccount:ci:deployer</code></p>
+    <p class="accept">Also accepted: <code>--namespace</code>; <code>deployment</code>/<code>deploy</code>; <code>--as system:serviceaccount:ci:deployer</code>.</p>
+    <div class="explain">Expected answer: <code>no</code>. The Role doesn't include <code>delete</code>.</div>
+  </div>
+</section>
+
+<section class="step" id="s9">
+  <h2>9. ServiceAccount hygiene</h2>
+  <div class="body">
+    <ul>
+      <li>Every app gets its own ServiceAccount (it already has one, for workload identity, lesson 5.6).</li>
+      <li>Most apps need <b>no</b> Kubernetes API access at all. Set <code>automountServiceAccountToken: false</code> on the pod, unless the app calls the API or uses workload identity, which needs its own projected token and still works.</li>
+      <li>Never grant the <code>default</code> ServiceAccount anything.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="step" id="s10">
+  <h2>10. Built-in ClusterRoles</h2>
+  <table>
+    <tr><th>ClusterRole</th><th>Bound with a RoleBinding gives</th></tr>
+    <tr><td><code>view</code></td><td>Read most objects (no secrets)</td></tr>
+    <tr><td><code>edit</code></td><td>Create and change most objects, including secrets and pods/exec (no RBAC changes)</td></tr>
+    <tr><td><code>admin</code></td><td>Everything in the namespace, including Roles and RoleBindings</td></tr>
+    <tr><td><code>cluster-admin</code></td><td>Everything, everywhere. Never for apps or pipelines</td></tr>
+  </table>
+</section>
+
+<section class="step" id="s11">
+  <h2>11. Audit existing access</h2>
+  <pre class="code" data-file="terminal">kubectl get rolebindings,clusterrolebindings -A -o wide | grep -E "cluster-admin|system:serviceaccount"
+kubectl auth can-i --list --as=system:serviceaccount:ci:deployer -n orders</pre>
+  <div class="body"><p>Tools like <code>rbac-lookup</code> or <code>kubectl-who-can</code> answer "who can read secrets in orders?" Run such an audit regularly.</p></div>
+</section>
+
+<section class="step" id="s12">
+  <h2>12. RBAC in Git</h2>
+  <div class="body"><p>Roles and bindings are YAML: keep them in <code>k8s/rbac/</code>, reviewed in PRs, applied by the platform pipeline. A binding added by hand during an incident should be removed, or written into Git, the same day.</p></div>
+</section>
+
+<section class="step summary" id="s13">
+  <h2>Kubernetes RBAC, sorted</h2>
+  <ul>
+    <li>Rules = apiGroups + resources + verbs; allow-only.</li>
+    <li>A ClusterRole bound by a RoleBinding is namespace-scoped; ClusterRoleBindings are cluster-wide. Rarely needed.</li>
+    <li>Avoid wildcards; watch create pods, secrets, exec, escalate, bind, impersonate.</li>
+    <li><code>kubectl auth can-i … --as</code> to verify; one SA per app; no automounted tokens unless needed.</li>
+  </ul>
+</section>
+</article>
+</body>
+</html>

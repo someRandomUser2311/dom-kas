@@ -1,0 +1,210 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>10.3 · Helm charts</title>
+<link rel="stylesheet" href="../content.css">
+</head>
+<body>
+<article class="lesson" data-id="10.3" data-chapter="10">
+<nav class="crumbs"><a href="../index.html">Course</a> / <a href="index.html">Chapter 10</a> / 10.3</nav>
+<header>
+  <p class="kicker">Chapter 10 · Lesson 10.3 · ~13 steps · ~16 min</p>
+  <h1>Helm charts</h1>
+  <p class="meta">You'll be able to read and write a small Helm chart, use the template functions that matter, and preview the rendered manifests before installing.</p>
+</header>
+
+<section class="step" id="s1">
+  <h2>1. A chart is a folder</h2>
+  <pre class="code" data-file="charts/orders-api/">charts/orders-api/
+├─ Chart.yaml            # name, chart version, appVersion
+├─ values.yaml           # default settings
+├─ templates/
+│  ├─ _helpers.tpl       # reusable snippets (names, labels)
+│  ├─ deployment.yaml
+│  ├─ service.yaml
+│  ├─ hpa.yaml
+│  └─ NOTES.txt          # printed after install
+└─ .helmignore</pre>
+  <div class="body"><p>Helm renders the files in <code>templates/</code> with the <b>values</b>, then sends the resulting YAML to the cluster.</p></div>
+  <aside class="coming" data-set="A">
+    <dl>
+      <dt>Windows/IIS admin</dt><dd>A chart is like an MSI with a properties file: one package, configurable at install, upgradable and uninstallable.</dd>
+      <dt>Linux admin</dt><dd>Think apt/rpm packages with Jinja-like templates (Go templates here) and a values file.</dd>
+      <dt>Developer (Compose)</dt><dd>Like a Compose file with <code>${VARIABLES}</code>, but much more powerful, and with install history.</dd>
+      <dt>Other clouds</dt><dd>Helm is the same everywhere. Many vendors ship their Kubernetes software as Helm charts.</dd>
+    </dl>
+  </aside>
+</section>
+
+<section class="step" id="s2">
+  <h2>2. Chart.yaml</h2>
+  <pre class="code" data-file="charts/orders-api/Chart.yaml">apiVersion: v2
+name: orders-api
+description: Contoso Orders API
+type: application
+version: 0.3.0        # the chart's own version
+appVersion: "1.4.2"   # the app version it deploys by default</pre>
+</section>
+
+<section class="step" id="s3">
+  <h2>3. values.yaml</h2>
+  <pre class="code" data-file="charts/orders-api/values.yaml">replicaCount: 2
+
+image:
+  repository: contosoacr.azurecr.io/orders-api
+  tag: ""             # empty = use the chart's appVersion
+
+resources:
+  requests: { cpu: 250m, memory: 256Mi }
+  limits:   { memory: 512Mi }
+
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 10
+
+logLevel: info</pre>
+</section>
+
+<section class="step" id="s4">
+  <h2>4. A template</h2>
+  <div class="body">
+    <p>Inside <code>{{ }}</code>, <code>.Values</code> is the merged values, <code>.Chart</code> is Chart.yaml, and <code>.Release</code> is the install's name and namespace.</p>
+    <p>A <code>-</code> inside the braces (<code>{{-</code>) trims whitespace.</p>
+  </div>
+  <pre class="code" data-file="templates/deployment.yaml">apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "orders-api.fullname" . }}
+  labels:
+    {{- include "orders-api.labels" . | nindent 4 }}
+spec:
+  {{- if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "orders-api.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "orders-api.selectorLabels" . | nindent 8 }}
+    spec:
+      containers:
+        - name: api
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          env:
+            - name: LOG_LEVEL
+              value: {{ .Values.logLevel | quote }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}</pre>
+</section>
+
+<section class="step" id="s5">
+  <h2>5. Find the replicas</h2>
+  <div class="check" data-type="tapline" data-match="replicas: {{ .Values.replicaCount }}">
+    <p class="q">Tap the line that sets the number of replicas, and notice when it's skipped.</p>
+    <div class="explain"><code>replicas: {{ .Values.replicaCount }}</code>, but only when autoscaling is <b>off</b>. With the HPA on, the chart leaves <code>replicas</code> out so the HPA owns it (lesson 3.5).</div>
+  </div>
+</section>
+
+<section class="step" id="s6">
+  <h2>6. The functions you'll use most</h2>
+  <table>
+    <tr><th>Function</th><th>Example</th><th>Why</th></tr>
+    <tr><td><code>default</code></td><td><code>{{ .Values.image.tag | default .Chart.AppVersion }}</code></td><td>A fallback when a value is empty</td></tr>
+    <tr><td><code>quote</code></td><td><code>{{ .Values.logLevel | quote }}</code></td><td>Keep strings as strings (remember lesson 0.1)</td></tr>
+    <tr><td><code>toYaml</code> + <code>nindent</code></td><td><code>{{- toYaml .Values.resources | nindent 12 }}</code></td><td>Insert a whole block at the right indentation</td></tr>
+    <tr><td><code>if</code> / <code>range</code></td><td><code>{{- range .Values.extraEnv }}</code></td><td>Optional sections and lists</td></tr>
+    <tr><td><code>required</code></td><td><code>{{ required "image.repository is required" .Values.image.repository }}</code></td><td>Fail early with a clear message</td></tr>
+  </table>
+</section>
+
+<section class="step" id="s7">
+  <h2>7. Write an expression</h2>
+  <div class="check" data-type="fill">
+    <p class="q">The ConfigMap must hold the feature flag as the <b>string</b> <code>"true"</code> or <code>"false"</code>. Complete the expression.</p>
+    <pre class="code" data-file="templates/configmap.yaml">data:
+  FEATURE_EXPRESS_SHIPPING: {{ .Values.features.expressShipping | <span class="blank">?</span> }}</pre>
+    <ul class="chips">
+      <li class="correct"><code>quote</code></li>
+      <li><code>toYaml</code> <span class="why">This would output an unquoted <code>true</code>, a boolean that ConfigMap data rejects.</span></li>
+      <li><code>default</code> <span class="why"><code>default</code> needs an argument and doesn't quote.</span></li>
+      <li><code>nindent 2</code> <span class="why">Indentation doesn't change the type.</span></li>
+    </ul>
+    <div class="explain">ConfigMap values must be strings. <code>quote</code> wraps the rendered value in double quotes.</div>
+  </div>
+</section>
+
+<section class="step" id="s8">
+  <h2>8. Helpers</h2>
+  <div class="body"><p><code>_helpers.tpl</code> defines named snippets with <code>define</code>, used with <code>include</code>. Every resource then gets identical names and labels, and the selector labels stay stable across upgrades.</p></div>
+  <pre class="code" data-file="templates/_helpers.tpl">{{- define "orders-api.fullname" -}}
+{{ .Release.Name }}
+{{- end }}
+
+{{- define "orders-api.selectorLabels" -}}
+app.kubernetes.io/name: {{ .Chart.Name }}
+app.kubernetes.io/instance: {{ .Release.Name }}
+{{- end }}
+
+{{- define "orders-api.labels" -}}
+{{ include "orders-api.selectorLabels" . }}
+app.kubernetes.io/version: {{ .Values.image.tag | default .Chart.AppVersion | quote }}
+app.kubernetes.io/managed-by: {{ .Release.Service }}
+{{- end }}</pre>
+</section>
+
+<section class="step" id="s9">
+  <h2>9. Render without installing</h2>
+  <div class="body"><p><code>helm template</code> renders locally and prints the YAML, with no cluster needed. <code>helm lint</code> checks the chart. Use both in CI.</p></div>
+  <pre class="code" data-file="terminal">helm lint charts/orders-api
+helm template orders-api charts/orders-api -f values-prod.yaml --set image.tag=1.4.2 | less</pre>
+  <div class="widget" data-widget="helm-lite">The chart's templates and <code>values.yaml</code> on the left (values editable), rendered manifests on the right. Changing <code>autoscaling.enabled</code>, <code>replicaCount</code> or <code>image.tag</code> re-renders live; errors from <code>required</code> show inline.</div>
+</section>
+
+<section class="step" id="s10">
+  <h2>10. Predict the render</h2>
+  <div class="check" data-type="predict">
+    <p class="q">With the default <code>values.yaml</code>, plus <code>--set image.tag=""</code> and <code>--set autoscaling.enabled=false</code>, what do the image and replicas render as?</p>
+    <ol class="options">
+      <li class="correct"><code>image: "contosoacr.azurecr.io/orders-api:1.4.2"</code> and <code>replicas: 2</code></li>
+      <li><code>image: "contosoacr.azurecr.io/orders-api:"</code> and no replicas <span class="why"><code>default</code> treats an empty string as empty, so it falls back to appVersion; with autoscaling off, replicas is rendered.</span></li>
+      <li><code>image: …:latest</code> and <code>replicas: 2</code> <span class="why">Nothing adds <code>latest</code>.</span></li>
+      <li>A render error <span class="why">Both values are valid.</span></li>
+    </ol>
+    <div class="explain"><code>default</code> replaces empty values (<code>""</code>, <code>0</code>, <code>false</code>, null). That's handy here, and a trap when <code>0</code> or <code>false</code> is a real value you want.</div>
+  </div>
+</section>
+
+<section class="step" id="s11">
+  <h2>11. Values per environment</h2>
+  <pre class="code" data-file="values-prod.yaml">autoscaling:
+  minReplicas: 4
+  maxReplicas: 20
+resources:
+  requests: { cpu: 500m, memory: 512Mi }
+  limits:   { memory: 1Gi }
+logLevel: warn</pre>
+  <div class="body"><p>Later <code>-f</code> files and <code>--set</code> override earlier ones. Maps are merged; lists are replaced whole.</p></div>
+</section>
+
+<section class="step" id="s12">
+  <h2>12. Schema validation</h2>
+  <div class="body"><p>Add <code>values.schema.json</code> and Helm validates values against it on every lint, template and install. A typo like <code>replicaCont</code> or a wrong type fails immediately instead of silently being ignored.</p></div>
+</section>
+
+<section class="step summary" id="s13">
+  <h2>Helm charts, sorted</h2>
+  <ul>
+    <li>Chart.yaml (version, appVersion), values.yaml, and templates/ with _helpers.tpl.</li>
+    <li><code>.Values</code>, <code>.Chart</code>, <code>.Release</code>; <code>default</code>, <code>quote</code>, <code>toYaml | nindent</code>, <code>if</code>/<code>range</code>, <code>required</code>.</li>
+    <li><code>helm lint</code> and <code>helm template</code> before installing.</li>
+    <li>Values files per environment; add a schema.</li>
+  </ul>
+</section>
+</article>
+</body>
+</html>

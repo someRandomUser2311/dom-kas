@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>4.1 · Who manages what</title>
+<link rel="stylesheet" href="../content.css">
+</head>
+<body>
+<article class="lesson" data-id="4.1" data-chapter="4">
+<nav class="crumbs"><a href="../index.html">Course</a> / <a href="index.html">Chapter 4</a> / 4.1</nav>
+<header>
+  <p class="kicker">Chapter 4 · Lesson 4.1 · ~12 steps · ~14 min</p>
+  <h1>Who manages what</h1>
+  <p class="meta">You'll be able to say, for any part of an AKS cluster, whether Azure looks after it, you do, or it's shared, and what that means for patching, scaling and outages.</p>
+</header>
+
+<section class="step" id="s1">
+  <h2>1. "Managed" Kubernetes</h2>
+  <div class="body">
+    <p>Remember the cluster diagram from lesson 1.3: a control plane on top, nodes underneath.</p>
+    <p>AKS is <b>managed</b> Kubernetes: Azure runs the top half for you. You still own a lot of the bottom half, and everything you deploy.</p>
+    <p>Knowing exactly where that line is matters. "I thought Azure did that" is how clusters end up unpatched or unsupported.</p>
+  </div>
+  <div class="widget" data-widget="cluster-diagram">The lesson 1.3 diagram, now split by a dashed line. Above the line, labelled "Azure-managed, hidden from you": kube-apiserver, etcd, scheduler, controller manager, cloud-controller-manager. Below it, labelled "Your subscription": node VMs (VM Scale Sets), kubelet, containerd, add-ons, your pods.</div>
+  <aside class="coming" data-set="A">
+    <dl>
+      <dt>Windows/IIS admin</dt><dd>Like moving from your own SQL Server to Azure SQL Managed Instance: the engine is patched for you, but your schemas, logins and queries are still yours.</dd>
+      <dt>Linux admin</dt><dd>You'll never SSH into a control-plane node again. You still own the worker VMs' lifecycle, through upgrades rather than <code>apt</code>.</dd>
+      <dt>Developer (Compose)</dt><dd>You go from "I run Docker on a VM" to "Azure runs the orchestrator; I bring workloads and choose the VMs".</dd>
+      <dt>Other clouds</dt><dd>The same split as EKS and GKE Standard. AKS Automatic is closer to GKE Autopilot (lesson 4.5).</dd>
+    </dl>
+  </aside>
+</section>
+
+<section class="step" id="s2">
+  <h2>2. What Azure manages</h2>
+  <div class="body">
+    <ul>
+      <li>The <b>control plane</b>: API server, etcd, scheduler and controller managers. Azure runs, scales, patches and backs them up, in an Azure-owned subscription.</li>
+      <li>Control-plane <b>availability</b>. On the Standard and Premium tiers this comes with a financially backed uptime SLA; on Free there's no SLA (lesson 4.5).</li>
+      <li><b>Images</b> for nodes. Azure publishes patched node images weekly or more often. Whether your nodes <i>take</i> them is up to your settings.</li>
+      <li>Integrations: the cloud-controller-manager, CSI drivers, and add-ons you turn on.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="step" id="s3">
+  <h2>3. What you own</h2>
+  <div class="body">
+    <ul>
+      <li><b>Workloads</b>: manifests, images, probes, resources, scaling.</li>
+      <li><b>Nodes' lifecycle</b>: VM sizes, pool counts, zones, and choosing when Kubernetes versions and node images are upgraded, or setting channels that do it for you.</li>
+      <li><b>Network design</b>: VNet, subnets, IP plan, ingress, egress, network policy.</li>
+      <li><b>Identity and access</b>: who can reach the API, Azure RBAC, workload identity.</li>
+      <li><b>Security of what runs</b>: pod security, image provenance, secrets.</li>
+      <li><b>Cost</b>: you pay for nodes, disks, load balancers and IPs. On Free, the control plane costs nothing.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="step" id="s4">
+  <h2>4. The grey zone: shared</h2>
+  <div class="body">
+    <ul>
+      <li><b>Upgrades.</b> Azure provides versions and images and runs the upgrade. You choose when (channels, maintenance windows) and make sure workloads survive it (PDBs, replicas).</li>
+      <li><b>Node OS security.</b> Azure ships patched images; you choose the node OS upgrade channel.</li>
+      <li><b>Monitoring.</b> Azure exposes metrics and logs; you turn them on and act on them (Chapter 14).</li>
+    </ul>
+  </div>
+</section>
+
+<section class="step" id="s5">
+  <h2>5. Sort the responsibilities</h2>
+  <div class="check" data-type="custom">
+    <p class="q">Drag each item into Azure, You, or Shared.</p>
+    <div class="widget" data-widget="responsibility-sorter">Three columns. The step completes when every card is in its correct column; wrong drops bounce back with a hint.</div>
+    <table>
+      <tr><th>Item</th><th>Correct column</th></tr>
+      <tr><td>etcd backups</td><td>Azure</td></tr>
+      <tr><td>Scaling the API server under load</td><td>Azure</td></tr>
+      <tr><td>Restarting a crashed scheduler</td><td>Azure</td></tr>
+      <tr><td>Kubernetes version upgrades</td><td>Shared (Azure performs them; you choose when)</td></tr>
+      <tr><td>Node OS security patches</td><td>Shared (Azure builds images; your channel applies them)</td></tr>
+      <tr><td>Pod security settings</td><td>You</td></tr>
+      <tr><td>Container image vulnerabilities</td><td>You</td></tr>
+      <tr><td>Choosing VM sizes and zones</td><td>You</td></tr>
+      <tr><td>Who can run <code>kubectl</code> against the cluster</td><td>You</td></tr>
+      <tr><td>Node VM costs</td><td>You</td></tr>
+    </table>
+    <div class="explain">Everything above the API is Azure's; everything you deploy is yours; upgrades and patching are a partnership.</div>
+  </div>
+</section>
+
+<section class="step" id="s6">
+  <h2>6. You can't reach the control plane</h2>
+  <div class="body">
+    <p>On AKS you'll never see an etcd pod, can't SSH to a control-plane VM, and can't change API server flags directly. You configure the control plane through AKS settings instead, for example:</p>
+    <ul>
+      <li>authorized IP ranges</li>
+      <li>private cluster</li>
+      <li>Entra ID integration</li>
+    </ul>
+    <p>Its logs, such as the API server audit log, are available through <b>diagnostic settings</b> (Chapter 14).</p>
+  </div>
+  <pre class="output">$ kubectl get pods -n kube-system
+NAME                                  READY   STATUS
+azure-ip-masq-agent-xk2l9             1/1     Running
+cilium-8h2kq                          1/1     Running
+coredns-5d78c9869d-4pl8x              1/1     Running
+csi-azuredisk-node-7fj2c              3/3     Running
+konnectivity-agent-6b8c7d5f9-qm2xz    1/1     Running
+metrics-server-6f8b9d7c5-2k4lp        2/2     Running
+# no etcd, no kube-apiserver, no kube-scheduler: those run on Azure's side</pre>
+  <aside class="more"><p><code>konnectivity-agent</code> opens a tunnel from your nodes to the hidden control plane, so the API server can reach kubelets for <code>kubectl logs</code> and <code>exec</code>.</p></aside>
+</section>
+
+<section class="step" id="s7">
+  <h2>7. Who fixes a broken etcd?</h2>
+  <div class="check" data-type="mcq">
+    <p class="q">AKS's etcd crashes at 3 am. Who restarts it?</p>
+    <ol class="options">
+      <li>Your on-call engineer, via <code>kubectl</code> <span class="why">etcd isn't visible to you at all.</span></li>
+      <li class="correct">Azure: the control plane is fully managed</li>
+      <li>Nobody until the next upgrade <span class="why">Azure monitors and repairs control-plane components continuously.</span></li>
+      <li>The cluster autoscaler <span class="why">It manages nodes, not the control plane.</span></li>
+    </ol>
+    <div class="explain">Control-plane health is Azure's job. Your running pods keep working during a control-plane blip (lesson 1.3).</div>
+  </div>
+</section>
+
+<section class="step" id="s8">
+  <h2>8. The node resource group</h2>
+  <div class="body">
+    <p>When you create a cluster in <code>rg-orders-dev</code>, AKS creates a second resource group, named like <code>MC_rg-orders-dev_aks-orders-dev_westeurope</code>, for the infrastructure it manages on your behalf:</p>
+    <ul>
+      <li>the VM Scale Sets</li>
+      <li>the load balancer</li>
+      <li>public IPs</li>
+      <li>managed disks</li>
+    </ul>
+    <p>It's in your subscription and you pay for it, but <b>AKS owns it</b>. Changing things there directly breaks AKS's view of the world (next lesson). Name it yourself with <code>--node-resource-group</code>.</p>
+  </div>
+</section>
+
+<section class="step" id="s9">
+  <h2>9. Support boundaries</h2>
+  <div class="body">
+    <p>Microsoft support covers AKS when you stay within its rules:</p>
+    <ul>
+      <li>run a <b>supported Kubernetes version</b>;</li>
+      <li>don't modify the node resource group's resources directly;</li>
+      <li>keep the system node pool healthy.</li>
+    </ul>
+    <p>Fall outside them and your cluster can become "out of support". You'll get best effort only, until you're back in line.</p>
+  </div>
+</section>
+
+<section class="step" id="s10">
+  <h2>10. What still breaks on a managed cluster</h2>
+  <div class="body">
+    <p>Real incidents on AKS are almost always on <b>your</b> side of the line:</p>
+    <ul>
+      <li>a bad release;</li>
+      <li>a missing PDB during an upgrade;</li>
+      <li>a node pool too small to schedule pods;</li>
+      <li>an expired secret;</li>
+      <li>a subnet out of IPs;</li>
+      <li>an image registry the nodes can't pull from.</li>
+    </ul>
+    <p>The rest of this part (Chapters 4–6) is about getting those right.</p>
+  </div>
+</section>
+
+<section class="step" id="s11">
+  <h2>11. Optional: Fleet Manager and add-ons</h2>
+  <div class="body">
+    <p>As Contoso grows to several clusters, <b>Azure Kubernetes Fleet Manager</b> can coordinate upgrades across them.</p>
+    <p>Managed <b>add-ons and extensions</b> shift more work to Azure, at the cost of some flexibility. Examples are KEDA, the Key Vault CSI driver, app routing and the Istio-based service mesh. This course uses them where they're the simplest path.</p>
+  </div>
+</section>
+
+<section class="step summary" id="s12">
+  <h2>Shared responsibility, sorted</h2>
+  <ul>
+    <li><b>Azure:</b> the control plane (run, scale, patch, back up), node images, integrations.</li>
+    <li><b>You:</b> workloads, node pools, network, identity, security, cost.</li>
+    <li><b>Shared:</b> upgrades and node patching. Azure supplies them; your channels and PDBs decide how they land.</li>
+    <li>The <code>MC_</code> node resource group is AKS's; don't edit it by hand.</li>
+    <li>Stay on supported versions to stay in support.</li>
+  </ul>
+</section>
+</article>
+</body>
+</html>
