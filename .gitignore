@@ -4,3 +4,11 @@ backend/data/
 frontend/node_modules/
 frontend/dist/
 *.tgz
+
+# Terraform: provider downloads, local state and plans (never commit these)
+.terraform/
+.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
+tfplan
+*.tfplan
